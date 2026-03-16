@@ -166,7 +166,7 @@ def run(filepath, output_dir, metadata, params):
     result = run_lebail(
         tt, intensity, sigma, phases, wavelength,
         tt_min=tt_min, tt_max=tt_max,
-        n_bg_coeffs=n_bg, max_iter=500,
+        n_bg_coeffs=n_bg, max_outer=15,
     )
 
     # Plot
