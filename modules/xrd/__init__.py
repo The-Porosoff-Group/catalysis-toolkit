@@ -33,9 +33,9 @@ COMMON_WAVELENGTHS = {
 def parse_xrd_file(filepath):
     """
     Parse XRD data file. Supports:
-      .dat  — PowderGraph / Bruker (2theta d intx sigx counts)
-      .xy   — two-column
-      .xye  — three-column with errors
+      .dat  — PowderGraph 5-col, OR Rigaku step-scan (header + single intensity per line)
+      .xy   — two-column (2theta intensity)
+      .xye  — three-column (2theta intensity error)
       .csv  — comma-separated
       .txt  — whitespace-separated
     Returns dict: tt, intensity, sigma, metadata
@@ -43,11 +43,73 @@ def parse_xrd_file(filepath):
     ext = os.path.splitext(filepath)[1].lower()
     with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
         raw = f.read()
-    lines = raw.splitlines()
+    # Normalise line endings
+    raw   = raw.replace('\r\n', '\n').replace('\r', '\n')
+    lines = [l for l in raw.splitlines() if l.strip()]
 
+    # PowderGraph format
     if '[PowderGraph' in raw or (len(lines) > 1 and '2thetadeg' in lines[1].lower()):
         return _parse_powdergraph(lines)
+
+    # Rigaku/Bruker step-scan: first line = "start step end", rest = single values
+    if _is_step_scan(lines):
+        return _parse_step_scan(lines)
+
     return _parse_generic(lines, ext)
+
+
+def _is_step_scan(lines):
+    """
+    Detect Rigaku/Bruker step-scan format:
+    Line 0: exactly 3 numbers (start, step, end)
+    Lines 1+: exactly 1 number each (intensity)
+    """
+    if len(lines) < 10:
+        return False
+    try:
+        parts = lines[0].split()
+        if len(parts) != 3:
+            return False
+        start, step, end = float(parts[0]), float(parts[1]), float(parts[2])
+        if step <= 0 or start >= end:
+            return False
+        # Check that at least 80% of remaining lines are single numbers
+        sample = lines[1:min(50, len(lines))]
+        single = sum(1 for l in sample if len(l.split()) == 1
+                     and _safe_float(l) is not None)
+        return single / len(sample) > 0.8
+    except Exception:
+        return False
+
+
+def _safe_float(s):
+    try: return float(s.strip())
+    except: return None
+
+
+def _parse_step_scan(lines):
+    """Parse Rigaku/Bruker step-scan: header line + one intensity per line."""
+    parts = lines[0].split()
+    start = float(parts[0])
+    step  = float(parts[1])
+
+    intensities = []
+    for line in lines[1:]:
+        v = _safe_float(line)
+        if v is not None:
+            intensities.append(v)
+
+    n  = len(intensities)
+    tt = np.array([start + i * step for i in range(n)])
+    iy = np.array(intensities)
+    sg = np.sqrt(np.maximum(iy, 1.0))
+    return {
+        'tt':        tt,
+        'intensity': iy,
+        'sigma':     sg,
+        'metadata':  {'format': 'StepScan',
+                      'start': start, 'step': step, 'n_points': n},
+    }
 
 
 def _parse_powdergraph(lines):
