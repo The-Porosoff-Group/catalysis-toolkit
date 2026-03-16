@@ -268,10 +268,14 @@ def save_cif_temp(cif_text, cod_id='manual'):
 def get_stick_pattern(structure, wavelength, tt_min=5.0, tt_max=90.0):
     """
     Generate a quick stick pattern for preview overlay.
-    Uses our own d-spacing engine (no atomic scattering factors —
-    just peak positions and multiplicities for visual matching).
+
+    If the structure dict contains 'sites' (from CIF parsing) or 'cif_text'
+    (from which sites can be parsed), the pattern uses actual structure
+    factors — correctly zeroing out structure-factor-extinct reflections.
+
+    Otherwise falls back to multiplicity-only weights.
     """
-    from .crystallography import generate_reflections
+    from .crystallography import generate_reflections, parse_cif
     a  = structure.get('a') or 4.0
     b  = structure.get('b') or a
     c  = structure.get('c') or a
@@ -281,17 +285,28 @@ def get_stick_pattern(structure, wavelength, tt_min=5.0, tt_max=90.0):
     sys_  = structure.get('system', 'triclinic') or 'triclinic'
     sg    = structure.get('spacegroup_number', 1) or 1
 
+    # Try to get atom sites for structure factor calculation
+    sites = structure.get('sites')
+    if not sites and structure.get('cif_text'):
+        try:
+            parsed = parse_cif(structure['cif_text'])
+            sites = parsed.get('sites')
+        except Exception:
+            sites = None
+    # sites=None is fine — generate_reflections will use multiplicity-only
+
     try:
         refs = generate_reflections(a, b, c, al, be, ga, sys_, sg,
-                                     wavelength, tt_min, tt_max, hkl_max=8)
+                                     wavelength, tt_min, tt_max, hkl_max=8,
+                                     sites=sites or None)
     except Exception:
         return []
 
     if not refs:
         return []
 
-    max_m = max((r[3] for r in refs), default=1)
+    max_w = max((r[3] for r in refs), default=1)
     return [{'two_theta': round(r[0], 3),
              'd':         round(r[1], 4),
              'hkl':       f'({r[2][0]}{r[2][1]}{r[2][2]})',
-             'rel_int':   round(r[3] / max_m, 3)} for r in refs]
+             'rel_int':   round(r[3] / max_w, 3)} for r in refs]

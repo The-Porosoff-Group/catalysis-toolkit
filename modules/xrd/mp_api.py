@@ -287,6 +287,7 @@ def _structure_dict_to_cif(struct_dict, mp_id, formula, sym):
     Convert a pymatgen structure JSON dict to CIF text.
     Tries pymatgen first; falls back to hand-building minimal CIF.
     """
+    # Try pymatgen conversion (available once venv installs it)
     try:
         from pymatgen.core import Structure
         struct = Structure.from_dict(struct_dict)
@@ -298,13 +299,10 @@ def _structure_dict_to_cif(struct_dict, mp_id, formula, sym):
             cif_text = f.read()
         os.unlink(tmp)
         return cif_text
-    except Exception as e:
-        # Log so it shows in the Flask terminal
-        import traceback
-        print(f"[mp_api] pymatgen CIF conversion failed for {mp_id}: {e}")
-        traceback.print_exc()
+    except Exception:
+        pass
 
-    # Fallback: build minimal CIF from lattice dict
+    # Fallback: build a minimal CIF from the lattice dict
     lattice = struct_dict.get("lattice", {})
     a  = lattice.get("a",  4.0)
     b  = lattice.get("b",  a)

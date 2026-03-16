@@ -166,6 +166,86 @@ def _parse_generic(lines, ext):
 # PHASE VALIDATION
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _sg_symbol_to_number(symbol):
+    """
+    Map common space group symbol strings to International Tables numbers.
+    Handles common variations in formatting.
+    """
+    # Normalise: remove spaces, underscores around subscripts
+    s = str(symbol).strip().replace(' ', '').replace('_', '')
+    # Direct lookup table for phases common in catalysis research
+    _MAP = {
+        'Im-3m': 229, 'Im3m': 229, 'Im-3m': 229,
+        'Fm-3m': 225, 'Fm3m': 225,
+        'Pm-3n': 223, 'Pm3n': 223,
+        'Pm-3m': 221, 'Pm3m': 221,
+        'Pa-3':  205, 'Pa3':  205,
+        'Ia-3':  206, 'Ia3':  206,
+        'Ia-3d': 230, 'Ia3d': 230,
+        'Fd-3m': 227, 'Fd3m': 227,
+        'P63/mmc': 194, 'P6_3/mmc': 194, 'P63mmc': 194,
+        'P6/mmm': 191, 'P6mmm': 191,
+        'P63/m':  176, 'P6_3/m': 176,
+        'P-6m2':  187, 'P6m2':  187,
+        'P-6':    174,
+        'P63mc':  186,
+        'P6322':  182,
+        'P63':    173,
+        'R-3m':   166, 'R3m': 166,
+        'R-3':    148, 'R3':  148,
+        'Pnma':    62, 'Pbnm': 62,
+        'Cmcm':    63, 'Cmce': 64,
+        'P21/c':   14, 'P2_1/c': 14,
+        'C2/m':    12,
+        'P-1':      2, 'P1':  1,
+    }
+    # Try as-is first, then stripped
+    return _MAP.get(symbol.strip()) or _MAP.get(s)
+
+
+def _to_conventional(ph):
+    """
+    Convert primitive cell settings to conventional.
+    pymatgen often returns primitive cells which our reflection generator
+    can't handle — we need conventional cells with standard angles.
+
+    BCC primitive:  a_prim, alpha=beta=gamma=109.471° → a_conv = a_prim * 2/√3
+    FCC primitive:  a_prim, alpha=beta=gamma=60°      → a_conv = a_prim * √2
+    Rhombohedral:   treated as hexagonal if SG 146-167
+    """
+    import math
+    a   = ph['a']
+    al  = ph.get('alpha', 90.0)
+    be  = ph.get('beta',  90.0)
+    ga  = ph.get('gamma', 90.0)
+    sys_ = (ph.get('system') or 'triclinic').lower()
+    sg   = ph.get('spacegroup_number', 1)
+
+    # BCC primitive: a=b=c, alpha=beta=gamma ≈ 109.47°
+    if (sys_ == 'cubic' and
+            abs(al - 109.471) < 0.6 and
+            abs(be - 109.471) < 0.6 and
+            abs(ga - 109.471) < 0.6):
+        a_conv = a * 2.0 / math.sqrt(3.0)
+        return {**ph, 'a': round(a_conv, 5), 'b': round(a_conv, 5),
+                'c': round(a_conv, 5), 'alpha': 90.0, 'beta': 90.0, 'gamma': 90.0}
+
+    # FCC primitive: a=b=c, alpha=beta=gamma ≈ 60°
+    if (sys_ == 'cubic' and
+            abs(al - 60.0) < 0.6 and
+            abs(be - 60.0) < 0.6 and
+            abs(ga - 60.0) < 0.6):
+        a_conv = a * math.sqrt(2.0)
+        return {**ph, 'a': round(a_conv, 5), 'b': round(a_conv, 5),
+                'c': round(a_conv, 5), 'alpha': 90.0, 'beta': 90.0, 'gamma': 90.0}
+
+    # Rhombohedral primitive stored as trigonal: force correct angles
+    if sys_ in ('trigonal', 'hexagonal') and 143 <= sg <= 167:
+        return {**ph, 'alpha': 90.0, 'beta': 90.0, 'gamma': 120.0}
+
+    return ph
+
+
 def validate_phases(phases, fetch_missing=True):
     """
     Validate and fill missing cell parameters.
@@ -227,6 +307,21 @@ def validate_phases(phases, fetch_missing=True):
         ph['system'] = ph.get('system') or 'triclinic'
         ph['name']   = ph.get('name') or ph.get('formula') or 'Phase'
 
+        # If spacegroup_number is 1 (default/unknown), try to infer from symbol
+        if ph['spacegroup_number'] == 1 and ph.get('spacegroup'):
+            inferred = _sg_symbol_to_number(ph['spacegroup'])
+            if inferred:
+                ph['spacegroup_number'] = inferred
+
+        # If system is still triclinic but we have a real spacegroup number, fix it
+        if ph['system'] == 'triclinic' and ph['spacegroup_number'] > 2:
+            from .cod_api import infer_system
+            ph['system'] = infer_system(ph['spacegroup_number'])
+
+        # Convert primitive cells to conventional based on space group
+        # e.g. pymatgen returns primitive BCC (a=2.746, alpha=109.47) for mp-91
+        ph = _to_conventional(ph)
+
         validated.append(ph)
     return validated
 
@@ -237,7 +332,7 @@ def validate_phases(phases, fetch_missing=True):
 
 def run(filepath, output_dir, metadata, params):
     """
-    Called by app.py. Runs the full Le Bail pipeline.
+    Called by app.py. Runs Le Bail or Rietveld pipeline.
 
     params keys:
       phases           list of phase dicts
@@ -245,8 +340,9 @@ def run(filepath, output_dir, metadata, params):
       tt_min / tt_max  float
       n_bg_coeffs      int (default 6)
       wavelength_label str
+      method           'lebail' (default) or 'rietveld'
     """
-    from .lebail    import run_lebail
+    from .lebail    import run_lebail, run_rietveld
     from .xrd_plots import make_xrd_plot
 
     os.makedirs(output_dir, exist_ok=True)
@@ -267,27 +363,45 @@ def run(filepath, output_dir, metadata, params):
     tt_max     = params.get('tt_max', float(tt.max()))
     n_bg       = params.get('n_bg_coeffs', 6)
     max_outer  = params.get('max_outer', 10)
+    method     = params.get('method', 'lebail').lower()
 
     # Run refinement
-    result = run_lebail(
-        tt, intensity, sigma, phases, wavelength,
-        tt_min=tt_min, tt_max=tt_max,
-        n_bg_coeffs=n_bg, max_outer=max_outer,
-    )
+    if method == 'rietveld':
+        # Check that all phases have atom sites (CIF text)
+        missing = [ph.get('name','?') for ph in phases
+                   if not ph.get('sites') and not ph.get('cif_text')]
+        if missing:
+            raise ValueError(
+                f"Rietveld requires CIF with atom coordinates for all phases. "
+                f"Missing for: {', '.join(missing)}. "
+                f"Try fetching the CIF first, or use Le Bail instead.")
+        result = run_rietveld(
+            tt, intensity, sigma, phases, wavelength,
+            tt_min=tt_min, tt_max=tt_max,
+            n_bg_coeffs=n_bg, max_iter=max_outer * 5,
+        )
+    else:
+        result = run_lebail(
+            tt, intensity, sigma, phases, wavelength,
+            tt_min=tt_min, tt_max=tt_max,
+            n_bg_coeffs=n_bg, max_outer=max_outer,
+        )
 
     # Plot
+    method_label = 'Rietveld' if method == 'rietveld' else 'Le Bail'
     plot_path = os.path.join(output_dir, 'xrd_refinement.png')
     make_xrd_plot(result, {
         'sample_id':       metadata.get('sample_id', 'Sample'),
         'wavelength_label': params.get('wavelength_label',
                                         f"λ={wavelength:.5f} Å"),
+        'method':           method_label,
     }, plot_path)
 
     # Summary CSV
     import pandas as pd
     rows = []
     for ph in result['phase_results']:
-        row = {'sample': metadata.get('sample_id', ''), **ph}
+        row = {'sample': metadata.get('sample_id', ''), 'method': method_label, **ph}
         row.update(result['statistics'])
         row['zero_shift']    = result['zero_shift']
         row['pymatgen_used'] = result.get('pymatgen_used', False)
@@ -303,5 +417,6 @@ def run(filepath, output_dir, metadata, params):
         'phase_results': result['phase_results'],
         'zero_shift':   result['zero_shift'],
         'pymatgen_used': result.get('pymatgen_used', False),
+        'method':        method_label,
         'result':       result,
     }

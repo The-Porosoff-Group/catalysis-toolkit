@@ -112,9 +112,10 @@ def make_xrd_plot(result, metadata, output_path):
 
     # Title
     lam_label = metadata.get('wavelength_label', f"λ={result['wavelength']:.4f} Å")
+    method_label = metadata.get('method', 'Le Bail')
     ax_main.set_title(
         f"{metadata.get('sample_id','Sample')}   ·   "
-        f"{lam_label}   ·   Le Bail refinement",
+        f"{lam_label}   ·   {method_label} refinement",
         color=TEXT, fontsize=11, fontweight='bold', pad=10)
 
     ax_main.set_ylabel('Intensity (a.u.)', fontsize=9)
@@ -127,10 +128,13 @@ def make_xrd_plot(result, metadata, output_path):
         Line2D([0],[0], color=MUT, lw=1, ls='--', label='Background'),
     ]
     for i, ph in enumerate(phases):
-        c = PHASE_COLORS[i % len(PHASE_COLORS)]
-        handles.append(Line2D([0],[0], color=c, lw=2,
-                               label=ph['name']))
-    ax_main.legend(handles=handles, fontsize=7, ncol=min(len(handles), 5),
+        c  = PHASE_COLORS[i % len(PHASE_COLORS)]
+        sg = ph.get('spacegroup', '') or f"#{ph.get('spacegroup_number','')}"
+        wt = ph.get('weight_fraction_%', '')
+        wt_str = f"  {wt} wt%" if wt != '' else ''
+        label  = f"{ph['name']}  {sg}{wt_str}"
+        handles.append(Line2D([0],[0], color=c, lw=2, label=label))
+    ax_main.legend(handles=handles, fontsize=7, ncol=min(len(handles), 4),
                    facecolor='#1c2128', edgecolor=GRID, labelcolor=TEXT,
                    loc='upper left')
 
@@ -149,8 +153,12 @@ def make_xrd_plot(result, metadata, output_path):
         for tt_tick in ticks:
             ax_ticks.axvline(tt_tick, ymin=y_pos-0.08, ymax=y_pos+0.08,
                               color=color, linewidth=1.0, alpha=0.8)
-        # Phase label on left
-        ax_ticks.text(0.005, y_pos, ph['name'],
+        # Phase label: name + space group + wt%
+        sg   = ph.get('spacegroup', '') or f"#{ph.get('spacegroup_number','')}"
+        wt   = ph.get('weight_fraction_%', '')
+        wt_str = f"  {wt} wt%" if wt != '' else ''
+        label  = f"{ph['name']}  {sg}{wt_str}"
+        ax_ticks.text(0.005, y_pos, label,
                       transform=ax_ticks.transAxes,
                       ha='left', va='center', fontsize=7,
                       color=color, fontweight='bold')

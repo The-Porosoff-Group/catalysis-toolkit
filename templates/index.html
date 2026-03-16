@@ -509,14 +509,13 @@
         <div class="card">
           <div class="card-header"><div class="step">1</div><h2>Upload XRD File</h2></div>
           <div class="card-body" style="display:flex;flex-direction:column;gap:12px;">
-            <div class="dropzone" id="xrd-dropzone" ondragover="onDragOver2(event)" ondragleave="onDragLeave2(event)" ondrop="onDrop2(event)" style="padding:14px 20px;min-height:unset;">
+            <div class="dropzone" id="xrd-dropzone" ondragover="onDragOver2(event)" ondragleave="onDragLeave2(event)" ondrop="onDrop2(event)"
+                 style="padding:20px;min-height:90px;transition:all 0.35s ease;">
               <input type="file" id="xrdFileInput" accept=".dat,.xy,.xye,.csv,.txt" onchange="onXrdFileSelect(event)">
-              <div id="xrd-dropzone-content" style="display:flex;align-items:center;gap:12px;justify-content:center;">
-                <span style="font-size:24px;">📊</span>
-                <div>
-                  <div class="dropzone-text" style="font-size:13px;">Drag & drop XRD file or click to browse</div>
-                  <div class="dropzone-sub">.dat · .xy · .xye · .csv · .txt</div>
-                </div>
+              <div id="xrd-dropzone-content" style="display:flex;flex-direction:column;align-items:center;gap:8px;justify-content:center;padding:10px 0;">
+                <span style="font-size:40px;">📊</span>
+                <div class="dropzone-text" style="font-size:14px;font-weight:600;">Drag &amp; drop XRD data file</div>
+                <div class="dropzone-sub">.dat · .xy · .xye · .csv · .txt · or click to browse</div>
               </div>
             </div>
             <!-- Live preview plot — shown after file upload -->
@@ -573,6 +572,18 @@
             <div class="form-group">
               <label>Output Folder</label>
               <input type="text" id="xrd-output-dir" placeholder="Leave blank → results/ next to app">
+            </div>
+            <div class="form-group">
+              <label title="More coefficients = better fit for broad amorphous backgrounds (e.g. SiO2 support). Use 6 for clean samples, 12+ for supported catalysts.">
+                Background terms
+                <span style="color:var(--muted);font-weight:400;"> — increase for amorphous supports</span>
+              </label>
+              <select id="xrd-bg-coeffs">
+                <option value="6">6 — clean/unsupported</option>
+                <option value="10" selected>10 — default</option>
+                <option value="14">14 — supported catalyst (SiO₂, Al₂O₃)</option>
+                <option value="20">20 — heavy amorphous background</option>
+              </select>
             </div>
           </div>
         </div>
@@ -688,14 +699,21 @@
 
       <!-- Step 4: Run -->
       <div class="card">
-        <div class="card-header"><div class="step">4</div><h2>Run Le Bail Refinement</h2></div>
+        <div class="card-header"><div class="step">4</div><h2>Run Refinement</h2></div>
         <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
 
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-            <button class="btn-process" id="btn-xrd" onclick="runXRD()">
-              <span>🔬</span> Run Le Bail Refinement
+            <button class="btn-process" id="btn-xrd" onclick="runXRD('lebail')">
+              <span>🔬</span> Le Bail Refinement
+            </button>
+            <button class="btn-process" id="btn-xrd-rietveld" onclick="runXRD('rietveld')" style="background:linear-gradient(135deg,#238636,#2ea043);">
+              <span>🔬</span> Rietveld Refinement
             </button>
             <button class="btn-sm" onclick="resetXRD()" title="Clear everything and start fresh">↺ Reset</button>
+          </div>
+          <div style="font-size:11px;color:var(--muted);line-height:1.4;">
+            <b>Le Bail</b> — free peak intensities, good for phase ID and cell params.<br>
+            <b>Rietveld</b> — structure-constrained intensities (requires CIF with atom positions), better intensity balance.
           </div>
 
           <div class="progress-wrap" id="xrd-progress-wrap">
@@ -1226,10 +1244,14 @@ function setXrdFile(file) {
   xrdFile = file;
   const dz = document.getElementById('xrd-dropzone');
   dz.classList.add('has-file');
+  // Shrink dropzone after file selected
+  const dz2 = document.getElementById('xrd-dropzone');
+  dz2.style.padding = '10px 16px';
+  dz2.style.minHeight = 'unset';
   document.getElementById('xrd-dropzone-content').innerHTML =
     `<div style="display:flex;align-items:center;gap:10px;justify-content:center;">
-       <span style="font-size:20px;">✅</span>
-       <div><div class="file-name">${file.name}</div>
+       <span style="font-size:18px;">✅</span>
+       <div><div class="file-name" style="font-size:13px;">${file.name}</div>
        <div class="dropzone-sub">${(file.size/1024).toFixed(1)} KB · click to change</div></div>
      </div>`;
   loadXrdPreview(file);
@@ -1509,7 +1531,8 @@ function renderSelectedPhases() {
 }
 
 // ── Run Refinement ──────────────────────────────────────────────────────────
-async function runXRD() {
+async function runXRD(method) {
+  method = method || 'lebail';
   const errEl = document.getElementById('xrd-error-box');
   errEl.classList.remove('visible');
 
@@ -1517,9 +1540,19 @@ async function runXRD() {
   if (!xrdPhases.length){ showXrdError('Add at least one phase to refine.'); return; }
 
   document.getElementById('btn-xrd').disabled = true;
+  document.getElementById('btn-xrd-rietveld').disabled = true;
   document.getElementById('xrd-progress-wrap').classList.add('visible');
 
-  const steps = [
+  const methodLabel = method === 'rietveld' ? 'Rietveld' : 'Le Bail';
+  const steps = method === 'rietveld' ? [
+    'Parsing data file...',
+    'Validating phase structures...',
+    'Computing structure factors from CIF...',
+    'Running Rietveld refinement (cell + profile + B_iso)...',
+    'Optimising per-phase scale factors...',
+    'Computing Rwp, Rp, χ², crystallite sizes...',
+    'Generating plots...',
+  ] : [
     'Parsing data file...',
     'Validating phase structures...',
     'Computing structure factors with pymatgen...',
@@ -1529,10 +1562,10 @@ async function runXRD() {
     'Generating plots...',
   ];
   let si = 0;
-  document.getElementById('xrd-progress-text').textContent = steps[0];
+  document.getElementById('xrd-progress-text').textContent = `${methodLabel}: ${steps[0]}`;
   const timer = setInterval(() => {
     si = (si+1) % steps.length;
-    document.getElementById('xrd-progress-text').textContent = steps[si];
+    document.getElementById('xrd-progress-text').textContent = `${methodLabel}: ${steps[si]}`;
   }, 3000);
 
   try {
@@ -1545,7 +1578,9 @@ async function runXRD() {
     fd.append('sample_id',   document.getElementById('xrd-sample-id').value || xrdFile.name);
     fd.append('tt_min',      document.getElementById('xrd-tt-min').value);
     fd.append('tt_max',      document.getElementById('xrd-tt-max').value);
+    fd.append('n_bg_coeffs', document.getElementById('xrd-bg-coeffs').value || '10');
     fd.append('output_dir',  document.getElementById('xrd-output-dir').value);
+    fd.append('method',      method);
     // Send phases WITHOUT cif_text (server pulls from cache)
     const phases_stripped = xrdPhases.map(p => {
       const {cif_text, ...rest} = p; return rest;
@@ -1560,6 +1595,7 @@ async function runXRD() {
     if (data.error) {
       showXrdError(data.error + (data.trace ? '\n\n' + data.trace : ''));
       document.getElementById('btn-xrd').disabled = false;
+      document.getElementById('btn-xrd-rietveld').disabled = false;
       return;
     }
     showXRDResults(data);
@@ -1569,6 +1605,7 @@ async function runXRD() {
     showXrdError('Unexpected error: ' + e.message);
   }
   document.getElementById('btn-xrd').disabled = false;
+  document.getElementById('btn-xrd-rietveld').disabled = false;
 }
 
 function showXRDResults(data) {
@@ -1659,10 +1696,14 @@ function resetXRD() {
   // Reset dropzone
   const dz = document.getElementById('xrd-dropzone');
   dz.classList.remove('has-file', 'dragover');
+  dz.style.padding = '20px';
+  dz.style.minHeight = '90px';
   document.getElementById('xrd-dropzone-content').innerHTML = `
-    <div class="dropzone-icon">📊</div>
-    <div class="dropzone-text">Drag & drop XRD data file</div>
-    <div class="dropzone-sub">.dat · .xy · .xye · .csv · .txt</div>`;
+    <div style="display:flex;flex-direction:column;align-items:center;gap:8px;justify-content:center;padding:10px 0;">
+      <span style="font-size:40px;">📊</span>
+      <div class="dropzone-text" style="font-size:14px;font-weight:600;">Drag &amp; drop XRD data file</div>
+      <div class="dropzone-sub">.dat · .xy · .xye · .csv · .txt · or click to browse</div>
+    </div>`;
   document.getElementById('xrdFileInput').value = '';
 
   // Reset search UI

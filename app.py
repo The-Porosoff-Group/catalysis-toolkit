@@ -260,9 +260,20 @@ def xrd_search():
         combined = mp_results + cod_results
 
         # Add stick patterns (first 20 only — performance)
+        # Validate each entry first so SG number and system are correct
+        try:
+            from xrd import validate_phases as _vp
+        except ImportError:
+            _vp = None
+
         for entry in combined[:20]:
             try:
-                entry['stick_pattern'] = get_stick_pattern(entry, wavelength)
+                if _vp:
+                    validated = _vp([dict(entry)], fetch_missing=False)
+                    ph = validated[0] if validated else entry
+                else:
+                    ph = entry
+                entry['stick_pattern'] = get_stick_pattern(ph, wavelength)
             except Exception:
                 entry['stick_pattern'] = []
 
@@ -308,9 +319,13 @@ def xrd_fetch_cif():
         _cache.put(cache_key, cif_text)
 
         # Compute accurate stick pattern server-side using crystallography engine
-        # (applies proper extinction rules — much more accurate than client-side)
+        # IMPORTANT: run through validate_phases first to fix SG number and system
+        # (MP summary endpoint returns spacegroup_number=1 and system=triclinic by default)
         try:
-            sticks = get_stick_pattern(result, wavelength, tt_min=5.0, tt_max=100.0)
+            from xrd import validate_phases
+            validated = validate_phases([dict(result)], fetch_missing=False)
+            ph_for_sticks = validated[0] if validated else result
+            sticks = get_stick_pattern(ph_for_sticks, wavelength, tt_min=5.0, tt_max=100.0)
             result['stick_pattern'] = sticks
         except Exception:
             result['stick_pattern'] = []
@@ -436,6 +451,7 @@ def process_xrd():
                 'tt_max':           tt_max,
                 'n_bg_coeffs':      6,
                 'max_outer':        MAX_OUTER,
+                'method':           form.get('method', 'lebail'),
             }
         )
 
@@ -448,6 +464,7 @@ def process_xrd():
             'phase_results': result['phase_results'],
             'zero_shift':    result['zero_shift'],
             'pymatgen_used': result.get('pymatgen_used', False),
+            'method':        result.get('method', 'Le Bail'),
             'summary_path':  result['summary_path'],
             'output_dir':    out_dir,
         })
