@@ -508,14 +508,31 @@
 
         <div class="card">
           <div class="card-header"><div class="step">1</div><h2>Upload XRD File</h2></div>
-          <div class="card-body">
-            <div class="dropzone" id="xrd-dropzone" ondragover="onDragOver2(event)" ondragleave="onDragLeave2(event)" ondrop="onDrop2(event)">
+          <div class="card-body" style="display:flex;flex-direction:column;gap:12px;">
+            <div class="dropzone" id="xrd-dropzone" ondragover="onDragOver2(event)" ondragleave="onDragLeave2(event)" ondrop="onDrop2(event)" style="padding:14px 20px;min-height:unset;">
               <input type="file" id="xrdFileInput" accept=".dat,.xy,.xye,.csv,.txt" onchange="onXrdFileSelect(event)">
-              <div id="xrd-dropzone-content">
-                <div class="dropzone-icon">📊</div>
-                <div class="dropzone-text">Drag & drop XRD file</div>
-                <div class="dropzone-sub">.dat · .xy · .xye · .csv · .txt</div>
+              <div id="xrd-dropzone-content" style="display:flex;align-items:center;gap:12px;justify-content:center;">
+                <span style="font-size:24px;">📊</span>
+                <div>
+                  <div class="dropzone-text" style="font-size:13px;">Drag & drop XRD file or click to browse</div>
+                  <div class="dropzone-sub">.dat · .xy · .xye · .csv · .txt</div>
+                </div>
               </div>
+            </div>
+            <!-- Live preview plot — shown after file upload -->
+            <div id="xrd-preview-wrap" style="display:none;">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+                <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;">Data Preview</span>
+                <span style="font-size:10px;color:var(--muted);">Scroll to zoom · drag to pan</span>
+              </div>
+              <canvas id="xrd-preview-canvas"
+                      style="width:100%;height:220px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;cursor:crosshair;"
+                      onwheel="previewZoom(event)"
+                      onmousedown="previewPanStart(event)"
+                      onmousemove="previewPanMove(event)"
+                      onmouseup="previewPanEnd()"
+                      onmouseleave="previewPanEnd()">
+              </canvas>
             </div>
           </div>
         </div>
@@ -932,6 +949,262 @@ function showError(msg) {
 function hideError() { document.getElementById('error-box').classList.remove('visible'); }
 
 
+
+// ── XRD Preview Plot ───────────────────────────────────────────────────────
+let _previewData  = null;   // {tt, intensity, y_max, tt_min, tt_max}
+let _previewView  = null;   // {xMin, xMax, yMin, yMax} — current viewport
+let _previewPan   = null;   // pan state
+let _stickPhases  = [];     // [{name, color, sticks:[{two_theta,rel_int,hkl}]}]
+
+const PHASE_COLORS = ['#f78166','#56d364','#e3b341','#bc8cff','#79c0ff','#ffa657'];
+
+async function loadXrdPreview(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const resp = await fetch('/api/xrd/preview', {method:'POST', body:fd});
+    const data = await resp.json();
+    if (data.error) return;
+    _previewData = data;
+    _previewView = {
+      xMin: data.tt_min, xMax: data.tt_max,
+      yMin: 0,           yMax: data.y_max * 1.15,
+    };
+    _stickPhases = [];
+    document.getElementById('xrd-preview-wrap').style.display = 'block';
+    drawPreview();
+  } catch(e) { /* silent — preview is optional */ }
+}
+
+function drawPreview() {
+  const canvas = document.getElementById('xrd-preview-canvas');
+  if (!canvas || !_previewData) return;
+
+  // Resize canvas to match CSS size (for sharp rendering)
+  const rect = canvas.getBoundingClientRect();
+  canvas.width  = rect.width  * window.devicePixelRatio;
+  canvas.height = rect.height * window.devicePixelRatio;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+  const W = rect.width, H = rect.height;
+  const PAD = {l:48, r:12, t:10, b:32};
+  const pw = W - PAD.l - PAD.r;
+  const ph = H - PAD.t - PAD.b;
+
+  const {xMin, xMax, yMin, yMax} = _previewView;
+  const xScale = x => PAD.l + (x - xMin) / (xMax - xMin) * pw;
+  const yScale = y => PAD.t + ph - (y - yMin) / (yMax - yMin) * ph;
+
+  // Background
+  ctx.fillStyle = getComputedStyle(document.documentElement)
+                    .getPropertyValue('--surface2').trim() || '#161b22';
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth   = 1;
+  const nGridX = 8, nGridY = 5;
+  for (let i = 0; i <= nGridX; i++) {
+    const x = PAD.l + i * pw / nGridX;
+    ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, PAD.t+ph); ctx.stroke();
+  }
+  for (let i = 0; i <= nGridY; i++) {
+    const y = PAD.t + i * ph / nGridY;
+    ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(PAD.l+pw, y); ctx.stroke();
+  }
+
+  // Axis labels
+  ctx.fillStyle  = 'rgba(125,133,144,0.9)';
+  ctx.font       = `${10 * window.devicePixelRatio / window.devicePixelRatio}px monospace`;
+  ctx.textAlign  = 'center';
+  for (let i = 0; i <= nGridX; i++) {
+    const val = xMin + i * (xMax - xMin) / nGridX;
+    ctx.fillText(val.toFixed(0) + '°', PAD.l + i * pw / nGridX, H - 8);
+  }
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= nGridY; i++) {
+    const val = yMax - i * (yMax - yMin) / nGridY;
+    ctx.fillText(val.toFixed(0), PAD.l - 4, PAD.t + i * ph / nGridY + 3);
+  }
+
+  // Data trace
+  const tt = _previewData.tt;
+  const iy = _previewData.intensity;
+  ctx.strokeStyle = '#58a6ff';
+  ctx.lineWidth   = 1.2;
+  ctx.beginPath();
+  let first = true;
+  for (let i = 0; i < tt.length; i++) {
+    if (tt[i] < xMin || tt[i] > xMax) continue;
+    const px = xScale(tt[i]);
+    const py = yScale(Math.min(iy[i], yMax));
+    first ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    first = false;
+  }
+  ctx.stroke();
+
+  // Stick patterns per phase
+  for (const phase of _stickPhases) {
+    ctx.strokeStyle = phase.color;
+    ctx.lineWidth   = 1.5;
+    const maxH = ph * 0.25;  // ticks are 25% of plot height
+
+    for (const stick of phase.sticks) {
+      const tx = stick.two_theta;
+      if (tx < xMin || tx > xMax) continue;
+      const px  = xScale(tx);
+      const tickH = maxH * stick.rel_int;
+      const yBot  = PAD.t + ph;
+      const yTop  = yBot - tickH;
+
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      ctx.moveTo(px, yBot);
+      ctx.lineTo(px, yTop);
+      ctx.stroke();
+
+      // Tick cap
+      ctx.beginPath();
+      ctx.arc(px, yTop, 2, 0, Math.PI * 2);
+      ctx.fillStyle = phase.color;
+      ctx.fill();
+      ctx.globalAlpha = 1.0;
+    }
+
+    // Phase label at top-right of tick region
+    if (phase.sticks.length > 0) {
+      const visSticks = phase.sticks.filter(s => s.two_theta >= xMin && s.two_theta <= xMax);
+      if (visSticks.length > 0) {
+        const labelX = xScale(visSticks[visSticks.length-1].two_theta);
+        ctx.fillStyle  = phase.color;
+        ctx.font       = '10px sans-serif';
+        ctx.textAlign  = 'left';
+        ctx.globalAlpha = 0.9;
+        ctx.fillText(phase.name, Math.min(labelX + 4, W - 60), PAD.t + ph * 0.12 + _stickPhases.indexOf(phase) * 14);
+        ctx.globalAlpha = 1.0;
+      }
+    }
+  }
+
+  // Axis border
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth   = 1;
+  ctx.strokeRect(PAD.l, PAD.t, pw, ph);
+}
+
+function addStickPhase(phase) {
+  const wl     = parseFloat(document.getElementById('xrd-wavelength').value) || 1.54056;
+  const sticks = computeSticks(phase, wl);
+  const phaseId = phase.mp_id || phase.cod_id;
+  // Remove old entry for this phase if present
+  _stickPhases = _stickPhases.filter(p => p.cod_id !== phaseId);
+  // Color index matches position in xrdPhases array for consistency
+  const colorIdx = (xrdPhases.findIndex(p => (p.mp_id||p.cod_id) === phaseId));
+  const ci = colorIdx >= 0 ? colorIdx : _stickPhases.length;
+  _stickPhases.push({
+    name:   phase.name || phase.formula || phaseId,
+    cod_id: phaseId,
+    color:  PHASE_COLORS[ci % PHASE_COLORS.length],
+    sticks: sticks,
+  });
+  if (_previewData) drawPreview();
+}
+
+function removeStickPhase(cod_id) {
+  _stickPhases = _stickPhases.filter(p => p.cod_id !== cod_id);
+  if (_previewData) drawPreview();
+}
+
+function computeSticks(phase, wavelength) {
+  // Priority 1: tick positions computed server-side after refinement
+  if (phase.tick_positions && phase.tick_positions.length > 0) {
+    return phase.tick_positions.map(tt => ({two_theta: tt, rel_int: 1.0, hkl: ''}));
+  }
+  // Priority 2: stick_pattern from COD search (already has rel_int)
+  if (phase.stick_pattern && phase.stick_pattern.length > 0) {
+    return phase.stick_pattern;
+  }
+  // Priority 3: compute from cell params client-side (simple cubic/hex/tetragonal)
+  const a = parseFloat(phase.a) || 4.0;
+  const c = parseFloat(phase.c) || a;
+  const sys = (phase.system || 'cubic').toLowerCase();
+  const sticks = [];
+  const ttMin = parseFloat(document.getElementById('xrd-tt-min').value) || 10;
+  const ttMax = parseFloat(document.getElementById('xrd-tt-max').value) || 90;
+
+  // Generate hkl up to order 6
+  for (let h = 0; h <= 6; h++) for (let k = 0; k <= 6; k++) for (let l = 0; l <= 6; l++) {
+    if (h+k+l === 0) continue;
+    let dInv2;
+    if (sys === 'cubic') {
+      dInv2 = (h*h + k*k + l*l) / (a*a);
+    } else if (sys === 'hexagonal' || sys === 'trigonal') {
+      dInv2 = (4/3) * (h*h + h*k + k*k) / (a*a) + (l*l)/(c*c);
+    } else if (sys === 'tetragonal') {
+      dInv2 = (h*h + k*k) / (a*a) + (l*l)/(c*c);
+    } else {
+      dInv2 = (h*h + k*k + l*l) / (a*a); // ortho/mono approx
+    }
+    if (dInv2 <= 0) continue;
+    const sinTheta = wavelength * Math.sqrt(dInv2) / 2;
+    if (sinTheta >= 1) continue;
+    const tt = 2 * (180/Math.PI) * Math.asin(sinTheta);
+    if (tt >= ttMin && tt <= ttMax) {
+      sticks.push({two_theta: parseFloat(tt.toFixed(3)), rel_int: 1.0,
+                   hkl: `(${h}${k}${l})`});
+    }
+  }
+  // Deduplicate and sort
+  const seen = new Set();
+  return sticks
+    .filter(s => { const k = s.two_theta.toFixed(2); if(seen.has(k)) return false; seen.add(k); return true; })
+    .sort((a,b) => a.two_theta - b.two_theta);
+}
+
+// ── Zoom & Pan ──────────────────────────────────────────────────────────────
+function previewZoom(e) {
+  if (!_previewView) return;
+  e.preventDefault();
+  const canvas = e.currentTarget;
+  const rect   = canvas.getBoundingClientRect();
+  const mouseX = e.clientX - rect.left;
+  const PAD_L  = 48, pw = rect.width - PAD_L - 12;
+  const frac   = (mouseX - PAD_L) / pw;
+
+  const {xMin, xMax} = _previewView;
+  const range = xMax - xMin;
+  const factor = e.deltaY > 0 ? 1.15 : 0.87;
+  const newRange = Math.max(2, Math.min(range * factor, _previewData.tt_max - _previewData.tt_min));
+  const centre = xMin + frac * range;
+  _previewView.xMin = Math.max(_previewData.tt_min, centre - frac * newRange);
+  _previewView.xMax = Math.min(_previewData.tt_max, _previewView.xMin + newRange);
+  drawPreview();
+}
+
+function previewPanStart(e) {
+  if (!_previewView) return;
+  _previewPan = {x: e.clientX, xMin: _previewView.xMin, xMax: _previewView.xMax};
+}
+function previewPanMove(e) {
+  if (!_previewPan || !_previewData) return;
+  const canvas = document.getElementById('xrd-preview-canvas');
+  const rect   = canvas.getBoundingClientRect();
+  const pw     = rect.width - 48 - 12;
+  const range  = _previewView.xMax - _previewView.xMin;
+  const dx     = (e.clientX - _previewPan.x) / pw * range;
+  let newMin   = _previewPan.xMin - dx;
+  let newMax   = _previewPan.xMax - dx;
+  if (newMin < _previewData.tt_min) { newMin = _previewData.tt_min; newMax = newMin + range; }
+  if (newMax > _previewData.tt_max) { newMax = _previewData.tt_max; newMin = newMax - range; }
+  _previewView.xMin = newMin;
+  _previewView.xMax = newMax;
+  drawPreview();
+}
+function previewPanEnd() { _previewPan = null; }
+
+// Redraw on window resize
+window.addEventListener('resize', () => { if (_previewData) drawPreview(); });
+
 // ── XRD Module ────────────────────────────────────────────────────────────
 let xrdFile       = null;
 let xrdCandidates = [];   // full result list from last search
@@ -954,8 +1227,12 @@ function setXrdFile(file) {
   const dz = document.getElementById('xrd-dropzone');
   dz.classList.add('has-file');
   document.getElementById('xrd-dropzone-content').innerHTML =
-    `<div class="dropzone-icon">✅</div><div class="file-name">${file.name}</div>
-     <div class="dropzone-sub">${(file.size/1024).toFixed(1)} KB · click to change</div>`;
+    `<div style="display:flex;align-items:center;gap:10px;justify-content:center;">
+       <span style="font-size:20px;">✅</span>
+       <div><div class="file-name">${file.name}</div>
+       <div class="dropzone-sub">${(file.size/1024).toFixed(1)} KB · click to change</div></div>
+     </div>`;
+  loadXrdPreview(file);
 }
 
 function updateWavelength() {
@@ -1152,10 +1429,12 @@ async function addPhaseFromRow(idx, e) {
       // Still add the phase — just without pymatgen seeding
       setXrdStatus(`⚠ CIF fetch failed: ${data.error} — using fallback seeding.`, 'warn');
       xrdPhases.push({...c});
+      addStickPhase({...c});
     } else {
       // Merge any better cell params from parsed CIF
       xrdPhases.push({...c, ...data, cod_id: c.cod_id, name: c.name||c.formula});
       setXrdStatus(`✓ Added ${c.formula} (CIF loaded, structure factors available).`, 'ok');
+      addStickPhase({...c, ...data, cod_id: c.cod_id, name: c.name||c.formula});
     }
   } catch(_) {
     xrdPhases.push({...c});
@@ -1197,6 +1476,8 @@ async function uploadCIF(e) {
 }
 
 function removePhase(idx) {
+  const removed = xrdPhases[idx];
+  if (removed) removeStickPhase(removed.mp_id || removed.cod_id);
   xrdPhases.splice(idx, 1);
   renderSelectedPhases();
   renderCandidates();
@@ -1368,6 +1649,12 @@ function showXRDResults(data) {
 // ── Reset ───────────────────────────────────────────────────────────────────
 function resetXRD() {
   xrdFile = null; xrdCandidates = []; xrdFiltered = []; xrdPhases = [];
+
+  // Reset preview plot
+  _previewData = null; _stickPhases = [];
+  document.getElementById('xrd-preview-wrap').style.display = 'none';
+  const canvas = document.getElementById('xrd-preview-canvas');
+  if (canvas) { const ctx = canvas.getContext('2d'); ctx.clearRect(0,0,canvas.width,canvas.height); }
 
   // Reset dropzone
   const dz = document.getElementById('xrd-dropzone');
