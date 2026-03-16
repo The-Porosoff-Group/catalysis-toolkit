@@ -467,3 +467,40 @@ if __name__ == '__main__':
         Timer(1.2, open_browser).start()
 
     app.run(debug=True, port=5000, use_reloader=True)
+
+
+@app.route('/api/xrd/preview', methods=['POST'])
+def xrd_preview():
+    """
+    Parse an uploaded XRD file and return data for live preview plot.
+    Downsamples to ≤2000 points for fast rendering.
+    """
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file'}), 400
+        f = request.files['file']
+        safe = re.sub(r'[^\w\-.]', '_', f.filename)
+        path = os.path.join(UPLOAD_DIR, safe)
+        f.save(path)
+
+        import xrd_processor
+        data = xrd_processor.parse_xrd_file(path)
+        tt   = data['tt'].tolist()
+        y    = data['intensity'].tolist()
+
+        # Downsample if too many points (keep every Nth)
+        MAX_PTS = 2000
+        if len(tt) > MAX_PTS:
+            step = len(tt) // MAX_PTS
+            tt = tt[::step]
+            y  = y[::step]
+
+        return jsonify({
+            'tt':        tt,
+            'intensity': y,
+            'tt_min':    round(min(tt), 2),
+            'tt_max':    round(max(tt), 2),
+            'y_max':     round(max(y), 1),
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
