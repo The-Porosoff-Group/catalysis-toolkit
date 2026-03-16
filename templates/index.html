@@ -574,15 +574,18 @@
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto auto;gap:10px;align-items:flex-end;">
             <div class="form-group">
               <label>Elements (space-separated)</label>
-              <input type="text" id="xrd-elements" placeholder="e.g.  Mo  C">
+              <input type="text" id="xrd-elements" placeholder="e.g.  Mo  C"
+                     onkeydown="if(event.key==='Enter') searchPhases(false)">
             </div>
             <div class="form-group">
               <label>Phase / keyword search</label>
-              <input type="text" id="xrd-phase-name" placeholder="e.g. molybdenum carbide">
+              <input type="text" id="xrd-phase-name" placeholder="e.g. molybdenum carbide"
+                     onkeydown="if(event.key==='Enter') searchPhases(false)">
             </div>
             <div class="form-group">
               <label>Exact formula</label>
-              <input type="text" id="xrd-formula" placeholder="e.g. Mo2C">
+              <input type="text" id="xrd-formula" placeholder="e.g. Mo2C"
+                     onkeydown="if(event.key==='Enter') searchPhases(false)">
             </div>
             <div class="form-group">
               <label>Sort by</label>
@@ -1147,7 +1150,7 @@ async function addPhaseFromRow(idx, e) {
     const data = await resp.json();
     if (data.error) {
       // Still add the phase — just without pymatgen seeding
-      setXrdStatus(`⚠ CIF fetch failed — will use fallback seeding.`, 'warn');
+      setXrdStatus(`⚠ CIF fetch failed: ${data.error} — using fallback seeding.`, 'warn');
       xrdPhases.push({...c});
     } else {
       // Merge any better cell params from parsed CIF

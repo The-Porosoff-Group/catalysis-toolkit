@@ -285,10 +285,12 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
     for outer in range(max_outer):
 
         # ── A: Le Bail I_hkl update ───────────────────────────────────────
-        for inner in range(80):
-            all_profs = [_get_profiles(tt_r, st['refs'],
-                                        st['U'], st['V'], st['W'], st['eta'], zero)
-                         for st in phase_state]
+        # Cache profiles once per outer iteration (major speedup)
+        all_profs = [_get_profiles(tt_r, st['refs'],
+                                    st['U'], st['V'], st['W'], st['eta'], zero)
+                     for st in phase_state]
+
+        for inner in range(30):  # 30 is plenty — early-exit handles the rest
             bg_cur  = np.maximum(chebyshev_background(tt_r, bg_c, tt_min, tt_max), 0)
             pat_all = np.zeros(len(tt_r))
             for i_ph, st in enumerate(phase_state):
@@ -311,7 +313,7 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
                 I_new = np.clip(I_new, 1e-6, 1e7)
                 max_chg = max(max_chg, np.max(np.abs(I_new - st['I_hkl'])))
                 st['I_hkl'] = I_new
-            if max_chg < 1e-5: break
+            if max_chg < 0.1: break  # looser tolerance — outer loop handles refinement
 
         # ── B: Update global scale ────────────────────────────────────────
         pat_cur = np.zeros(len(tt_r))
@@ -424,7 +426,7 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
         cur_rwp = rwp(y_r, yc_cur, weights)
         if progress_callback:
             progress_callback(f'Outer iteration {outer+1}: Rwp = {cur_rwp:.2f}%')
-        if abs(prev_rwp - cur_rwp) < 0.005:
+        if abs(prev_rwp - cur_rwp) < 0.02:  # stop when Rwp changes less than 0.02%
             break
         prev_rwp = cur_rwp
 

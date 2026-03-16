@@ -242,12 +242,13 @@ def xrd_search():
             if formula:
                 r = mp_search_formula(formula, MP_API_KEY,
                                        max_results=limit, sort_by=sort_by)
-            elif name:
-                r = mp_search_name(name, MP_API_KEY,
-                                    max_results=limit, sort_by=sort_by)
             elif elements:
                 r = mp_search_elements(elements, MP_API_KEY, strict=strict,
                                         max_results=limit, sort_by=sort_by)
+            elif name:
+                # MP has no free-text search — use our smart name→elements fallback
+                r = mp_search_name(name, MP_API_KEY,
+                                    max_results=limit, sort_by=sort_by)
             else:
                 r = []
             if isinstance(r, list):
@@ -264,6 +265,15 @@ def xrd_search():
                 entry['stick_pattern'] = get_stick_pattern(entry, wavelength)
             except Exception:
                 entry['stick_pattern'] = []
+
+        # Cache any CIF text that came back inline with MP results
+        for entry in combined:
+            cif_text = entry.pop('_cif_text', '')
+            if cif_text and '_cell_length_a' in cif_text:
+                mp_id     = entry.get('mp_id', entry.get('cod_id', ''))
+                cache_key = f"mp:{mp_id}"
+                if mp_id and not _cache.has(cache_key):
+                    _cache.put(cache_key, cif_text)
 
         return jsonify({
             'results':     combined,
@@ -301,6 +311,59 @@ def xrd_fetch_cif():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/xrd/mp_debug_cif', methods=['GET'])
+def mp_debug_cif():
+    """Show structure data from summary endpoint for a given mp-id."""
+    import requests as req
+    if not MP_API_KEY:
+        return jsonify({'error': 'No MP API key configured'})
+    try:
+        mp_id   = request.args.get('id', 'mp-91')
+        headers = {'X-API-KEY': MP_API_KEY, 'Accept': 'application/json'}
+        resp    = req.get(
+            'https://api.materialsproject.org/materials/summary/',
+            headers=headers,
+            params={'material_ids': mp_id, '_fields': 'material_id,formula_pretty,structure',
+                    'deprecated': 'false', '_limit': 1},
+            timeout=15,
+        )
+        data = resp.json().get('data', [])
+        entry = data[0] if data else {}
+        struct = entry.get('structure', {})
+        lattice = struct.get('lattice', {}) if struct else {}
+        return jsonify({
+            'status':          resp.status_code,
+            'formula':         entry.get('formula_pretty'),
+            'has_structure':   bool(struct),
+            'lattice':         lattice,
+            'n_sites':         len(struct.get('sites', [])) if struct else 0,
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+
+@app.route('/api/xrd/mp_debug', methods=['GET'])
+def mp_debug():
+    """Dump raw MP API response for debugging field names."""
+    import requests as req
+    if not MP_API_KEY:
+        return jsonify({'error': 'No MP API key configured'})
+    try:
+        headers = {'X-API-KEY': MP_API_KEY, 'Accept': 'application/json'}
+        resp = req.get('https://api.materialsproject.org/materials/summary/',
+                        headers=headers,
+                        params={'chemsys': 'W', 'deprecated': 'false', '_limit': 1,
+                                '_fields': 'material_id,formula_pretty,symmetry,'
+                                           'energy_above_hull,theoretical,structure'},
+                        timeout=15)
+        return jsonify({
+            'status':  resp.status_code,
+            'raw':     resp.json(),
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)})
 
 
 @app.route('/api/xrd/validate_mp_key', methods=['POST'])
@@ -391,11 +454,16 @@ def open_browser():
 if __name__ == '__main__':
     print("\n" + "━"*50)
     print("  Catalysis Data Toolkit")
-    print(f"  pymatgen:         {'ready' if _pymatgen_ready else 'not installed'}")
+    print(f"  pymatgen:          {'ready' if _pymatgen_ready else 'not installed'}")
     print(f"  Materials Project: {'configured' if MP_API_KEY else 'no API key'}")
-    print(f"  CIF cache:        {_cache.stats()['entries']} entries "
+    print(f"  CIF cache:         {_cache.stats()['entries']} entries "
           f"({_cache.stats()['size_mb']} MB)")
     print("  http://localhost:5000")
     print("━"*50 + "\n")
-    Timer(1.2, open_browser).start()
-    app.run(debug=False, port=5000)
+
+    # Only open browser once — not in the reloader child process
+    import os
+    if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+        Timer(1.2, open_browser).start()
+
+    app.run(debug=True, port=5000, use_reloader=True)
