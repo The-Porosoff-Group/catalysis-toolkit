@@ -37,7 +37,7 @@ MODULES = [
                   'status': bet_processor.MODULE_INFO['status']},
     {'id': 'xrd', 'name': xrd_processor.MODULE_INFO['name'],
                   'icon': xrd_processor.MODULE_INFO['icon'],
-                  'status': xrd_processor.MODULE_INFO['status']},
+                  'status': 'active'},
 ]
 
 
@@ -154,6 +154,113 @@ def open_folder():
 
 
 # ── Launch ────────────────────────────────────────────────────────────────────
+
+
+@app.route('/api/xrd/search', methods=['POST'])
+def xrd_search():
+    try:
+        data = request.get_json()
+        elements = data.get('elements', [])
+        name     = data.get('name', '').strip()
+        wavelength = float(data.get('wavelength', 1.54056))
+
+        if name:
+            results = xrd_processor.search_by_name(name)
+        elif elements:
+            results = xrd_processor.search_by_elements(elements)
+        else:
+            return jsonify({'error': 'Provide elements or a phase name.'}), 400
+
+        if isinstance(results, dict) and 'error' in results:
+            return jsonify(results), 500
+
+        # Add stick patterns for preview
+        for r in results[:8]:
+            try:
+                r['stick_pattern'] = xrd_processor.get_stick_pattern(r, wavelength)
+            except Exception:
+                r['stick_pattern'] = []
+
+        return jsonify({'results': results})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/xrd/fetch_cif', methods=['POST'])
+def xrd_fetch_cif():
+    try:
+        data   = request.get_json()
+        cod_id = data.get('cod_id')
+        if not cod_id:
+            return jsonify({'error': 'cod_id required'}), 400
+        structure = xrd_processor.fetch_cif(cod_id)
+        return jsonify(structure)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/process_xrd', methods=['POST'])
+def process_xrd():
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file uploaded'}), 400
+        f = request.files['file']
+        safe_name   = re.sub(r'[^\w\-.]', '_', f.filename)
+        upload_path = os.path.join(UPLOAD_DIR, safe_name)
+        f.save(upload_path)
+
+        form       = request.form
+        wavelength = float(form.get('wavelength', 1.54056))
+        tt_min     = float(form.get('tt_min', 5.0))
+        tt_max     = float(form.get('tt_max', 90.0))
+        sample_id  = form.get('sample_id', 'Sample')
+        notes      = form.get('notes', '')
+        wl_label   = form.get('wavelength_label', f'λ={wavelength:.5f} Å')
+
+        import json as _json
+        phases_raw = form.get('phases', '[]')
+        phases     = _json.loads(phases_raw)
+
+        if not phases:
+            return jsonify({'error': 'No phases selected for refinement.'}), 400
+
+        output_base = form.get('output_dir', '').strip()
+        if not output_base or not os.path.isdir(output_base):
+            output_base = os.path.join(BASE_DIR, 'results')
+
+        ts      = datetime.now().strftime('%Y%m%d_%H%M%S')
+        safe_id = re.sub(r'[^\w\-]', '_', sample_id)
+        out_dir = os.path.join(output_base, f'XRD_{safe_id}_{ts}')
+
+        result = xrd_processor.run(
+            filepath   = upload_path,
+            output_dir = out_dir,
+            metadata   = {'sample_id': sample_id, 'notes': notes},
+            params     = {
+                'phases':            phases,
+                'wavelength':        wavelength,
+                'wavelength_label':  wl_label,
+                'tt_min':            tt_min,
+                'tt_max':            tt_max,
+                'n_bg_coeffs':       6,
+            }
+        )
+
+        import base64
+        with open(result['plot_path'], 'rb') as img:
+            plot_b64 = base64.b64encode(img.read()).decode()
+
+        return jsonify({
+            'plot_b64':     plot_b64,
+            'statistics':   result['statistics'],
+            'phase_results': result['phase_results'],
+            'zero_shift':    result['zero_shift'],
+            'summary_path':  result['summary_path'],
+            'output_dir':    out_dir,
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
 def open_browser():
     webbrowser.open('http://localhost:5000')
