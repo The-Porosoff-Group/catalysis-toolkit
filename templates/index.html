@@ -1422,7 +1422,7 @@ async function addPhaseFromRow(idx, e) {
   try {
     const resp = await fetch('/api/xrd/fetch_cif', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({cod_id: entryId, source: entrySrc})
+      body: JSON.stringify({cod_id: entryId, source: entrySrc, wavelength: parseFloat(document.getElementById('xrd-wavelength').value)||1.54056})
     });
     const data = await resp.json();
     if (data.error) {
