@@ -28,7 +28,26 @@ Click the green **Code** button on GitHub → **Download ZIP** → extract the f
 ### 3. Run it
 Double-click **`run.bat`**
 
+### 4. (Optional) Configure Materials Project API
+For complete coverage of metals, carbides, nitrides and all single-element phases,
+add your free Materials Project API key to `config.yaml`:
+```yaml
+materials_project:
+  api_key: "your_32_char_key_here"
+```
+Get a free key at https://materialsproject.org → sign in → dashboard → API key.
+
+> **Important:** `config.yaml` is listed in `.gitignore` — your key will never
+> be committed to GitHub.
+
 That's it. The browser opens automatically at `http://localhost:5000`.
+
+**First launch:** `run.bat` creates a `.venv` folder inside the toolkit directory and
+installs all dependencies there (including pymatgen, ~500 MB). This takes a few minutes
+once. Every subsequent launch is instant.
+
+**Self-contained:** Everything lives in the toolkit folder. Nothing is installed to your
+system Python. To uninstall completely, just delete the toolkit folder.
 
 ---
 

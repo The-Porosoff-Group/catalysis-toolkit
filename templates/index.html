@@ -294,6 +294,11 @@
   ::-webkit-scrollbar-track { background: var(--bg); }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 </style>
+<script>
+  // Injected by server at page load
+  window.mpKeySet = {{ mp_key_set | tojson }};
+  window.pymatgenReady = {{ pymatgen_ready | tojson }};
+</script>
 </head>
 <body>
 <div class="app">
@@ -498,126 +503,203 @@
     <!-- ── XRD Module ── -->
     <div class="module-panel" id="module-xrd">
 
-      <!-- Step 1: Upload -->
-      <div class="card">
-        <div class="card-header"><div class="step">1</div><h2>Upload XRD Data File</h2></div>
-        <div class="card-body">
-          <div class="dropzone" id="xrd-dropzone" ondragover="onDragOver2(event)" ondragleave="onDragLeave2(event)" ondrop="onDrop2(event)">
-            <input type="file" id="xrdFileInput" accept=".dat,.xy,.xye,.csv,.txt" onchange="onXrdFileSelect(event)">
-            <div id="xrd-dropzone-content">
-              <div class="dropzone-icon">📊</div>
-              <div class="dropzone-text">Drag & drop XRD data file</div>
-              <div class="dropzone-sub">.dat · .xy · .xye · .csv · .txt</div>
+      <!-- Step 1: Upload + Settings row -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+
+        <div class="card">
+          <div class="card-header"><div class="step">1</div><h2>Upload XRD File</h2></div>
+          <div class="card-body">
+            <div class="dropzone" id="xrd-dropzone" ondragover="onDragOver2(event)" ondragleave="onDragLeave2(event)" ondrop="onDrop2(event)">
+              <input type="file" id="xrdFileInput" accept=".dat,.xy,.xye,.csv,.txt" onchange="onXrdFileSelect(event)">
+              <div id="xrd-dropzone-content">
+                <div class="dropzone-icon">📊</div>
+                <div class="dropzone-text">Drag & drop XRD file</div>
+                <div class="dropzone-sub">.dat · .xy · .xye · .csv · .txt</div>
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- Step 2: Instrument settings -->
-      <div class="card">
-        <div class="card-header"><div class="step">2</div><h2>Instrument Settings</h2></div>
-        <div class="card-body">
-          <div class="form-grid three">
+        <div class="card">
+          <div class="card-header"><div class="step">2</div><h2>Instrument Settings</h2></div>
+          <div class="card-body" style="display:flex;flex-direction:column;gap:12px;">
             <div class="form-group">
               <label>X-ray Source</label>
               <select id="xrd-source" onchange="updateWavelength()">
-                <option value="1.54056">Cu Kα (1.54056 Å)</option>
+                <option value="1.54056">Cu Kα  (1.54056 Å)</option>
                 <option value="1.54439">Cu Kα2 (1.54439 Å)</option>
-                <option value="0.71073">Mo Kα (0.71073 Å)</option>
-                <option value="1.78897">Co Kα (1.78897 Å)</option>
+                <option value="0.71073">Mo Kα  (0.71073 Å)</option>
+                <option value="1.78897">Co Kα  (1.78897 Å)</option>
+                <option value="1.93604">Fe Kα  (1.93604 Å)</option>
+                <option value="2.28970">Cr Kα  (2.28970 Å)</option>
                 <option value="custom">Custom...</option>
               </select>
             </div>
-            <div class="form-group">
-              <label>Wavelength (Å)</label>
-              <input type="number" id="xrd-wavelength" value="1.54056" step="0.00001">
-            </div>
-            <div class="form-group">
-              <label>Sample ID</label>
-              <input type="text" id="xrd-sample-id" placeholder="e.g. β-Mo₂C_350C">
-            </div>
-            <div class="form-group">
-              <label>2θ Min (°)</label>
-              <input type="number" id="xrd-tt-min" value="10" step="0.5">
-            </div>
-            <div class="form-group">
-              <label>2θ Max (°)</label>
-              <input type="number" id="xrd-tt-max" value="90" step="0.5">
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Wavelength (Å)</label>
+                <input type="number" id="xrd-wavelength" value="1.54056" step="0.00001">
+              </div>
+              <div class="form-group">
+                <label>Sample ID</label>
+                <input type="text" id="xrd-sample-id" placeholder="e.g. β-Mo₂C_350C">
+              </div>
+              <div class="form-group">
+                <label>2θ Min (°)</label>
+                <input type="number" id="xrd-tt-min" value="10" step="0.5">
+              </div>
+              <div class="form-group">
+                <label>2θ Max (°)</label>
+                <input type="number" id="xrd-tt-max" value="90" step="0.5">
+              </div>
             </div>
             <div class="form-group">
               <label>Output Folder</label>
-              <input type="text" id="xrd-output-dir" placeholder="Leave blank for results/">
+              <input type="text" id="xrd-output-dir" placeholder="Leave blank → results/ next to app">
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Step 3: Phase identification -->
+      <!-- Step 3: Phase Identification -->
       <div class="card">
-        <div class="card-header"><div class="step">3</div><h2>Phase Identification</h2></div>
-        <div class="card-body" style="display:flex;flex-direction:column;gap:16px;">
+        <div class="card-header">
+          <div class="step">3</div>
+          <h2>Phase Identification</h2>
+          <span style="margin-left:auto;font-size:11px;color:var(--muted);">Searches the Crystallography Open Database (COD)</span>
+        </div>
+        <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
 
-          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
-            <div class="form-group" style="flex:1;min-width:180px;">
-              <label>Elements in sample</label>
-              <input type="text" id="xrd-elements" placeholder="e.g. Mo C   or   Fe O">
+          <!-- Search inputs -->
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto auto;gap:10px;align-items:flex-end;">
+            <div class="form-group">
+              <label>Elements (space-separated)</label>
+              <input type="text" id="xrd-elements" placeholder="e.g.  Mo  C">
             </div>
-            <div class="form-group" style="flex:1;min-width:180px;">
-              <label>Search by phase name</label>
+            <div class="form-group">
+              <label>Phase / keyword search</label>
               <input type="text" id="xrd-phase-name" placeholder="e.g. molybdenum carbide">
             </div>
-            <button class="btn-sm" onclick="searchPhases()" style="margin-bottom:1px;">🔍 Search COD</button>
+            <div class="form-group">
+              <label>Exact formula</label>
+              <input type="text" id="xrd-formula" placeholder="e.g. Mo2C">
+            </div>
+            <div class="form-group">
+              <label>Sort by</label>
+              <select id="xrd-sort">
+                <option value="formula">Formula</option>
+                <option value="spacegroup">Space group</option>
+                <option value="year_desc">Year (newest)</option>
+                <option value="year_asc">Year (oldest)</option>
+                <option value="cell_a">Cell a</option>
+              </select>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <div style="display:flex;gap:6px;">
+                <button class="btn-sm" onclick="searchPhases(false)" title="Exact element search">🔍 Search</button>
+                <button class="btn-sm" onclick="searchPhases(true)" title="Allow extra elements">+ Loose</button>
+              </div>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <span style="font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.6px;">Source:</span>
+                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;">
+                  <input type="radio" name="xrd-source-db" value="both" checked onchange="updateSourceBadge()"> Both
+                </label>
+                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;">
+                  <input type="radio" name="xrd-source-db" value="cod" onchange="updateSourceBadge()"> COD only
+                </label>
+                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;" id="mp-radio-wrap">
+                  <input type="radio" name="xrd-source-db" value="mp" onchange="updateSourceBadge()"> MP only
+                </label>
+                <span id="mp-key-badge"></span>
+              </div>
+            </div>
           </div>
 
-          <div id="xrd-search-status" style="font-size:12px;font-family:var(--mono);color:var(--muted);"></div>
+          <div id="xrd-search-status" style="font-size:12px;font-family:var(--mono);color:var(--muted);min-height:16px;"></div>
 
-          <!-- Candidate list -->
-          <div id="xrd-candidates" style="display:none;">
-            <label style="display:block;margin-bottom:8px;">Candidates — click to add to refinement</label>
-            <div id="xrd-candidate-list" style="display:flex;flex-direction:column;gap:6px;max-height:280px;overflow-y:auto;"></div>
+          <!-- Candidate list — scrollable -->
+          <div id="xrd-candidates-wrap" style="display:none;">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+              <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;">
+                Candidates <span id="xrd-count-badge" class="pill blue" style="margin-left:4px;"></span>
+                <span id="xrd-mp-badge" class="pill green" style="margin-left:4px;display:none;"></span>
+                <span id="xrd-cod-badge" class="pill yellow" style="margin-left:4px;display:none;"></span>
+              </label>
+              <input type="text" id="xrd-filter" placeholder="Filter results..."
+                     oninput="filterCandidates()"
+                     style="width:200px;font-size:12px;padding:4px 8px;">
+              <span style="font-size:11px;color:var(--muted);margin-left:auto;">Click a row to add to refinement</span>
+            </div>
+            <!-- Table header -->
+            <div style="display:grid;grid-template-columns:60px 1fr 90px 55px 70px 70px 70px 60px;gap:0;
+                        padding:5px 10px;background:var(--surface2);border:1px solid var(--border);
+                        border-radius:6px 6px 0 0;font-size:10px;font-weight:700;color:var(--muted);
+                        text-transform:uppercase;letter-spacing:.8px;">
+              <span>COD ID</span><span>Formula / Name</span><span>Space group</span>
+              <span>a (Å)</span><span>b (Å)</span><span>c (Å)</span><span>Year</span><span></span>
+            </div>
+            <div id="xrd-candidate-list"
+                 style="max-height:320px;overflow-y:auto;border:1px solid var(--border);
+                        border-top:none;border-radius:0 0 6px 6px;"></div>
+            <div id="xrd-load-more-wrap" style="display:none;margin-top:8px;">
+              <button class="btn-sm" onclick="loadMoreCOD()">Load 100 more results...</button>
+            </div>
           </div>
 
           <!-- Manual CIF upload -->
-          <div style="display:flex;align-items:center;gap:10px;">
-            <span style="font-size:12px;color:var(--muted);">or</span>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <span style="font-size:12px;color:var(--muted);">or upload a CIF directly:</span>
             <label class="btn-sm" style="cursor:pointer;">
-              📎 Upload CIF file
+              📎 Upload .cif file
               <input type="file" accept=".cif" onchange="uploadCIF(event)" style="display:none;">
             </label>
           </div>
 
-          <!-- Selected phases -->
-          <div id="xrd-selected-phases-wrap" style="display:none;">
-            <label style="display:block;margin-bottom:8px;">Phases for refinement</label>
+          <!-- Selected phases for refinement -->
+          <div id="xrd-selected-wrap" style="display:none;">
+            <label style="display:block;margin-bottom:8px;font-size:11px;font-weight:700;
+                          color:var(--muted);text-transform:uppercase;letter-spacing:.8px;">
+              Phases queued for refinement
+            </label>
             <div id="xrd-selected-phases" style="display:flex;flex-direction:column;gap:6px;"></div>
           </div>
         </div>
       </div>
 
-      <!-- Step 4: Refine -->
+      <!-- Step 4: Run -->
       <div class="card">
-        <div class="card-header"><div class="step">4</div><h2>Run Refinement</h2></div>
-        <div class="card-body" style="display:flex;flex-direction:column;gap:16px;">
-          <button class="btn-process" id="btn-xrd" onclick="runXRD()">
-            <span>🔬</span> Run Le Bail Refinement
-          </button>
+        <div class="card-header"><div class="step">4</div><h2>Run Le Bail Refinement</h2></div>
+        <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
+
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <button class="btn-process" id="btn-xrd" onclick="runXRD()">
+              <span>🔬</span> Run Le Bail Refinement
+            </button>
+            <button class="btn-sm" onclick="resetXRD()" title="Clear everything and start fresh">↺ Reset</button>
+          </div>
+
           <div class="progress-wrap" id="xrd-progress-wrap">
             <div class="spinner"></div>
             <div class="progress-text" id="xrd-progress-text">Initialising...</div>
           </div>
+
+          <!-- Error box — stays visible even after errors, doesn't require page refresh -->
           <div class="error-box" id="xrd-error-box"></div>
 
-          <!-- Results -->
+          <!-- Results panel — only hidden, not destroyed, so results persist -->
           <div class="results-panel" id="xrd-results-panel">
-            <div class="results-header">
+            <div class="results-header" style="flex-wrap:wrap;gap:8px;">
               <h3>Refinement Results</h3>
               <div id="xrd-stats-pills"></div>
+              <div id="xrd-pymatgen-pill"></div>
             </div>
             <div class="stats-grid" id="xrd-stats-grid"></div>
-            <div id="xrd-phase-results" style="margin-top:8px;"></div>
-            <img class="plot-img" id="xrd-result-plot" src="" alt="XRD refinement plot">
+            <div id="xrd-phase-results"></div>
+            <img class="plot-img" id="xrd-result-plot" src="" alt="XRD refinement plot"
+                 style="display:none;">
             <div class="download-row" id="xrd-download-row"></div>
           </div>
+
         </div>
       </div>
 
@@ -846,11 +928,15 @@ function showError(msg) {
 }
 function hideError() { document.getElementById('error-box').classList.remove('visible'); }
 
+
 // ── XRD Module ────────────────────────────────────────────────────────────
 let xrdFile       = null;
-let xrdCandidates = [];
-let xrdPhases     = [];
+let xrdCandidates = [];   // full result list from last search
+let xrdFiltered   = [];   // after client-side filter
+let xrdPhases     = [];   // phases queued for refinement
+let xrdSearchOffset = 0;  // for pagination
 
+// Drag-and-drop
 function onDragOver2(e)  { e.preventDefault(); document.getElementById('xrd-dropzone').classList.add('dragover'); }
 function onDragLeave2()  { document.getElementById('xrd-dropzone').classList.remove('dragover'); }
 function onDrop2(e) {
@@ -866,187 +952,464 @@ function setXrdFile(file) {
   dz.classList.add('has-file');
   document.getElementById('xrd-dropzone-content').innerHTML =
     `<div class="dropzone-icon">✅</div><div class="file-name">${file.name}</div>
-     <div class="dropzone-sub">${(file.size/1024).toFixed(1)} KB</div>`;
+     <div class="dropzone-sub">${(file.size/1024).toFixed(1)} KB · click to change</div>`;
 }
 
 function updateWavelength() {
-  const sel = document.getElementById('xrd-source').value;
-  if (sel !== 'custom') document.getElementById('xrd-wavelength').value = sel;
+  const val = document.getElementById('xrd-source').value;
+  if (val !== 'custom') document.getElementById('xrd-wavelength').value = val;
 }
 
-async function searchPhases() {
+function updateSourceBadge() {
+  const src = document.querySelector('input[name="xrd-source-db"]:checked')?.value || 'both';
+  const badge = document.getElementById('mp-key-badge');
+  if (src === 'mp' || src === 'both') {
+    badge.innerHTML = window.mpKeySet
+      ? '<span class="pill green" style="font-size:10px;padding:2px 7px;">MP key ✓</span>'
+      : '<span class="pill yellow" style="font-size:10px;padding:2px 7px;" title="Add Materials Project API key to config.yaml">MP: no key</span>';
+  } else {
+    badge.innerHTML = '';
+  }
+}
+
+// Set initial badge state
+document.addEventListener('DOMContentLoaded', () => {
+  updateSourceBadge();
+});
+
+// ── COD Search ─────────────────────────────────────────────────────────────
+async function searchPhases(allowExtra = false) {
   const elements = document.getElementById('xrd-elements').value.trim().split(/\s+/).filter(Boolean);
   const name     = document.getElementById('xrd-phase-name').value.trim();
-  if (!elements.length && !name) { alert('Enter elements or a phase name.'); return; }
-  const wl = parseFloat(document.getElementById('xrd-wavelength').value);
+  const formula  = document.getElementById('xrd-formula').value.trim();
+  const sort_by  = document.getElementById('xrd-sort').value;
+  const wl       = parseFloat(document.getElementById('xrd-wavelength').value);
 
-  document.getElementById('xrd-search-status').textContent = '🔍 Querying COD database...';
-  document.getElementById('xrd-candidates').style.display = 'none';
+  if (!elements.length && !name && !formula) {
+    setXrdStatus('⚠ Enter elements, a keyword, or a formula first.', 'warn');
+    return;
+  }
+
+  setXrdStatus('🔍 Querying Crystallography Open Database...', 'info');
+  document.getElementById('xrd-candidates-wrap').style.display = 'none';
+  xrdSearchOffset = 0;
+
+  const source = document.querySelector('input[name="xrd-source-db"]:checked')?.value || 'both';
 
   try {
     const resp = await fetch('/api/xrd/search', {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({elements, name, wavelength: wl})
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        elements, name, formula,
+        sort_by, strict: !allowExtra,
+        limit: 100, wavelength: wl, source
+      })
     });
     const data = await resp.json();
-    if (data.error) { document.getElementById('xrd-search-status').textContent = '✗ ' + data.error; return; }
+    if (data.error) { setXrdStatus('✗ ' + data.error, 'error'); return; }
+
     xrdCandidates = data.results || [];
-    document.getElementById('xrd-search-status').textContent =
-      `Found ${xrdCandidates.length} candidates. Click to add to refinement.`;
+    xrdFiltered   = [...xrdCandidates];
+
+    const n   = xrdCandidates.length;
+    const nmp = data.mp_count  || 0;
+    const nco = data.cod_count || 0;
+
+    let statusMsg = `Found ${n} candidate${n!==1?'s':''}.`;
+    if (n === 100) statusMsg += ' (showing first 100 — try a more specific search)';
+    setXrdStatus(statusMsg, 'ok');
+
+    document.getElementById('xrd-count-badge').textContent = n;
+    // Source breakdown badges
+    const mpBadge  = document.getElementById('xrd-mp-badge');
+    const codBadge = document.getElementById('xrd-cod-badge');
+    if (nmp > 0) { mpBadge.textContent  = `${nmp} MP`;  mpBadge.style.display  = 'inline-flex'; }
+    else           mpBadge.style.display  = 'none';
+    if (nco > 0) { codBadge.textContent = `${nco} COD`; codBadge.style.display = 'inline-flex'; }
+    else           codBadge.style.display = 'none';
+
+    document.getElementById('xrd-filter').value = '';
     renderCandidates();
+
   } catch(e) {
-    document.getElementById('xrd-search-status').textContent = '✗ Search failed: ' + e.message;
+    setXrdStatus('✗ Network error: ' + e.message, 'error');
   }
 }
 
+async function loadMoreCOD() {
+  xrdSearchOffset += 100;
+  const elements = document.getElementById('xrd-elements').value.trim().split(/\s+/).filter(Boolean);
+  const name     = document.getElementById('xrd-phase-name').value.trim();
+  const formula  = document.getElementById('xrd-formula').value.trim();
+  const sort_by  = document.getElementById('xrd-sort').value;
+  const wl       = parseFloat(document.getElementById('xrd-wavelength').value);
+
+  setXrdStatus('🔍 Loading more results...', 'info');
+  try {
+    const resp = await fetch('/api/xrd/search', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({elements, name, formula, sort_by, strict:false,
+                            limit:100, wavelength:wl, offset:xrdSearchOffset})
+    });
+    const data = await resp.json();
+    if (data.error) { setXrdStatus('✗ '+data.error,'error'); return; }
+    const more = data.results||[];
+    xrdCandidates = [...xrdCandidates, ...more];
+    xrdFiltered   = [...xrdCandidates];
+    document.getElementById('xrd-count-badge').textContent = xrdCandidates.length;
+    document.getElementById('xrd-filter').value = '';
+    setXrdStatus(`Showing ${xrdCandidates.length} results total.`,'ok');
+    renderCandidates();
+  } catch(e) { setXrdStatus('✗ '+e.message,'error'); }
+}
+
+function filterCandidates() {
+  const q = document.getElementById('xrd-filter').value.toLowerCase();
+  xrdFiltered = q
+    ? xrdCandidates.filter(c =>
+        (c.formula||'').toLowerCase().includes(q) ||
+        (c.name||'').toLowerCase().includes(q) ||
+        (c.spacegroup||'').toLowerCase().includes(q) ||
+        (c.cod_id||'').includes(q) ||
+        (c.mineral||'').toLowerCase().includes(q))
+    : [...xrdCandidates];
+  renderCandidates();
+}
+
 function renderCandidates() {
-  const wrap = document.getElementById('xrd-candidates');
+  const wrap = document.getElementById('xrd-candidates-wrap');
   const list = document.getElementById('xrd-candidate-list');
   wrap.style.display = 'block';
   list.innerHTML = '';
-  xrdCandidates.slice(0,12).forEach((c,i) => {
-    const div = document.createElement('div');
-    div.style.cssText='display:flex;align-items:center;gap:10px;padding:8px 12px;'+
-      'background:var(--surface2);border:1px solid var(--border);border-radius:6px;cursor:pointer;';
-    div.onmouseover = () => div.style.borderColor='var(--accent)';
-    div.onmouseout  = () => div.style.borderColor='var(--border)';
-    div.innerHTML =
-      `<span style="font-family:var(--mono);font-size:12px;color:var(--accent);">${c.formula}</span>
-       <span style="font-size:11px;color:var(--muted);">${c.spacegroup} · COD ${c.cod_id}</span>
-       <span style="font-size:11px;color:var(--muted);margin-left:auto;">a=${c.a?.toFixed(3)} c=${c.c?.toFixed(3)}</span>
-       <button class="btn-sm" style="padding:3px 10px;font-size:11px;" onclick="addPhase(${i},event)">+ Add</button>`;
-    list.appendChild(div);
+
+  const alreadyAdded = new Set(xrdPhases.map(p => p.cod_id));
+  const BG='#161b22'; GRID='#2d333b'; TEXT='#e6edf3'; MUT='#7d8590'; ACC='#58a6ff';
+
+  xrdFiltered.forEach((c, i) => {
+    const added = alreadyAdded.has(c.cod_id);
+    const row = document.createElement('div');
+    row.style.cssText = `display:grid;grid-template-columns:60px 1fr 90px 55px 70px 70px 70px 60px;
+      gap:0;padding:7px 10px;border-bottom:1px solid ${GRID};cursor:pointer;
+      background:${added ? 'rgba(57,211,83,0.06)' : BG};
+      transition:background 0.1s;font-size:12px;`;
+    row.onmouseover = () => { if(!added) row.style.background='rgba(88,166,255,0.07)'; };
+    row.onmouseout  = () => { row.style.background = added?'rgba(57,211,83,0.06)':BG; };
+
+    const fmt   = (v,d=3) => v!=null ? parseFloat(v).toFixed(d) : '—';
+    const nameStr = (c.mineral||c.name||c.formula||'').slice(0,35);
+    const srcBadge = c.source === 'mp'
+      ? `<span style="font-size:9px;background:rgba(57,211,83,.15);color:#39d353;
+              border:1px solid #39d353;border-radius:3px;padding:0 4px;margin-left:4px;">MP</span>`
+      : `<span style="font-size:9px;background:rgba(88,166,255,.15);color:#58a6ff;
+              border:1px solid #58a6ff;border-radius:3px;padding:0 4px;margin-left:4px;">COD</span>`;
+    const fmtStr  = c.formula ? `<span style="color:${ACC};font-family:var(--mono)">${c.formula}</span>${srcBadge}` : '';
+    const stabStr = c.stability ? `<span style="color:${MUT};font-size:9px;">${c.stability}</span>` : '';
+
+    row.innerHTML = `
+      <span style="color:${MUT};font-family:var(--mono);font-size:11px;">${c.cod_id||c.mp_id||''}</span>
+      <span style="display:flex;flex-direction:column;gap:1px;">${fmtStr}
+        <span style="color:${MUT};font-size:10px;">${nameStr}</span>
+        ${stabStr}</span>
+      <span style="color:${MUT};font-size:11px;">${(c.spacegroup||'').slice(0,12)}</span>
+      <span style="font-family:var(--mono);font-size:11px;">${fmt(c.a)}</span>
+      <span style="font-family:var(--mono);font-size:11px;">${fmt(c.b)}</span>
+      <span style="font-family:var(--mono);font-size:11px;">${fmt(c.c)}</span>
+      <span style="color:${MUT};font-size:11px;">${c.year||''}</span>
+      <span>${added
+        ? '<span style="color:#39d353;font-size:11px;">✓ added</span>'
+        : `<button class="btn-sm" style="padding:2px 8px;font-size:10px;"
+             onclick="addPhaseFromRow(${i},event)">+ Add</button>`
+      }</span>`;
+
+    list.appendChild(row);
   });
+
+  // Show load more if we hit the 100 limit
+  const lmw = document.getElementById('xrd-load-more-wrap');
+  lmw.style.display = xrdCandidates.length >= 100 ? 'block' : 'none';
 }
 
-function addPhase(idx, e) {
+async function addPhaseFromRow(idx, e) {
   if (e) e.stopPropagation();
-  const c = xrdCandidates[idx];
-  if (xrdPhases.find(p => p.cod_id === c.cod_id)) return;
-  xrdPhases.push({...c, use_cod: true});
+  const c = xrdFiltered[idx];
+  if (!c || xrdPhases.find(p => p.cod_id === c.cod_id)) return;
+
+  // Fetch full CIF so the server can use pymatgen for structure factors
+  const entryId  = c.mp_id || c.cod_id;
+  const entrySrc = c.source || 'cod';
+  setXrdStatus(`📥 Fetching CIF for ${c.formula} [${entryId}] from ${entrySrc.toUpperCase()}...`, 'info');
+  try {
+    const resp = await fetch('/api/xrd/fetch_cif', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({cod_id: entryId, source: entrySrc})
+    });
+    const data = await resp.json();
+    if (data.error) {
+      // Still add the phase — just without pymatgen seeding
+      setXrdStatus(`⚠ CIF fetch failed — will use fallback seeding.`, 'warn');
+      xrdPhases.push({...c});
+    } else {
+      // Merge any better cell params from parsed CIF
+      xrdPhases.push({...c, ...data, cod_id: c.cod_id, name: c.name||c.formula});
+      setXrdStatus(`✓ Added ${c.formula} (CIF loaded, structure factors available).`, 'ok');
+    }
+  } catch(_) {
+    xrdPhases.push({...c});
+    setXrdStatus(`⚠ Network error — added ${c.formula} without CIF.`, 'warn');
+  }
+
+  renderCandidates();
   renderSelectedPhases();
 }
 
 async function uploadCIF(e) {
   const file = e.target.files[0]; if (!file) return;
   const text = await file.text();
-  // Parse minimal cell from CIF client-side
-  const getVal = (key) => { const m=text.match(new RegExp(key+'\\s+([\\d\\.\\(\\)]+)')); return m?parseFloat(m[1]):null; };
+  const getVal = (key) => {
+    const m = text.match(new RegExp(key + '\\s+([\\d\\.\\(\\)]+)'));
+    return m ? parseFloat(m[1]) : null;
+  };
+  const sgm = text.match(/_symmetry_Int_Tables_number\s+(\d+)/);
+  const sg  = sgm ? parseInt(sgm[1]) : 1;
+  const fm  = text.match(/_chemical_formula_sum\s+['"](.*?)['"]/);
+  const formula = fm ? fm[1].trim() : file.name.replace('.cif','');
+
   const phase = {
-    name: file.name.replace('.cif',''),
-    formula: text.match(/_chemical_formula_sum\s+['"]?([^\'"\n]+)/)?.[1]?.trim() || file.name,
-    a: getVal('_cell_length_a'), b: getVal('_cell_length_b'), c: getVal('_cell_length_c'),
-    alpha: getVal('_cell_angle_alpha')||90, beta: getVal('_cell_angle_beta')||90, gamma: getVal('_cell_angle_gamma')||90,
-    spacegroup_number: parseInt(text.match(/_symmetry_Int_Tables_number\s+(\d+)/)?.[1]||'1'),
-    cod_id: 'manual', cif_text: text, use_cod: false,
+    name:              file.name.replace('.cif',''),
+    formula,
+    a: getVal('_cell_length_a') || 4.0,
+    b: getVal('_cell_length_b'),
+    c: getVal('_cell_length_c'),
+    alpha: getVal('_cell_angle_alpha') || 90.0,
+    beta:  getVal('_cell_angle_beta')  || 90.0,
+    gamma: getVal('_cell_angle_gamma') || 90.0,
+    spacegroup_number: sg,
+    cod_id: 'manual',
+    cif_text: text,
   };
   xrdPhases.push(phase);
   renderSelectedPhases();
+  setXrdStatus(`✓ Added ${formula} from uploaded CIF.`, 'ok');
 }
 
 function removePhase(idx) {
-  xrdPhases.splice(idx,1);
+  xrdPhases.splice(idx, 1);
   renderSelectedPhases();
+  renderCandidates();
 }
 
 function renderSelectedPhases() {
-  const wrap = document.getElementById('xrd-selected-phases-wrap');
+  const wrap = document.getElementById('xrd-selected-wrap');
   const cont = document.getElementById('xrd-selected-phases');
   wrap.style.display = xrdPhases.length ? 'block' : 'none';
   cont.innerHTML = '';
-  xrdPhases.forEach((ph,i) => {
+  const COLORS = ['#f78166','#56d364','#e3b341','#bc8cff','#79c0ff','#ffa657'];
+  xrdPhases.forEach((ph, i) => {
+    const c = COLORS[i % COLORS.length];
     const div = document.createElement('div');
-    div.style.cssText='display:flex;align-items:center;gap:10px;padding:8px 12px;'+
-      'background:var(--surface2);border:1px solid var(--accent);border-radius:6px;';
-    div.innerHTML =
-      `<span style="font-size:13px;font-weight:700;color:var(--accent);">✓</span>
-       <span style="font-family:var(--mono);font-size:12px;">${ph.formula||ph.name}</span>
-       <span style="font-size:11px;color:var(--muted);">COD ${ph.cod_id}</span>
-       <span style="font-size:11px;color:var(--muted);margin-left:auto;">a=${ph.a?.toFixed(3)} c=${ph.c?.toFixed(3)||'—'}</span>
-       <button class="btn-sm" style="padding:3px 8px;font-size:11px;" onclick="removePhase(${i})">✕</button>`;
+    div.style.cssText = `display:flex;align-items:center;gap:10px;padding:8px 14px;
+      background:var(--surface2);border:1px solid ${c};border-radius:6px;`;
+    div.innerHTML = `
+      <span style="width:10px;height:10px;border-radius:50%;background:${c};flex-shrink:0;"></span>
+      <span style="font-family:var(--mono);font-size:13px;font-weight:700;">${ph.formula||ph.name}</span>
+      <span style="font-size:11px;color:var(--muted);">${ph.spacegroup||''}</span>
+      <span style="font-size:11px;color:var(--muted);font-family:var(--mono);">
+        a=${parseFloat(ph.a||0).toFixed(3)} c=${parseFloat(ph.c||0).toFixed(3)} Å
+      </span>
+      ${ph.cif_text ? '<span class="pill green" style="font-size:10px;padding:2px 8px;">CIF ✓</span>' : ''}
+      <span style="margin-left:auto;font-size:11px;color:var(--muted);">COD ${ph.cod_id}</span>
+      <button class="btn-sm" style="padding:3px 8px;font-size:11px;" onclick="removePhase(${i})">✕</button>`;
     cont.appendChild(div);
   });
 }
 
+// ── Run Refinement ──────────────────────────────────────────────────────────
 async function runXRD() {
   const errEl = document.getElementById('xrd-error-box');
   errEl.classList.remove('visible');
-  if (!xrdFile)         { errEl.textContent='Upload an XRD data file first.';  errEl.classList.add('visible'); return; }
-  if (!xrdPhases.length){ errEl.textContent='Add at least one phase to refine.'; errEl.classList.add('visible'); return; }
+
+  if (!xrdFile)        { showXrdError('Upload an XRD data file first.'); return; }
+  if (!xrdPhases.length){ showXrdError('Add at least one phase to refine.'); return; }
 
   document.getElementById('btn-xrd').disabled = true;
   document.getElementById('xrd-progress-wrap').classList.add('visible');
-  document.getElementById('xrd-results-panel').classList.remove('visible');
 
-  const steps=['Parsing data file...','Generating reflections...','Running Le Bail iterations...','Refining cell parameters...','Computing statistics...'];
-  let si=0;
-  const timer=setInterval(()=>{ si=(si+1)%steps.length; document.getElementById('xrd-progress-text').textContent=steps[si]; },2500);
+  const steps = [
+    'Parsing data file...',
+    'Validating phase structures...',
+    'Computing structure factors with pymatgen...',
+    'Running Le Bail intensity partitioning...',
+    'Refining cell parameters and peak shape...',
+    'Computing Rwp, Rp, χ², crystallite sizes...',
+    'Generating plots...',
+  ];
+  let si = 0;
+  document.getElementById('xrd-progress-text').textContent = steps[0];
+  const timer = setInterval(() => {
+    si = (si+1) % steps.length;
+    document.getElementById('xrd-progress-text').textContent = steps[si];
+  }, 3000);
 
   try {
     const fd = new FormData();
     fd.append('file',        xrdFile);
     fd.append('wavelength',  document.getElementById('xrd-wavelength').value);
-    fd.append('wavelength_label', document.getElementById('xrd-source').options[document.getElementById('xrd-source').selectedIndex].text);
+    fd.append('wavelength_label',
+      document.getElementById('xrd-source').options[
+        document.getElementById('xrd-source').selectedIndex].text);
     fd.append('sample_id',   document.getElementById('xrd-sample-id').value || xrdFile.name);
     fd.append('tt_min',      document.getElementById('xrd-tt-min').value);
     fd.append('tt_max',      document.getElementById('xrd-tt-max').value);
     fd.append('output_dir',  document.getElementById('xrd-output-dir').value);
-    fd.append('phases',      JSON.stringify(xrdPhases));
+    // Send phases WITHOUT cif_text (server pulls from cache)
+    const phases_stripped = xrdPhases.map(p => {
+      const {cif_text, ...rest} = p; return rest;
+    });
+    fd.append('phases', JSON.stringify(phases_stripped));
 
-    const resp = await fetch('/api/process_xrd',{method:'POST',body:fd});
+    const resp = await fetch('/api/process_xrd', {method:'POST', body:fd});
     const data = await resp.json();
     clearInterval(timer);
-    if (data.error) { document.getElementById('xrd-progress-wrap').classList.remove('visible'); errEl.textContent=data.error+(data.trace?'\n\n'+data.trace:''); errEl.classList.add('visible'); return; }
     document.getElementById('xrd-progress-wrap').classList.remove('visible');
+
+    if (data.error) {
+      showXrdError(data.error + (data.trace ? '\n\n' + data.trace : ''));
+      document.getElementById('btn-xrd').disabled = false;
+      return;
+    }
     showXRDResults(data);
   } catch(e) {
     clearInterval(timer);
     document.getElementById('xrd-progress-wrap').classList.remove('visible');
-    errEl.textContent='Error: '+e.message; errEl.classList.add('visible');
+    showXrdError('Unexpected error: ' + e.message);
   }
-  document.getElementById('btn-xrd').disabled=false;
+  document.getElementById('btn-xrd').disabled = false;
 }
 
 function showXRDResults(data) {
   const panel = document.getElementById('xrd-results-panel');
   panel.classList.add('visible');
 
-  const st = data.statistics||{};
+  const st = data.statistics || {};
+  const gof = parseFloat(st.GoF || 0);
+  const gofClass = gof < 3 ? 'green' : gof < 6 ? 'blue' : 'yellow';
   document.getElementById('xrd-stats-pills').innerHTML =
-    `<span class="pill ${st.GoF<3?'green':st.GoF<6?'blue':'yellow'}">GoF = ${st.GoF}</span>
-     <span class="pill blue">Rwp = ${st.Rwp}%</span>`;
+    `<span class="pill ${gofClass}">GoF = ${st.GoF}</span>
+     <span class="pill blue">Rwp = ${st.Rwp}%</span>
+     <span class="pill blue">Rp = ${st.Rp}%</span>`;
 
+  document.getElementById('xrd-pymatgen-pill').innerHTML = data.pymatgen_used
+    ? '<span class="pill green" title="Structure factors computed with pymatgen XRDCalculator">pymatgen ✓</span>'
+    : '<span class="pill yellow" title="Pymatgen unavailable — used observed peak heights for seeding">fallback seeding</span>';
+
+  // Stats grid
   const sg = document.getElementById('xrd-stats-grid');
-  sg.innerHTML='';
-  [{l:'Rwp',v:st.Rwp+'%'},{l:'Rp',v:st.Rp+'%'},{l:'χ²',v:st.chi2},{l:'GoF',v:st.GoF},
-   {l:'Zero shift',v:data.zero_shift+'°'}].forEach(s=>{
-    sg.innerHTML+=`<div class="stat-box"><div class="stat-label">${s.l}</div><div class="stat-val">${s.v}</div></div>`;
+  sg.innerHTML = '';
+  [{l:'Rwp',v:st.Rwp+'%'},{l:'Rp',v:st.Rp+'%'},{l:'χ²',v:st.chi2},
+   {l:'GoF',v:st.GoF},{l:'Zero shift',v:data.zero_shift+'°'}].forEach(s => {
+    sg.innerHTML += `<div class="stat-box">
+      <div class="stat-label">${s.l}</div>
+      <div class="stat-val" style="font-size:18px;">${s.v}</div></div>`;
   });
 
+  // Phase results
   const pr = document.getElementById('xrd-phase-results');
-  pr.innerHTML='';
-  (data.phase_results||[]).forEach(ph=>{
-    pr.innerHTML+=`
-      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:8px;">
-        <div style="font-weight:800;font-size:14px;color:var(--accent);margin-bottom:8px;">${ph.name}</div>
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-family:var(--mono);font-size:12px;">
+  pr.innerHTML = '';
+  const COLORS = ['#f78166','#56d364','#e3b341','#bc8cff','#79c0ff','#ffa657'];
+  (data.phase_results || []).forEach((ph, i) => {
+    const c = COLORS[i % COLORS.length];
+    pr.innerHTML += `
+      <div style="background:var(--surface2);border:1px solid ${c};
+                  border-radius:8px;padding:14px 16px;margin-bottom:8px;">
+        <div style="font-weight:800;font-size:14px;color:${c};margin-bottom:10px;">
+          ${ph.name}
+          <span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:8px;">
+            ${ph.spacegroup||''} · COD ${ph.cod_id||'manual'}
+          </span>
+          ${ph.seeded_by==='pymatgen'
+            ? '<span class="pill green" style="font-size:10px;padding:2px 8px;margin-left:8px;">SF ✓</span>'
+            : ''}
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;
+                    font-family:var(--mono);font-size:12px;">
           <div><span style="color:var(--muted);">a = </span>${ph.a} Å</div>
+          <div><span style="color:var(--muted);">b = </span>${ph.b} Å</div>
           <div><span style="color:var(--muted);">c = </span>${ph.c} Å</div>
-          <div><span style="color:var(--muted);">Size = </span>${ph.crystallite_size_nm} nm</div>
+          <div><span style="color:var(--muted);">α = </span>${ph.alpha}°</div>
+          <div><span style="color:var(--muted);">β = </span>${ph.beta}°</div>
+          <div><span style="color:var(--muted);">γ = </span>${ph.gamma}°</div>
+          <div><span style="color:var(--muted);">Size = </span>${ph.crystallite_size_nm ?? '—'} nm</div>
           <div><span style="color:var(--muted);">FWHM = </span>${ph.fwhm_deg}°</div>
+          <div><span style="color:var(--muted);">η = </span>${ph.eta}</div>
+          <div><span style="color:var(--muted);">Wt% ≈ </span>${ph['weight_fraction_%']}%</div>
         </div>
       </div>`;
   });
 
-  if (data.plot_b64) document.getElementById('xrd-result-plot').src='data:image/png;base64,'+data.plot_b64;
+  // Plot
+  const plotEl = document.getElementById('xrd-result-plot');
+  if (data.plot_b64) {
+    plotEl.src = 'data:image/png;base64,' + data.plot_b64;
+    plotEl.style.display = 'block';
+  }
 
-  document.getElementById('xrd-download-row').innerHTML=`
+  // Downloads
+  document.getElementById('xrd-download-row').innerHTML = `
     <button class="btn-sm green" onclick="openFolder('${escPath(data.output_dir)}')">📁 Open Folder</button>
     <button class="btn-sm" onclick="downloadFile('${escPath(data.summary_path)}')">⬇ Summary CSV</button>`;
 
-  panel.scrollIntoView({behavior:'smooth',block:'start'});
+  panel.scrollIntoView({behavior:'smooth', block:'start'});
 }
+
+// ── Reset ───────────────────────────────────────────────────────────────────
+function resetXRD() {
+  xrdFile = null; xrdCandidates = []; xrdFiltered = []; xrdPhases = [];
+
+  // Reset dropzone
+  const dz = document.getElementById('xrd-dropzone');
+  dz.classList.remove('has-file', 'dragover');
+  document.getElementById('xrd-dropzone-content').innerHTML = `
+    <div class="dropzone-icon">📊</div>
+    <div class="dropzone-text">Drag & drop XRD data file</div>
+    <div class="dropzone-sub">.dat · .xy · .xye · .csv · .txt</div>`;
+  document.getElementById('xrdFileInput').value = '';
+
+  // Reset search UI
+  ['xrd-elements','xrd-phase-name','xrd-formula','xrd-filter',
+   'xrd-sample-id','xrd-output-dir'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  document.getElementById('xrd-candidates-wrap').style.display = 'none';
+  document.getElementById('xrd-selected-wrap').style.display = 'none';
+  document.getElementById('xrd-candidate-list').innerHTML = '';
+  document.getElementById('xrd-selected-phases').innerHTML = '';
+
+  // Hide results and errors
+  document.getElementById('xrd-results-panel').classList.remove('visible');
+  document.getElementById('xrd-error-box').classList.remove('visible');
+  document.getElementById('xrd-progress-wrap').classList.remove('visible');
+
+  setXrdStatus('Reset complete.', 'ok');
+  setTimeout(() => setXrdStatus('', 'ok'), 2000);
+}
+
+// ── UI helpers ──────────────────────────────────────────────────────────────
+function setXrdStatus(msg, type='info') {
+  const el = document.getElementById('xrd-search-status');
+  const colors = {info:'var(--muted)', ok:'var(--accent2)', warn:'var(--warn)', error:'var(--danger)'};
+  el.textContent = msg;
+  el.style.color = colors[type] || 'var(--muted)';
+}
+
+function showXrdError(msg) {
+  const el = document.getElementById('xrd-error-box');
+  el.textContent = msg;
+  el.classList.add('visible');
+  el.scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
 
 </script>
 </body>

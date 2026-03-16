@@ -1,0 +1,19 @@
+# Catalysis Data Toolkit — Configuration
+# This file is local to your machine and should NOT be committed to GitHub.
+# It is listed in .gitignore automatically.
+
+materials_project:
+  api_key: "LcBom0OioqXvOrfaKcrX1ZBHMVT06HWs"
+
+cache:
+  # Where to store downloaded CIF files between sessions
+  # Defaults to a hidden folder in your home directory
+  # Change this if you want the cache somewhere else
+  directory: "~/.catalysis_toolkit_cache"
+  max_size_mb: 500
+
+performance:
+  # Max Le Bail outer iterations (6-8 is usually enough, 15 is conservative)
+  max_outer_iterations: 10
+  # Pre-load pymatgen at startup to avoid per-request import delay
+  preload_pymatgen: true

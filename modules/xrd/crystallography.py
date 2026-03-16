@@ -34,6 +34,11 @@ def cell_volume(a, b, c, al, be, ga):
 
 def d_spacing(h, k, l, a, b, c, al, be, ga, system):
     """Calculate d-spacing for given hkl and cell parameters."""
+    # Guard against None cell parameters
+    if any(v is None for v in [a, b, c, al, be, ga]):
+        return None
+    a = float(a); b = float(b); c = float(c)
+    al = float(al); be = float(be); ga = float(ga)
     system = system.lower()
     try:
         if system in ('cubic',):
