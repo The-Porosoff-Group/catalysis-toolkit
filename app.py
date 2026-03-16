@@ -292,19 +292,28 @@ def xrd_search():
 def xrd_fetch_cif():
     """Fetch and cache a CIF from COD or Materials Project."""
     try:
-        data   = request.get_json()
-        cod_id = str(data.get('cod_id', ''))
-        source = data.get('source', 'cod')
+        data       = request.get_json()
+        cod_id     = str(data.get('cod_id', ''))
+        source     = data.get('source', 'cod')
+        wavelength = float(data.get('wavelength', 1.54056))
 
         if source == 'mp' or cod_id.startswith('mp-'):
             result = cached_fetch_mp(cod_id, MP_API_KEY, mp_fetch_cif)
         else:
             result = cached_fetch_cod(cod_id, cod_fetch_cif)
 
-        # Store CIF text in server-side cache; don't send over wire
-        cif_text = result.pop('cif_text', '')
+        # Store CIF text server-side; don't send over wire
+        cif_text  = result.pop('cif_text', '')
         cache_key = f"{'mp' if source=='mp' else 'cod'}:{cod_id}"
         _cache.put(cache_key, cif_text)
+
+        # Compute accurate stick pattern server-side using crystallography engine
+        # (applies proper extinction rules — much more accurate than client-side)
+        try:
+            sticks = get_stick_pattern(result, wavelength, tt_min=5.0, tt_max=100.0)
+            result['stick_pattern'] = sticks
+        except Exception:
+            result['stick_pattern'] = []
 
         result['cached'] = result.get('cached', False)
         return jsonify(result)
