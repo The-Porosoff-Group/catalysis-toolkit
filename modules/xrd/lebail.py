@@ -727,13 +727,36 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
         d = yo - yc
         return math.sqrt(np.sum(w*d**2) / np.sum(w*yo**2)) * 100
 
+    # ── Better initial scale estimate ───────────────────────────────────
+    # Compute theoretical pattern at B_iso=0.5 and match to observed data
+    for st in phase_state:
+        I_hkl = compute_rietveld_intensities(
+            st['refs'], st['sites'], {'_all': st['B_iso']})
+        profs = _get_profiles(tt_r, _refs_to_legacy(st['refs']),
+                               st['U'], st['V'], st['W'], st['eta'], zero)
+        this_pat = np.zeros(n_pts)
+        for k in range(len(st['refs'])):
+            this_pat += I_hkl[k] * profs[k]
+        bg_init = np.maximum(chebyshev_background(tt_r, bg_c, tt_min, tt_max), 0)
+        resid_target = np.maximum(y_r - bg_init, 0.1)
+        S_num = np.sum(weights * resid_target * this_pat)
+        S_den = np.sum(weights * this_pat**2)
+        st['S'] = max(S_num / max(S_den, 1e-10), 1e-6)
+
     if progress_callback:
         progress_callback('Rietveld: refining...')
 
-    # ── Main iteration loop ───────────────────────────────────────────────
+    # ── Main iteration loop with staged parameter release ─────────────
+    # Stage 1 (iter 0-2):  scale + profile + zero  (B_iso & cell FIXED)
+    # Stage 2 (iter 3-6):  + cell parameters
+    # Stage 3 (iter 7+):   + B_iso  (all free)
     prev_rwp = 999.0
 
     for iteration in range(max_iter):
+
+        # Determine which parameters are active this iteration
+        refine_cell = (iteration >= 3)
+        refine_biso = (iteration >= 7)
 
         # ── Step 1: Update per-phase scale factors (linear) ───────────────
         bg_cur = np.maximum(chebyshev_background(tt_r, bg_c, tt_min, tt_max), 0)
@@ -742,7 +765,6 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
                 st['refs'], st['sites'], {'_all': st['B_iso']})
             profs = _get_profiles(tt_r, _refs_to_legacy(st['refs']),
                                    st['U'], st['V'], st['W'], st['eta'], zero)
-            # Other phases' contribution
             other = np.zeros(n_pts)
             for j, st2 in enumerate(phase_state):
                 if j == i_ph:
@@ -764,7 +786,7 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
 
         # ── Step 2: Update background ─────────────────────────────────────
         yc_nobg, _, pat_total = calc_pattern(phase_state, np.zeros(n_bg), zero)
-        pat_total_only = pat_total  # pattern without background
+        pat_total_only = pat_total
         def resid_bg(x):
             bg_ = np.maximum(chebyshev_background(tt_r, x, tt_min, tt_max), 0)
             return (y_r - pat_total_only - bg_) * np.sqrt(weights)
@@ -772,7 +794,7 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
                            max_nfev=200, ftol=1e-10, verbose=0)
         bg_c = rb.x
 
-        # ── Step 3: Refine cell + profile + B_iso per phase ──────────────
+        # ── Step 3: Refine parameters per phase (staged) ─────────────────
         bg_fixed = np.maximum(chebyshev_background(tt_r, bg_c, tt_min, tt_max), 0)
 
         for i_ph, st in enumerate(phase_state):
@@ -796,29 +818,46 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
 
             _ref_cache = {'fv': None, 'refs': st['refs']}
 
+            # Build parameter vector based on current stage
+            # Always: S, U, V, W, eta, zero
+            # Stage 2+: cell params (free_v)
+            # Stage 3+: B_iso
+
             def resid_riet(x, _cache=_ref_cache,
                            _free_n=free_n, _ph=ph, _sys=sys_, _sg=sg,
-                           _sites=sites, _st=st):
-                nf = len(_free_n)
-                fv = x[:nf]
-                S_ph, B_iso = x[nf], x[nf+1]
-                U_, V_, W_, eta_, zero_ = x[nf+2], x[nf+3], x[nf+4], x[nf+5], x[nf+6]
-                W_    = max(W_, 0.005)
-                eta_  = np.clip(eta_, 0, 1)
-                S_ph  = max(S_ph, 1e-6)
-                B_iso = max(B_iso, 0.0)
+                           _sites=sites, _st=st,
+                           _refine_cell=refine_cell, _refine_biso=refine_biso):
+                idx = 0
+                # Parse cell params if being refined
+                if _refine_cell:
+                    nf = len(_free_n)
+                    fv = x[idx:idx+nf]
+                    idx += nf
+                else:
+                    fv = list(_st['free_v'])
+
+                S_ph = max(x[idx], 1e-6); idx += 1
+
+                if _refine_biso:
+                    B_iso = max(x[idx], 0.0); idx += 1
+                else:
+                    B_iso = _st['B_iso']
+
+                U_ = x[idx]; V_ = x[idx+1]; W_ = max(x[idx+2], 0.005)
+                eta_ = np.clip(x[idx+3], 0, 1); zero_ = x[idx+4]
 
                 # Regenerate reflections if cell changed
-                if (_cache['fv'] is None or
-                        np.max(np.abs(np.array(fv) - np.array(_cache['fv']))) > 1e-4):
-                    a_,b_,c_,al_,be_,ga_ = _full_cell(fv, _free_n, _ph)
-                    try:
-                        _cache['refs'] = generate_reflections_rietveld(
-                            a_,b_,c_,al_,be_,ga_, _sys, _sg,
-                            wavelength, tt_min, tt_max, _sites, hkl_max=12)
-                    except Exception:
-                        pass
-                    _cache['fv'] = list(fv)
+                if _refine_cell:
+                    if (_cache['fv'] is None or
+                            np.max(np.abs(np.array(fv) - np.array(_cache['fv']))) > 1e-4):
+                        a_,b_,c_,al_,be_,ga_ = _full_cell(fv, _free_n, _ph)
+                        try:
+                            _cache['refs'] = generate_reflections_rietveld(
+                                a_,b_,c_,al_,be_,ga_, _sys, _sg,
+                                wavelength, tt_min, tt_max, _sites, hkl_max=12)
+                        except Exception:
+                            pass
+                        _cache['fv'] = list(fv)
 
                 refs_l = _cache['refs']
                 I_hkl = compute_rietveld_intensities(refs_l, _sites, {'_all': B_iso})
@@ -829,23 +868,30 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
                     pat += S_ph * I_hkl[k] * profs[k]
                 return (y_r - pat - bg_fixed) * np.sqrt(weights)
 
-            fv0 = list(st['free_v'])
-            x0 = fv0 + [st['S'], st['B_iso'],
-                         st['U'], st['V'], st['W'], st['eta'], zero]
+            # Assemble x0, lo, hi based on stage
+            x0, lo, hi = [], [], []
 
-            # Bounds
-            lo = ([v * 0.94 for v in fv0] +
-                  [1e-6, 0.0,           # S, B_iso
-                   0.0, -1.0, 0.005,    # U, V, W
-                   0.0, -0.3])          # eta, zero
-            hi = ([v * 1.06 for v in fv0] +
-                  [1e4,  8.0,           # S, B_iso (up to 8 Å² for nanoparticles)
-                   5.0,  1.0, 3.0,      # U, V, W
-                   1.0,  0.3])          # eta, zero
-            for i_p, nm in enumerate(free_n):
-                if nm in ('alpha', 'beta', 'gamma'):
-                    lo[i_p] = fv0[i_p] - 5
-                    hi[i_p] = fv0[i_p] + 5
+            if refine_cell:
+                fv0 = list(st['free_v'])
+                x0.extend(fv0)
+                lo.extend([v * 0.92 for v in fv0])  # ±8% cell bounds
+                hi.extend([v * 1.08 for v in fv0])
+                for i_p, nm in enumerate(free_n):
+                    if nm in ('alpha', 'beta', 'gamma'):
+                        lo[i_p] = fv0[i_p] - 5
+                        hi[i_p] = fv0[i_p] + 5
+
+            # Scale
+            x0.append(st['S']); lo.append(1e-6); hi.append(1e4)
+
+            # B_iso (only if stage 3)
+            if refine_biso:
+                x0.append(st['B_iso']); lo.append(0.0); hi.append(8.0)
+
+            # U, V, W, eta, zero
+            x0.extend([st['U'], st['V'], st['W'], st['eta'], zero])
+            lo.extend([0.0, -1.0, 0.005, 0.0, -0.5])
+            hi.extend([5.0,  1.0, 3.0,   1.0,  0.5])
 
             try:
                 rs = least_squares(resid_riet, x0, bounds=(lo, hi),
@@ -853,43 +899,50 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
                                    ftol=1e-7, xtol=1e-7, verbose=0)
                 x_out = rs.x
             except Exception:
-                x_out = x0
+                x_out = np.array(x0)
 
-            nf = len(free_n)
-            fv_new = x_out[:nf]
-            S_n, B_n = max(x_out[nf], 1e-6), max(x_out[nf+1], 0.0)
-            U_n, V_n, W_n, eta_n, zero = x_out[nf+2:nf+7]
-            W_n = max(W_n, 0.005)
-            eta_n = np.clip(eta_n, 0, 1)
+            # Unpack results
+            idx = 0
+            if refine_cell:
+                nf = len(free_n)
+                fv_new = x_out[idx:idx+nf]
+                idx += nf
+                st['free_v'] = fv_new
+                for nm, vl in zip(free_n, fv_new):
+                    ph[nm] = vl
+                a_n, b_n, c_n, al_n, be_n, ga_n = _full_cell(fv_new, free_n, ph)
+                if sys_ == 'cubic':
+                    ph['b'] = ph['c'] = a_n
+                elif sys_ in ('hexagonal', 'trigonal', 'tetragonal'):
+                    ph['b'] = a_n
+                ph['c'] = c_n
+                try:
+                    st['refs'] = generate_reflections_rietveld(
+                        a_n, b_n, c_n, al_n, be_n, ga_n, sys_, sg,
+                        wavelength, tt_min, tt_max, sites, hkl_max=12)
+                except Exception:
+                    pass
 
-            a_n, b_n, c_n, al_n, be_n, ga_n = _full_cell(fv_new, free_n, ph)
-            try:
-                refs_new = generate_reflections_rietveld(
-                    a_n, b_n, c_n, al_n, be_n, ga_n, sys_, sg,
-                    wavelength, tt_min, tt_max, sites, hkl_max=12)
-            except Exception:
-                refs_new = st['refs']
+            S_n = max(x_out[idx], 1e-6); idx += 1
+            st['S'] = S_n
 
-            for nm, vl in zip(free_n, fv_new):
-                ph[nm] = vl
-            if sys_ == 'cubic':
-                ph['b'] = ph['c'] = a_n
-            elif sys_ in ('hexagonal', 'trigonal', 'tetragonal'):
-                ph['b'] = a_n
-            ph['c'] = c_n
+            if refine_biso:
+                st['B_iso'] = max(x_out[idx], 0.0); idx += 1
 
-            st.update({
-                'free_v': fv_new, 'refs': refs_new,
-                'S': S_n, 'B_iso': B_n,
-                'U': U_n, 'V': V_n, 'W': W_n, 'eta': eta_n,
-            })
+            st['U'] = x_out[idx]; st['V'] = x_out[idx+1]
+            st['W'] = max(x_out[idx+2], 0.005)
+            st['eta'] = float(np.clip(x_out[idx+3], 0, 1))
+            zero = x_out[idx+4]
 
         # ── Convergence check ─────────────────────────────────────────────
         yc_cur, _, _ = calc_pattern(phase_state, bg_c, zero)
         cur_rwp = rwp(y_r, yc_cur, weights)
+        stage_name = 'profile' if not refine_cell else ('cell' if not refine_biso else 'all')
         if progress_callback:
-            progress_callback(f'Rietveld iteration {iteration+1}: Rwp = {cur_rwp:.2f}%')
-        if abs(prev_rwp - cur_rwp) < 0.005:
+            progress_callback(
+                f'Rietveld iter {iteration+1} [{stage_name}]: Rwp = {cur_rwp:.2f}%')
+        # Only check convergence after all parameters are free (stage 3)
+        if refine_biso and abs(prev_rwp - cur_rwp) < 0.005:
             break
         prev_rwp = cur_rwp
 
