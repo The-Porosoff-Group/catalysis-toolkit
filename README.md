@@ -5,8 +5,9 @@ A local web app for processing heterogeneous catalysis data. Drag-and-drop inter
 ## Features
 
 - **GC Analysis** — molar flows, conversion, carbon selectivity, carbon balance from Shimadzu GC output files
+- **XRD Refinement** — Le Bail, Rietveld, and GSAS-II refinement with COD/Materials Project phase search
 - **Modular design** — add new reaction types via YAML config files; add new data types via Python modules
-- **Planned modules** — TGA/TPR/TPO, BET/isotherm, XRD peak fitting
+- **Planned modules** — TGA/TPR/TPO, BET/isotherm
 
 ---
 
@@ -25,10 +26,28 @@ cd catalysis-toolkit
 **Option B — without Git:**  
 Click the green **Code** button on GitHub → **Download ZIP** → extract the folder.
 
-### 3. Run it
+### 3. (Optional) Enable GSAS-II refinement
+
+GSAS-II is a powerful refinement engine that can be used alongside the built-in Le Bail and Rietveld methods. It requires a separate install via conda.
+
+1. Install **Miniforge** from https://conda-forge.org/miniforge/ (Windows x86_64)
+   - Check **"Add to PATH"** — or if you forget, add `C:\miniforge`, `C:\miniforge\Scripts`, `C:\miniforge\condabin` to your user PATH manually
+2. Open **Command Prompt** and run:
+   ```
+   C:\miniforge\condabin\conda init cmd.exe
+   ```
+3. Close and reopen Command Prompt
+
+`run.bat` will detect conda automatically and install GSAS-II on the next launch. The purple **GSAS-II Refinement** button will appear in the XRD panel once it's installed.
+
+> **Note:** If your folder path contains spaces (e.g. `C:\Users\Marc Porosoff\...`), conda may warn about this. It usually still works, but moving the toolkit to `C:\catalysis-toolkit` avoids the issue entirely.
+
+> **GSAS-II is optional.** Le Bail and Rietveld work without it. If conda is not installed, `run.bat` falls back to a standard Python venv automatically.
+
+### 4. Run it
 Double-click **`run.bat`**
 
-### 4. (Optional) Configure Materials Project API
+### 5. (Optional) Configure Materials Project API
 For complete coverage of metals, carbides, nitrides and all single-element phases,
 add your free Materials Project API key to `config.yaml`:
 ```yaml
@@ -42,17 +61,15 @@ Get a free key at https://materialsproject.org → sign in → dashboard → API
 
 That's it. The browser opens automatically at `http://localhost:5000`.
 
-**First launch:** `run.bat` creates a `.venv` folder inside the toolkit directory and
-installs all dependencies there (including pymatgen, ~500 MB). This takes a few minutes
-once. Every subsequent launch is instant.
+**First launch:** `run.bat` creates a `.conda_env` folder (if conda is available) or a `.venv` folder and installs all dependencies there (including pymatgen ~500 MB, and GSAS-II if using conda). This takes several minutes once. Every subsequent launch is instant.
 
-**Self-contained:** Everything lives in the toolkit folder. Nothing is installed to your
-system Python. To uninstall completely, just delete the toolkit folder.
+**Self-contained:** Everything lives in the toolkit folder. Nothing is installed to your system Python. To uninstall completely, just delete the toolkit folder.
 
 ---
 
 ## How to Use
 
+### GC Analysis
 1. **Drop** your `.xlsx` GC file onto the upload area
 2. **Select** the reaction type (FTS, CO2 hydrogenation, etc.)
 3. **Fill in** catalyst ID, conditions, and MFC inlet flows
@@ -61,6 +78,15 @@ system Python. To uninstall completely, just delete the toolkit folder.
 6. Click **Process GC Data**
 
 Results appear immediately: conversion, selectivities, carbon balance, and a 3-panel plot. Click **Open Output Folder** to access your files.
+
+### XRD Refinement
+1. **Drop** your XRD data file (`.xy`, `.xye`, `.dat`, `.csv`, `.txt`, `.ras`)
+2. **Select** the X-ray source wavelength
+3. **Search** for phases by element, name, or formula (pulls from COD and optionally Materials Project)
+4. **Add** phases to the refinement list
+5. Click **Le Bail**, **Rietveld**, or **GSAS-II** to run refinement
+
+Results include Rwp, Rp, χ², GoF, refined cell parameters, crystallite sizes, weight fractions, and a fit plot.
 
 ---
 
@@ -114,7 +140,15 @@ catalysis-toolkit/
 │   ├── gc_processor.py              GC calculation engine
 │   ├── tga_processor.py             TGA stub (coming soon)
 │   ├── bet_processor.py             BET stub (coming soon)
-│   ├── xrd_processor.py             XRD stub (coming soon)
+│   ├── xrd/                         XRD refinement engine
+│   │   ├── __init__.py              Entry point, file parsers
+│   │   ├── lebail.py                Le Bail and Rietveld refinement
+│   │   ├── gsasii_backend.py        GSAS-II integration (optional)
+│   │   ├── crystallography.py       Peak shape, statistics, space groups
+│   │   ├── xrd_plots.py             Plot generation
+│   │   ├── cod_api.py               Crystallography Open Database search
+│   │   ├── mp_api.py                Materials Project API search
+│   │   └── cif_cache.py             CIF file caching
 │   └── reaction_configs/
 │       ├── fts.yaml                 Fischer-Tropsch
 │       ├── co2_hydrogenation.yaml   CO2 + H2
@@ -139,3 +173,6 @@ catalysis-toolkit/
 | File won't upload | Check it's a `.xlsx` (not `.xls` or `.csv`) |
 | FID flows all zero | CH4 TCD bridge unavailable — see GC_SKILL.md |
 | New `.yaml` not showing | Restart the app (close and re-run `run.bat`) |
+| GSAS-II button not appearing | Run `conda init cmd.exe` in Command Prompt, restart, re-run `run.bat` |
+| `CondaError: Run 'conda init'` | Open Command Prompt, run `C:\miniforge\condabin\conda init cmd.exe`, restart |
+| Conda warns about spaces in path | Move toolkit folder to `C:\catalysis-toolkit` to avoid spaces |
