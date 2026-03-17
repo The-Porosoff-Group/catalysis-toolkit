@@ -77,6 +77,29 @@ def _write_xye(path, tt, y_obs, sigma):
             f.write(f"{tt[i]:.6f}  {y_obs[i]:.4f}  {sigma[i]:.4f}\n")
 
 
+def _write_instprm(work_dir, wavelength):
+    """Write a minimal GSAS-II .instprm file. Returns path."""
+    path = os.path.join(work_dir, 'instrument.instprm')
+    lines = [
+        '#GSAS-II instrument parameter file; do not add/delete items!',
+        'Type:PXC',
+        f'Lam:{wavelength:.6f}',
+        'Zero:0.0',
+        'Polariz.:0.99',
+        'U:2.0',
+        'V:-2.0',
+        'W:5.0',
+        'X:0.0',
+        'Y:0.0',
+        'Z:0.0',
+        'SH/L:0.002',
+        'Azimuth:0.0',
+    ]
+    with open(path, 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+    return path
+
+
 def _write_temp_cif(cif_text, phase_name='phase'):
     """Write CIF text to a temporary file. Returns path."""
     fd, path = tempfile.mkstemp(suffix='.cif', prefix=f'gsas_{phase_name}_')
@@ -180,6 +203,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
     work_dir = tempfile.mkdtemp(prefix='gsas2_')
     gpx_path = os.path.join(work_dir, 'refine.gpx')
     data_path = os.path.join(work_dir, 'data.xye')
+    instprm_path = _write_instprm(work_dir, wavelength)
     _write_xye(data_path, tt_r, y_r, sig_r)
 
     cif_paths = []
@@ -193,7 +217,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
 
         # Add histogram (powder data)
         histogram = gpx.add_powder_histogram(
-            data_path, 'dummy',  # iparams handled below
+            data_path, instprm_path,
             databank=None,
         )
 
