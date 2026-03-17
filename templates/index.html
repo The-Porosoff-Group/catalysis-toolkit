@@ -523,17 +523,25 @@
             <div id="xrd-preview-wrap" style="display:none;">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
                 <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;">Data Preview</span>
-                <span style="font-size:10px;color:var(--muted);">Scroll to zoom · drag to pan · double-click to reset</span>
+                <span id="xrd-preview-hint" style="font-size:10px;color:var(--muted);">Scroll to zoom · drag to pan · double-click to reset</span>
               </div>
-              <canvas id="xrd-preview-canvas"
-                      style="width:100%;height:280px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;cursor:crosshair;"
-                      onwheel="previewZoom(event)"
-                      onmousedown="previewPanStart(event)"
-                      onmousemove="previewPanMove(event)"
-                      onmouseup="previewPanEnd()"
-                      onmouseleave="previewPanEnd()"
-                      ondblclick="previewResetZoom()">
-              </canvas>
+              <div style="position:relative;">
+                <canvas id="xrd-preview-canvas"
+                        style="width:100%;height:280px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;cursor:crosshair;"
+                        onwheel="previewZoom(event)"
+                        onmousedown="previewPanStart(event)"
+                        onmousemove="previewPanMove(event)"
+                        onmouseup="previewPanEnd()"
+                        onmouseleave="previewPanEnd()"
+                        ondblclick="previewResetZoom()">
+                </canvas>
+                <div id="xrd-preview-overlay"
+                     style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+                            background:var(--surface2);border:1px solid var(--border);border-radius:6px;
+                            font-size:13px;color:var(--muted);pointer-events:none;">
+                  Loading preview…
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -977,22 +985,44 @@ let _stickPhases  = [];     // [{name, color, sticks:[{two_theta,rel_int,hkl}]}]
 const PHASE_COLORS = ['#f78166','#56d364','#e3b341','#bc8cff','#79c0ff','#ffa657'];
 
 async function loadXrdPreview(file) {
+  const wrap    = document.getElementById('xrd-preview-wrap');
+  const overlay = document.getElementById('xrd-preview-overlay');
+  const hint    = document.getElementById('xrd-preview-hint');
+
+  // Show wrapper immediately with loading state
+  wrap.style.display = 'block';
+  overlay.style.display = 'flex';
+  overlay.textContent   = 'Loading preview…';
+  overlay.style.color   = 'var(--muted)';
+  hint.textContent      = '';
+
   const fd = new FormData();
   fd.append('file', file);
   try {
     const resp = await fetch('/api/xrd/preview', {method:'POST', body:fd});
     const data = await resp.json();
-    if (data.error) return;
+    if (data.error) {
+      console.error('XRD preview error:', data.error);
+      overlay.textContent = 'Preview unavailable: ' + data.error;
+      overlay.style.color = '#f78166';
+      return;
+    }
     _previewData = data;
     _previewView = {
       xMin: data.tt_min, xMax: data.tt_max,
       yMin: 0,           yMax: data.y_max * 1.15,
     };
     _stickPhases = [];
-    document.getElementById('xrd-preview-wrap').style.display = 'block';
+    // Hide overlay and show controls hint
+    overlay.style.display = 'none';
+    hint.textContent      = 'Scroll to zoom · drag to pan · double-click to reset';
     // Delay draw until browser has reflowed (getBoundingClientRect returns 0 otherwise)
     requestAnimationFrame(() => { requestAnimationFrame(() => { drawPreview(); }); });
-  } catch(e) { /* silent — preview is optional */ }
+  } catch(e) {
+    console.error('XRD preview fetch failed:', e);
+    overlay.textContent = 'Could not load preview — check console for details.';
+    overlay.style.color = '#f78166';
+  }
 }
 
 function drawPreview() {
@@ -1718,6 +1748,8 @@ function resetXRD() {
   // Reset preview plot
   _previewData = null; _stickPhases = [];
   document.getElementById('xrd-preview-wrap').style.display = 'none';
+  document.getElementById('xrd-preview-overlay').style.display = 'flex';
+  document.getElementById('xrd-preview-overlay').textContent   = 'Loading preview…';
   const canvas = document.getElementById('xrd-preview-canvas');
   if (canvas) { const ctx = canvas.getContext('2d'); ctx.clearRect(0,0,canvas.width,canvas.height); }
 
