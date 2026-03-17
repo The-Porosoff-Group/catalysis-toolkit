@@ -489,7 +489,7 @@ def compute_rietveld_intensities(refs, sites, B_iso_map=None):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PEAK SHAPE: PSEUDO-VOIGT + CAGLIOTI
+# PEAK SHAPE: THOMPSON-COX-HASTINGS PSEUDO-VOIGT
 # ─────────────────────────────────────────────────────────────────────────────
 
 def caglioti_fwhm(two_theta_deg, U, V, W):
@@ -503,6 +503,52 @@ def caglioti_fwhm(two_theta_deg, U, V, W):
     if fwhm2 <= 0:
         return 0.01
     return math.sqrt(fwhm2)
+
+
+def tch_fwhm_eta(two_theta_deg, U, V, W, X, Y):
+    """
+    Thompson-Cox-Hastings pseudo-Voigt profile parameters.
+
+    Gaussian FWHM:  H_G² = U·tan²θ + V·tanθ + W
+    Lorentzian FWHM: H_L = X·tanθ + Y/cosθ
+
+    Where:
+      U = Gaussian micro-strain broadening
+      V, W = instrumental Gaussian parameters
+      X = Lorentzian micro-strain broadening
+      Y = Lorentzian size broadening (Scherrer term: Y = Kλ/L in degrees)
+
+    Returns (total_FWHM, eta) using the TCH mixing approximation.
+    """
+    theta = math.radians(two_theta_deg / 2)
+    tan_t = math.tan(theta)
+    cos_t = math.cos(theta)
+
+    # Gaussian component
+    hg2 = U * tan_t**2 + V * tan_t + W
+    H_G = math.sqrt(max(hg2, 1e-8))
+
+    # Lorentzian component
+    H_L = max(X * tan_t + Y / max(cos_t, 1e-8), 1e-6)
+
+    # TCH approximation for total FWHM  (Thompson, Cox & Hastings 1987)
+    hg5 = H_G**5
+    hl5 = H_L**5
+    H5 = (hg5
+           + 2.69269 * H_G**4 * H_L
+           + 2.42843 * H_G**3 * H_L**2
+           + 4.47163 * H_G**2 * H_L**3
+           + 0.07842 * H_G    * H_L**4
+           + hl5)
+    H = H5 ** 0.2  # fifth root
+
+    # Mixing parameter η  (fraction Lorentzian)
+    q = H_L / max(H, 1e-8)
+    eta = max(0.0, min(1.0,
+              1.36603 * q - 0.47719 * q**2 + 0.11116 * q**3))
+
+    return max(H, 0.005), eta
+
 
 def pseudo_voigt(x, x0, fwhm, eta):
     """
@@ -519,24 +565,35 @@ def pseudo_voigt(x, x0, fwhm, eta):
     return eta * lor + (1 - eta) * gauss
 
 def compute_phase_pattern(two_theta_array, reflections, scale,
-                           U, V, W, eta, two_theta_zero=0.0):
+                           U, V, W, eta=None, two_theta_zero=0.0,
+                           X=0.0, Y=0.0):
     """
     Compute the simulated intensity pattern for one phase.
+
+    Profile model:
+      If X or Y are non-zero, uses TCH pseudo-Voigt where eta is computed
+      per-peak from the Gaussian (U,V,W) and Lorentzian (X,Y) widths.
+      Otherwise falls back to fixed-eta Caglioti pseudo-Voigt.
+
     reflections: output of generate_reflections()
     Returns array of intensities same shape as two_theta_array.
     """
+    use_tch = (X != 0.0 or Y != 0.0)
     pattern = np.zeros_like(two_theta_array)
     tt_shifted = two_theta_array - two_theta_zero
 
     for tt_peak, d, hkl, mult in reflections:
-        fwhm = caglioti_fwhm(tt_peak, U, V, W)
-        fwhm = max(fwhm, 0.005)
+        if use_tch:
+            fwhm, eta_pk = tch_fwhm_eta(tt_peak, U, V, W, X, Y)
+        else:
+            fwhm = max(caglioti_fwhm(tt_peak, U, V, W), 0.005)
+            eta_pk = eta if eta is not None else 0.5
         # Only compute within ±20*fwhm of peak centre (efficiency)
         window = 20 * fwhm
         mask = np.abs(tt_shifted - tt_peak) < window
         if not mask.any():
             continue
-        profile = pseudo_voigt(tt_shifted[mask], tt_peak, fwhm, eta)
+        profile = pseudo_voigt(tt_shifted[mask], tt_peak, fwhm, eta_pk)
         # Lorentz-polarisation factor
         theta_r = math.radians(tt_peak / 2)
         cos2t    = math.cos(math.radians(tt_peak))
@@ -586,6 +643,21 @@ def scherrer_size(fwhm_deg, two_theta_deg, wavelength, K=0.94):
     if beta_rad <= 0 or math.cos(theta_rad) <= 0:
         return None
     return K * wavelength / (beta_rad * math.cos(theta_rad))
+
+
+def size_from_Y(Y_deg, wavelength, K=0.94):
+    """
+    Extract crystallite size directly from the TCH Lorentzian size parameter Y.
+
+    In the TCH model, Y/cosθ is the Lorentzian size contribution to FWHM,
+    which is exactly the Scherrer term:  Y = Kλ / (L · π/180)
+    Solving: L = Kλ / (Y · π/180)
+
+    Returns crystallite size L in Å, or None if Y ≤ 0.
+    """
+    if Y_deg <= 0:
+        return None
+    return K * wavelength / math.radians(Y_deg)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

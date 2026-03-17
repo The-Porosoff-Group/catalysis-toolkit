@@ -18,7 +18,8 @@ from scipy.optimize import least_squares
 
 from .crystallography import (
     generate_reflections, chebyshev_background,
-    caglioti_fwhm, scherrer_size, pseudo_voigt,
+    caglioti_fwhm, tch_fwhm_eta, scherrer_size, size_from_Y,
+    pseudo_voigt,
     compute_fit_statistics, d_spacing, cell_volume,
     generate_reflections_rietveld, compute_rietveld_intensities,
     structure_factor_sq_dw, parse_cif as _parse_cif_cryst,
@@ -129,23 +130,33 @@ def seed_I_hkl_from_pymatgen(refs, intensity_map, tt_r, y_r, bg_est):
 # PROFILE FUNCTIONS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _get_profiles(tt_arr, refs, U, V, W, eta, zero=0.0):
+def _get_profiles(tt_arr, refs, U, V, W, eta, zero=0.0, X=0.0, Y=0.0):
     """
     Unit-normalised pseudo-Voigt profiles, one per reflection.
-    Vectorised: computes all peaks in one pass over the data array.
+
+    If X or Y are non-zero, uses Thompson-Cox-Hastings (TCH) model where
+    eta is computed per-peak from Gaussian (U,V,W) and Lorentzian (X,Y)
+    widths.  Otherwise uses fixed-eta Caglioti pseudo-Voigt.
     """
     if not refs:
         return []
 
+    use_tch = (X != 0.0 or Y != 0.0)
     tt_s  = tt_arr - zero
     n_pts = len(tt_arr)
     n_ref = len(refs)
     profiles = [None] * n_ref
 
-    eta = float(np.clip(eta, 0, 1))
+    if not use_tch:
+        eta = float(np.clip(eta, 0, 1))
 
     for k, (tt_p, d, hkl, mult) in enumerate(refs):
-        fwhm    = max(caglioti_fwhm(tt_p, U, V, W), 0.005)
+        if use_tch:
+            fwhm, eta_k = tch_fwhm_eta(tt_p, U, V, W, X, Y)
+        else:
+            fwhm  = max(caglioti_fwhm(tt_p, U, V, W), 0.005)
+            eta_k = eta
+
         sigma_g = fwhm / (2.0 * math.sqrt(2.0 * math.log(2.0)))
         gamma_l = fwhm / 2.0
         window  = 15.0 * fwhm
@@ -156,7 +167,7 @@ def _get_profiles(tt_arr, refs, U, V, W, eta, zero=0.0):
             dx      = tt_s[msk] - tt_p
             gauss   = np.exp(-0.5 * (dx / sigma_g) ** 2)
             lor     = 1.0 / (1.0 + (dx / gamma_l) ** 2)
-            prof[msk] = eta * lor + (1.0 - eta) * gauss
+            prof[msk] = eta_k * lor + (1.0 - eta_k) * gauss
         profiles[k] = prof
 
     return profiles
@@ -313,6 +324,8 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
             'U':  ph.get('U_init',   0.01),
             'V':  ph.get('V_init',  -0.01),
             'W':  ph.get('W_init',   0.15),
+            'X':  ph.get('X_init',   0.0),   # Lorentzian strain
+            'Y':  ph.get('Y_init',   0.1),   # Lorentzian size (Scherrer)
             'eta':ph.get('eta_init', 0.5),
             'free_v': free_v,
             'free_n': free_n,
@@ -328,7 +341,8 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
         pat_ = np.zeros(len(tt_r))
         for st in states:
             profs = _get_profiles(tt_r, st['refs'],
-                                   st['U'], st['V'], st['W'], st['eta'], zero_)
+                                   st['U'], st['V'], st['W'], st['eta'],
+                                   zero_, st['X'], st['Y'])
             for k in range(len(st['refs'])):
                 pat_ += st['S'] * st['I_hkl'][k] * profs[k]
         return pat_ + bg_, bg_, pat_
@@ -345,7 +359,9 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
         # ── A: Le Bail I_hkl update ───────────────────────────────────────
         # Cache profiles once per outer iteration (major speedup)
         all_profs = [_get_profiles(tt_r, st['refs'],
-                                    st['U'], st['V'], st['W'], st['eta'], zero)
+                                    st['U'], st['V'], st['W'],
+                                    st.get('eta', 0.5), zero,
+                                    st['X'], st['Y'])
                      for st in phase_state]
 
         for inner in range(60):
@@ -382,14 +398,18 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
         y_nobg2 = y_r - bg_cur
         for i_ph, st in enumerate(phase_state):
             profs = _get_profiles(tt_r, st['refs'],
-                                   st['U'], st['V'], st['W'], st['eta'], zero)
+                                   st['U'], st['V'], st['W'],
+                                   st.get('eta', 0.5), zero,
+                                   st['X'], st['Y'])
             # Other phases' contribution (fixed for this phase's scale update)
             other_pat = np.zeros(len(tt_r))
             for j, st2 in enumerate(phase_state):
                 if j == i_ph:
                     continue
                 p2 = _get_profiles(tt_r, st2['refs'],
-                                    st2['U'], st2['V'], st2['W'], st2['eta'], zero)
+                                    st2['U'], st2['V'], st2['W'],
+                                    st2.get('eta', 0.5), zero,
+                                    st2['X'], st2['Y'])
                 for k in range(len(st2['refs'])):
                     other_pat += st2['S'] * st2['I_hkl'][k] * p2[k]
             # This phase's unscaled pattern
@@ -406,7 +426,9 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
         pat_total = np.zeros(len(tt_r))
         for st in phase_state:
             profs = _get_profiles(tt_r, st['refs'],
-                                   st['U'], st['V'], st['W'], st['eta'], zero)
+                                   st['U'], st['V'], st['W'],
+                                   st.get('eta', 0.5), zero,
+                                   st['X'], st['Y'])
             for k in range(len(st['refs'])):
                 pat_total += st['S'] * st['I_hkl'][k] * profs[k]
         def resid_bg(x):
@@ -433,21 +455,23 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
             for j, st2 in enumerate(phase_state):
                 if j == i_ph: continue
                 p2 = _get_profiles(tt_r, st2['refs'],
-                                    st2['U'], st2['V'], st2['W'], st2['eta'], zero)
+                                    st2['U'], st2['V'], st2['W'], st2['eta'],
+                                    zero, st2['X'], st2['Y'])
                 for k in range(len(st2['refs'])):
                     other_pat += st2['S'] * st2['I_hkl'][k] * p2[k]
 
             # Cache for generate_reflections — only regenerate if cell changes >0.1%
             _ref_cache = {'fv': None, 'refs': st['refs']}
 
+            # TCH parameter vector:
+            #   x = [cell_params..., S, U, V, W, X, Y, zero]
             def resid_cp(x, _cache=_ref_cache):
                 nf  = len(free_n)
                 fv  = x[:nf]
-                S_ph = x[nf]
-                U_, V_, W_, eta_, zero_ = x[nf+1], x[nf+2], x[nf+3], x[nf+4], x[nf+5]
-                W_   = max(W_, 0.005)  # instrument resolution floor
-                eta_ = np.clip(eta_, 0, 1)
-                S_ph = max(S_ph, 1e-6)
+                S_ph = max(x[nf], 1e-6)
+                U_, V_, W_ = x[nf+1], x[nf+2], max(x[nf+3], 0.005)
+                X_, Y_     = x[nf+4], x[nf+5]
+                zero_      = x[nf+6]
 
                 # Only regenerate reflections if cell params changed meaningfully
                 if (_cache['fv'] is None or
@@ -465,21 +489,24 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
 
                 refs_l = _cache['refs']
                 n      = min(len(refs_l), len(st['I_hkl']))
-                profs_l = _get_profiles(tt_r, refs_l, U_, V_, W_, eta_, zero_)
+                profs_l = _get_profiles(tt_r, refs_l, U_, V_, W_, 0.5,
+                                        zero_, X_, Y_)
                 pat_    = other_pat + S_ph * sum(st['I_hkl'][k] * profs_l[k]
                                                   for k in range(n))
                 return (y_r - pat_ - bg_fixed) * np.sqrt(weights)
 
             fv0 = list(st['free_v'])
-            x0_ = fv0 + [st['S'], st['U'], st['V'], st['W'], st['eta'], zero]
-            # Caglioti bounds: U controls tan²θ dependence (broadening at high angle),
-            # V controls tanθ (can be negative — common for well-aligned instruments),
-            # W is the angle-independent floor (instrument + sample size).
-            # Widened bounds allow better angular dependence fitting.
+            # TCH vector: [cell..., S, U, V, W, X, Y, zero]
+            x0_ = fv0 + [st['S'], st['U'], st['V'], st['W'],
+                          st['X'], st['Y'], zero]
+            # Bounds:
+            #   U (Gaussian strain): ≥0      X (Lorentz strain): ≥0
+            #   V (instrumental):  can be -   Y (Lorentz size):   ≥0
+            #   W (instrumental):  >0
             lo_ = ([v*0.94 for v in fv0] +
-                   [1e-6,  0.0, -1.0, 0.005,  0.0, -0.3])
+                   [1e-6,  0.0, -1.0, 0.005, 0.0, 0.0, -0.3])
             hi_ = ([v*1.06 for v in fv0] +
-                   [1e4,   5.0,  1.0, 3.0,    1.0,  0.3])
+                   [1e4,   5.0,  1.0, 3.0,   2.0, 5.0,  0.3])
             for i_p, nm in enumerate(free_n):
                 if nm in ('alpha', 'beta', 'gamma'):
                     lo_[i_p] = fv0[i_p] - 5
@@ -496,8 +523,9 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
             nf = len(free_n)
             fv_new = x_out[:nf]
             S_n = max(x_out[nf], 1e-6)
-            U_n, V_n, W_n, eta_n, zero = x_out[nf+1:nf+6]
-            W_n = max(W_n, 0.005); eta_n = np.clip(eta_n, 0, 1)
+            U_n, V_n, W_n = x_out[nf+1], x_out[nf+2], max(x_out[nf+3], 0.005)
+            X_n, Y_n      = x_out[nf+4], x_out[nf+5]
+            zero           = x_out[nf+6]
 
             a_n,b_n,c_n,al_n,be_n,ga_n = _full_cell(fv_new, free_n, ph)
             try:
@@ -524,12 +552,14 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
             ph['c'] = c_n
 
             st.update({'free_v': fv_new, 'refs': refs_new, 'I_hkl': I_new,
-                       'S': S_n, 'U': U_n, 'V': V_n, 'W': W_n, 'eta': eta_n})
+                       'S': S_n, 'U': U_n, 'V': V_n, 'W': W_n,
+                       'X': X_n, 'Y': Y_n})
 
         # ── E: Quick I_hkl re-partitioning after cell refinement ─────────
         # Peaks may have shifted; re-update intensities for consistency.
         _profs_e = [_get_profiles(tt_r, st['refs'],
-                                   st['U'], st['V'], st['W'], st['eta'], zero)
+                                   st['U'], st['V'], st['W'], st.get('eta', 0.5),
+                                   zero, st['X'], st['Y'])
                     for st in phase_state]
         bg_e = np.maximum(chebyshev_background(tt_r, bg_c, tt_min, tt_max), 0)
         for _inner_e in range(10):
@@ -572,7 +602,7 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
     # n_params: cell params + profile params + bg.  Le Bail I_hkl are
     # not counted — they are constrained by profile overlap and do not
     # behave as independent free parameters (see David 2004).
-    n_params = (sum(len(st['free_n']) + 5  # +5: S, U, V, W, eta
+    n_params = (sum(len(st['free_n']) + 6  # +6: S, U, V, W, X, Y
                     for st in phase_state) + n_bg + 1)  # +1: zero
     stats = compute_fit_statistics(y_r, yc_f, weights, n_params)
 
@@ -606,7 +636,9 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
         zmv_values = []
         for st in phase_state:
             profs_tmp = _get_profiles(tt_r, st['refs'],
-                                       st['U'], st['V'], st['W'], st['eta'], zero)
+                                       st['U'], st['V'], st['W'],
+                                       st.get('eta', 0.5), zero,
+                                       st['X'], st['Y'])
             area = st['S'] * sum(st['I_hkl'][k] * profs_tmp[k].sum()
                                  for k in range(len(st['refs'])))
             zmv_values.append(float(area))
@@ -615,7 +647,9 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
 
     for i_ph, st in enumerate(phase_state):
         profs = _get_profiles(tt_r, st['refs'],
-                               st['U'], st['V'], st['W'], st['eta'], zero)
+                               st['U'], st['V'], st['W'],
+                               st.get('eta', 0.5), zero,
+                               st['X'], st['Y'])
         pat_ph = st['S'] * sum(st['I_hkl'][k]*profs[k] for k in range(len(st['refs'])))
         phase_patterns.append(pat_ph.tolist())
 
@@ -629,8 +663,18 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
 
         strongest_tt = (max(st['refs'], key=lambda r: r[3])[0]
                         if st['refs'] else 39.0)
-        fwhm_sc = caglioti_fwhm(strongest_tt, st['U'], st['V'], st['W'])
-        cryst_A = scherrer_size(fwhm_sc, strongest_tt, wavelength)
+        # Crystallite size: prefer TCH Y parameter (direct size extraction),
+        # fall back to total Caglioti FWHM if Y is negligible.
+        Y_val = st['Y']
+        if Y_val > 0.01:
+            cryst_A = size_from_Y(Y_val, wavelength)
+        else:
+            fwhm_tot, _ = tch_fwhm_eta(strongest_tt, st['U'], st['V'],
+                                         st['W'], st['X'], st['Y'])
+            cryst_A = scherrer_size(fwhm_tot, strongest_tt, wavelength)
+
+        fwhm_sc, eta_sc = tch_fwhm_eta(strongest_tt, st['U'], st['V'],
+                                         st['W'], st['X'], st['Y'])
 
         wt_frac = (zmv_values[i_ph] / total_zmv) * 100
 
@@ -645,7 +689,9 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
             'spacegroup':        ph.get('spacegroup', ''),
             'scale':             round(float(st['S']), 5),
             'U':round(st['U'],5),'V':round(st['V'],5),
-            'W':round(st['W'],5),'eta':round(st['eta'],3),
+            'W':round(st['W'],5),
+            'X':round(st['X'],5),'Y':round(st['Y'],5),
+            'eta_at_strongest':  round(eta_sc, 3),
             'fwhm_deg':          round(fwhm_sc, 4),
             'crystallite_size_A':  round(cryst_A, 1) if cryst_A else None,
             'crystallite_size_nm': round(cryst_A/10, 2) if cryst_A else None,
@@ -756,6 +802,8 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
             'U':      ph.get('U_init', 0.01),
             'V':      ph.get('V_init', -0.01),
             'W':      ph.get('W_init', 0.15),
+            'X':      ph.get('X_init', 0.0),
+            'Y':      ph.get('Y_init', 0.1),
             'eta':    ph.get('eta_init', 0.5),
             'free_v': free_v,
             'free_n': free_n,
@@ -777,7 +825,9 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
             I_hkl = compute_rietveld_intensities(
                 st['refs'], st['sites'], {'_all': st['B_iso']})
             profs = _get_profiles(tt_r, _refs_to_legacy(st['refs']),
-                                   st['U'], st['V'], st['W'], st['eta'], zero_)
+                                   st['U'], st['V'], st['W'],
+                                   st.get('eta', 0.5), zero_,
+                                   st['X'], st['Y'])
             for k in range(len(st['refs'])):
                 pat += st['S'] * I_hkl[k] * profs[k]
         return pat + bg, bg, pat
@@ -792,7 +842,9 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
         I_hkl = compute_rietveld_intensities(
             st['refs'], st['sites'], {'_all': st['B_iso']})
         profs = _get_profiles(tt_r, _refs_to_legacy(st['refs']),
-                               st['U'], st['V'], st['W'], st['eta'], zero)
+                               st['U'], st['V'], st['W'],
+                               st.get('eta', 0.5), zero,
+                               st['X'], st['Y'])
         this_pat = np.zeros(n_pts)
         for k in range(len(st['refs'])):
             this_pat += I_hkl[k] * profs[k]
@@ -823,7 +875,9 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
             I_hkl = compute_rietveld_intensities(
                 st['refs'], st['sites'], {'_all': st['B_iso']})
             profs = _get_profiles(tt_r, _refs_to_legacy(st['refs']),
-                                   st['U'], st['V'], st['W'], st['eta'], zero)
+                                   st['U'], st['V'], st['W'],
+                                   st.get('eta', 0.5), zero,
+                                   st['X'], st['Y'])
             other = np.zeros(n_pts)
             for j, st2 in enumerate(phase_state):
                 if j == i_ph:
@@ -831,7 +885,9 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
                 I2 = compute_rietveld_intensities(
                     st2['refs'], st2['sites'], {'_all': st2['B_iso']})
                 p2 = _get_profiles(tt_r, _refs_to_legacy(st2['refs']),
-                                    st2['U'], st2['V'], st2['W'], st2['eta'], zero)
+                                    st2['U'], st2['V'], st2['W'],
+                                    st2.get('eta', 0.5), zero,
+                                    st2['X'], st2['Y'])
                 for k in range(len(st2['refs'])):
                     other += st2['S'] * I2[k] * p2[k]
 
@@ -871,14 +927,16 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
                 I2 = compute_rietveld_intensities(
                     st2['refs'], st2['sites'], {'_all': st2['B_iso']})
                 p2 = _get_profiles(tt_r, _refs_to_legacy(st2['refs']),
-                                    st2['U'], st2['V'], st2['W'], st2['eta'], zero)
+                                    st2['U'], st2['V'], st2['W'],
+                                    st2.get('eta', 0.5), zero,
+                                    st2['X'], st2['Y'])
                 for k in range(len(st2['refs'])):
                     other_pat += st2['S'] * I2[k] * p2[k]
 
             _ref_cache = {'fv': None, 'refs': st['refs']}
 
-            # Build parameter vector based on current stage
-            # Always: S, U, V, W, eta, zero
+            # TCH parameter vector based on current stage:
+            # Always: S, U, V, W, X, Y, zero
             # Stage 2+: cell params (free_v)
             # Stage 3+: B_iso
 
@@ -903,7 +961,7 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
                     B_iso = _st['B_iso']
 
                 U_ = x[idx]; V_ = x[idx+1]; W_ = max(x[idx+2], 0.005)
-                eta_ = np.clip(x[idx+3], 0, 1); zero_ = x[idx+4]
+                X_ = x[idx+3]; Y_ = x[idx+4]; zero_ = x[idx+5]
 
                 # Regenerate reflections if cell changed
                 if _refine_cell:
@@ -921,7 +979,7 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
                 refs_l = _cache['refs']
                 I_hkl = compute_rietveld_intensities(refs_l, _sites, {'_all': B_iso})
                 profs = _get_profiles(tt_r, _refs_to_legacy(refs_l),
-                                       U_, V_, W_, eta_, zero_)
+                                       U_, V_, W_, 0.5, zero_, X_, Y_)
                 pat = other_pat.copy()
                 for k in range(len(refs_l)):
                     pat += S_ph * I_hkl[k] * profs[k]
@@ -947,10 +1005,10 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
             if refine_biso:
                 x0.append(st['B_iso']); lo.append(0.0); hi.append(8.0)
 
-            # U, V, W, eta, zero
-            x0.extend([st['U'], st['V'], st['W'], st['eta'], zero])
-            lo.extend([0.0, -1.0, 0.005, 0.0, -0.5])
-            hi.extend([5.0,  1.0, 3.0,   1.0,  0.5])
+            # U, V, W, X, Y, zero  (TCH profile)
+            x0.extend([st['U'], st['V'], st['W'], st['X'], st['Y'], zero])
+            lo.extend([0.0, -1.0, 0.005, 0.0, 0.0, -0.5])
+            hi.extend([5.0,  1.0, 3.0,   2.0, 5.0,  0.5])
 
             try:
                 rs = least_squares(resid_riet, x0, bounds=(lo, hi),
@@ -990,8 +1048,8 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
 
             st['U'] = x_out[idx]; st['V'] = x_out[idx+1]
             st['W'] = max(x_out[idx+2], 0.005)
-            st['eta'] = float(np.clip(x_out[idx+3], 0, 1))
-            zero = x_out[idx+4]
+            st['X'] = x_out[idx+3]; st['Y'] = x_out[idx+4]
+            zero = x_out[idx+5]
 
         # ── Convergence check ─────────────────────────────────────────────
         yc_cur, _, _ = calc_pattern(phase_state, bg_c, zero)
@@ -1011,7 +1069,7 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
 
     yc_f, bg_f, pat_f = calc_pattern(phase_state, bg_c, zero)
     diff_f = y_r - yc_f
-    n_params = (sum(len(st['free_n']) + 6 for st in phase_state)  # cell+S+B+U+V+W+eta
+    n_params = (sum(len(st['free_n']) + 7 for st in phase_state)  # cell+S+B+U+V+W+X+Y
                 + n_bg + 1)  # bg + zero
     stats = compute_fit_statistics(y_r, yc_f, weights, n_params)
 
@@ -1044,7 +1102,9 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
             I_hkl_tmp = compute_rietveld_intensities(
                 st['refs'], st['sites'], {'_all': st['B_iso']})
             profs_tmp = _get_profiles(tt_r, _refs_to_legacy(st['refs']),
-                                       st['U'], st['V'], st['W'], st['eta'], zero)
+                                       st['U'], st['V'], st['W'],
+                                       st.get('eta', 0.5), zero,
+                                       st['X'], st['Y'])
             area = st['S'] * sum(
                 I_hkl_tmp[k] * profs_tmp[k].sum() for k in range(len(st['refs'])))
             zmv_values_r.append(float(area))
@@ -1055,7 +1115,9 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
         I_hkl = compute_rietveld_intensities(
             st['refs'], st['sites'], {'_all': st['B_iso']})
         profs = _get_profiles(tt_r, _refs_to_legacy(st['refs']),
-                               st['U'], st['V'], st['W'], st['eta'], zero)
+                               st['U'], st['V'], st['W'],
+                               st.get('eta', 0.5), zero,
+                               st['X'], st['Y'])
         pat_ph = st['S'] * sum(I_hkl[k] * profs[k] for k in range(len(st['refs'])))
         phase_patterns.append(pat_ph.tolist())
 
@@ -1069,8 +1131,18 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
 
         strongest = max(st['refs'], key=lambda r: r['mult']) if st['refs'] else None
         strongest_tt = strongest['two_theta'] if strongest else 39.0
-        fwhm_sc = caglioti_fwhm(strongest_tt, st['U'], st['V'], st['W'])
-        cryst_A = scherrer_size(fwhm_sc, strongest_tt, wavelength)
+
+        # Crystallite size: prefer TCH Y parameter (direct size extraction)
+        Y_val = st['Y']
+        if Y_val > 0.01:
+            cryst_A = size_from_Y(Y_val, wavelength)
+        else:
+            fwhm_tot, _ = tch_fwhm_eta(strongest_tt, st['U'], st['V'],
+                                         st['W'], st['X'], st['Y'])
+            cryst_A = scherrer_size(fwhm_tot, strongest_tt, wavelength)
+
+        fwhm_sc, eta_sc = tch_fwhm_eta(strongest_tt, st['U'], st['V'],
+                                         st['W'], st['X'], st['Y'])
 
         wt_frac = (zmv_values_r[i_ph] / total_zmv_r) * 100
 
@@ -1086,7 +1158,9 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
             'scale':             round(float(st['S']), 5),
             'B_iso':             round(float(st['B_iso']), 4),
             'U': round(st['U'],5), 'V': round(st['V'],5),
-            'W': round(st['W'],5), 'eta': round(st['eta'],3),
+            'W': round(st['W'],5),
+            'X': round(st['X'],5), 'Y': round(st['Y'],5),
+            'eta_at_strongest':  round(eta_sc, 3),
             'fwhm_deg':          round(fwhm_sc, 4),
             'crystallite_size_A':  round(cryst_A, 1) if cryst_A else None,
             'crystallite_size_nm': round(cryst_A/10, 2) if cryst_A else None,

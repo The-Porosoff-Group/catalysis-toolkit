@@ -1736,7 +1736,9 @@ function showXRDResults(data) {
           <div><span style="color:var(--muted);">γ = </span>${ph.gamma}°</div>
           <div><span style="color:var(--muted);">Size = </span>${ph.crystallite_size_nm ?? '—'} nm</div>
           <div><span style="color:var(--muted);">FWHM = </span>${ph.fwhm_deg}°</div>
-          <div><span style="color:var(--muted);">η = </span>${ph.eta}</div>
+          <div><span style="color:var(--muted);">η = </span>${ph.eta_at_strongest ?? ph.eta ?? '—'}</div>
+          ${ph.Y != null ? `<div><span style="color:var(--muted);">Y = </span>${ph.Y} (size)</div>` : ''}
+          ${ph.X != null ? `<div><span style="color:var(--muted);">X = </span>${ph.X} (strain)</div>` : ''}
           <div><span style="color:var(--muted);">Wt% ≈ </span>${ph['weight_fraction_%']}%</div>
         </div>
       </div>`;
