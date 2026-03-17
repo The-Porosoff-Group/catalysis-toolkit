@@ -569,8 +569,11 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
 
     yc_f, bg_f, pat_f_total = total_calc(phase_state, bg_c, zero)
     diff_f = y_r - yc_f
-    n_params = (sum(len(st['refs']) + len(st['free_n']) + 6  # +6: S, U, V, W, eta, zero
-                    for st in phase_state) + n_bg)
+    # n_params: cell params + profile params + bg.  Le Bail I_hkl are
+    # not counted — they are constrained by profile overlap and do not
+    # behave as independent free parameters (see David 2004).
+    n_params = (sum(len(st['free_n']) + 5  # +5: S, U, V, W, eta
+                    for st in phase_state) + n_bg + 1)  # +1: zero
     stats = compute_fit_statistics(y_r, yc_f, weights, n_params)
 
     phase_patterns = []

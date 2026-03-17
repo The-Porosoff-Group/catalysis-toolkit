@@ -1120,18 +1120,30 @@ function drawPreview() {
       ctx.globalAlpha = 1.0;
     }
 
-    // Phase label at top-right of tick region
-    if (phase.sticks.length > 0) {
-      const visSticks = phase.sticks.filter(s => s.two_theta >= xMin && s.two_theta <= xMax);
-      if (visSticks.length > 0) {
-        const labelX = xScale(visSticks[visSticks.length-1].two_theta);
-        ctx.fillStyle  = phase.color;
-        ctx.font       = '10px sans-serif';
-        ctx.textAlign  = 'left';
-        ctx.globalAlpha = 0.9;
-        ctx.fillText(phase.name, Math.min(labelX + 4, W - 60), PAD.t + ph * 0.12 + _stickPhases.indexOf(phase) * 14);
-        ctx.globalAlpha = 1.0;
-      }
+  }
+
+  // ── Fixed legend for stick phases (top-right corner) ──────────────
+  if (_stickPhases.length > 0) {
+    const legendX = PAD.l + pw - 6;
+    const legendY0 = PAD.t + 6;
+    const lineH = 14;
+    ctx.textAlign  = 'right';
+    ctx.font       = '10px sans-serif';
+    for (let pi = 0; pi < _stickPhases.length; pi++) {
+      const p = _stickPhases[pi];
+      const ly = legendY0 + pi * lineH;
+      // Small colored line
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth   = 2;
+      ctx.globalAlpha = 0.9;
+      ctx.beginPath();
+      ctx.moveTo(legendX - ctx.measureText(p.name).width - 14, ly);
+      ctx.lineTo(legendX - ctx.measureText(p.name).width - 4, ly);
+      ctx.stroke();
+      // Label
+      ctx.fillStyle   = p.color;
+      ctx.fillText(p.name, legendX, ly + 3);
+      ctx.globalAlpha = 1.0;
     }
   }
 
@@ -1150,8 +1162,12 @@ function addStickPhase(phase) {
   // Color index matches position in xrdPhases array for consistency
   const colorIdx = (xrdPhases.findIndex(p => (p.mp_id||p.cod_id) === phaseId));
   const ci = colorIdx >= 0 ? colorIdx : _stickPhases.length;
+  // Build label: formula + space group (disambiguates same-formula phases)
+  let label = phase.name || phase.formula || phaseId;
+  const sg = phase.spacegroup || '';
+  if (sg && !label.includes(sg)) label += ' ' + sg;
   _stickPhases.push({
-    name:   phase.name || phase.formula || phaseId,
+    name:   label,
     cod_id: phaseId,
     color:  PHASE_COLORS[ci % PHASE_COLORS.length],
     sticks: sticks,
