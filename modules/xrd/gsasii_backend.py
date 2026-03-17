@@ -370,18 +370,12 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         total_scale = sum(wt_fracs.values()) or 1.0
 
         for i, (ph, phase_obj) in enumerate(zip(phases, gsas_phases)):
-            # Cell parameters — get_cell() returns a dict or list depending
-            # on GSAS-II version; handle both.
-            cell = phase_obj.get_cell()
-            if isinstance(cell, dict):
-                a     = cell.get('a',     cell.get(0, 1.0))
-                b     = cell.get('b',     cell.get(1, 1.0))
-                c     = cell.get('c',     cell.get(2, 1.0))
-                alpha = cell.get('alpha', cell.get(3, 90.0))
-                beta  = cell.get('beta',  cell.get(4, 90.0))
-                gamma = cell.get('gamma', cell.get(5, 90.0))
-            else:
-                a, b, c, alpha, beta, gamma = cell[0], cell[1], cell[2], cell[3], cell[4], cell[5]
+            # Cell parameters — read directly from GSAS-II data structure
+            # to avoid get_cell() API differences across versions.
+            # General['Cell'] = [mustRefine, a, b, c, alpha, beta, gamma, volume]
+            _cell = phase_obj.data['General']['Cell']
+            a, b, c = float(_cell[1]), float(_cell[2]), float(_cell[3])
+            alpha, beta, gamma = float(_cell[4]), float(_cell[5]), float(_cell[6])
             V = cell_volume(a, b, c, alpha, beta, gamma)
 
             # Profile / size info
