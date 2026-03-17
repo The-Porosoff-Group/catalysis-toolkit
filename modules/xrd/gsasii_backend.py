@@ -297,7 +297,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         for phase_obj in gsas_phases:
             phase_obj.set_refinements({
                 'Cell': True,
-                'Atoms': {'all': {'Uiso': True}},  # isotropic displacement
+                'Atoms': {'all': 'U'},  # refine displacement parameters
             })
 
         gpx.do_refinements([{'set': {}, 'cycles': max_cycles}])
