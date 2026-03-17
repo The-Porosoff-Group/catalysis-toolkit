@@ -6,6 +6,80 @@ echo   Catalysis Data Toolkit
 echo  ============================================
 echo.
 
+:: ── Try conda first (needed for GSAS-II) ────────────────────────────────
+:: Check if conda is available
+where conda >nul 2>&1
+if errorlevel 1 goto :USE_VENV
+
+:: ── CONDA PATH ──────────────────────────────────────────────────────────
+echo  [Conda detected - using conda environment]
+echo.
+
+:: Create conda environment if it doesn't exist
+if not exist ".conda_env\python.exe" (
+    if not exist ".conda_env\Scripts\python.exe" (
+        echo  Creating conda environment in .conda_env\ ...
+        echo  ^(First-time setup - this takes a few minutes^)
+        echo.
+        conda create -p .conda_env python=3.11 -y -q
+        if errorlevel 1 (
+            echo  ERROR: Failed to create conda environment.
+            echo  Falling back to venv...
+            goto :USE_VENV
+        )
+        echo  Conda environment created.
+        echo.
+    )
+)
+
+:: Activate conda environment
+call conda activate .\.conda_env
+if errorlevel 1 (
+    echo  ERROR: Failed to activate conda environment.
+    echo  Falling back to venv...
+    goto :USE_VENV
+)
+
+:: Install GSAS-II if not present
+python -c "import GSASIIscriptable" >nul 2>&1
+if errorlevel 1 (
+    echo  Installing GSAS-II ^(one-time, may take several minutes^)...
+    echo.
+    conda install gsas2full -c briantoby -y -q
+    if errorlevel 1 (
+        echo  WARNING: GSAS-II installation failed.
+        echo  GSAS-II button will be hidden, but Le Bail and Rietveld will still work.
+        echo.
+    ) else (
+        echo  GSAS-II installed successfully.
+        echo.
+    )
+)
+
+:: Install pip dependencies if missing
+python -c "import flask, yaml, numpy, scipy, matplotlib, requests, pymatgen, pandas" >nul 2>&1
+if errorlevel 1 (
+    echo  Installing Python dependencies...
+    echo  ^(First run: pymatgen is ~500 MB - please be patient^)
+    echo.
+    pip install flask pyyaml numpy pandas scipy matplotlib requests pymatgen --quiet
+    if errorlevel 1 (
+        echo  ERROR: Dependency installation failed.
+        echo  Check your internet connection and try again.
+        pause
+        exit /b
+    )
+    echo  Dependencies installed successfully.
+    echo.
+)
+
+goto :START_APP
+
+:: ── VENV FALLBACK (no conda available) ──────────────────────────────────
+:USE_VENV
+echo  [Using Python venv - install Miniforge for GSAS-II support]
+echo.
+
 :: Check Python is available
 python --version >nul 2>&1
 if errorlevel 1 (
@@ -40,7 +114,7 @@ if errorlevel 1 (
     echo  Installing dependencies into .venv\
     echo  ^(First run: pymatgen is ~500 MB - please be patient^)
     echo.
-    pip install flask pyyaml numpy pandas matplotlib requests pymatgen --quiet
+    pip install flask pyyaml numpy pandas scipy matplotlib requests pymatgen --quiet
     if errorlevel 1 (
         echo.
         echo  ERROR: Dependency installation failed.
@@ -53,6 +127,8 @@ if errorlevel 1 (
     echo.
 )
 
+:: ── LAUNCH ──────────────────────────────────────────────────────────────
+:START_APP
 echo  Starting Catalysis Data Toolkit...
 echo  Opening browser at http://localhost:5000
 echo.
