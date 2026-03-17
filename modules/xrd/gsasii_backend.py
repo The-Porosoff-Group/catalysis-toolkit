@@ -214,6 +214,17 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
 
     # ── Create temporary files ───────────────────────────────────────────
     work_dir = tempfile.mkdtemp(prefix='gsas2_')
+    # On Windows, resolve 8.3 short paths (e.g. MARCPO~1) to long paths
+    # so that GSAS-II's file readers can find the files.
+    if sys.platform == 'win32':
+        try:
+            import ctypes
+            buf = ctypes.create_unicode_buffer(512)
+            ctypes.windll.kernel32.GetLongPathNameW(work_dir, buf, 512)
+            if buf.value:
+                work_dir = buf.value
+        except Exception:
+            pass
     gpx_path = os.path.join(work_dir, 'refine.gpx')
     data_path = os.path.join(work_dir, 'data.xye')
     instprm_path = _write_instprm(work_dir, wavelength)
