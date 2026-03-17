@@ -438,100 +438,111 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
                            max_nfev=200, ftol=1e-10, verbose=0)
         bg_c = rb.x
 
-        # ── D: Refine cell + profile per phase ────────────────────────────
+        # ── D: SIMULTANEOUS cell + profile refinement (all phases) ──────
         if progress_callback and outer == 0:
             progress_callback('Refining cell parameters and peak shape...')
 
-        # Pre-compute background once — it doesn't change during cell refinement
         bg_fixed = np.maximum(chebyshev_background(tt_r, bg_c, tt_min, tt_max), 0)
 
+        # Build joint parameter vector for all phases:
+        # Per phase: [cell_params..., S, U, V, W, X, Y]
+        # Global:    [zero]
+        _ref_caches_lb = [{'fv': None, 'refs': st['refs']} for st in phase_state]
+        phase_layouts_lb = []
+        x0_lb, lo_lb, hi_lb = [], [], []
+
         for i_ph, st in enumerate(phase_state):
-            ph    = st['ph']
-            sys_  = (ph.get('system') or 'triclinic').lower()
+            ph = st['ph']
             free_n = st['free_n']
+            offset = len(x0_lb)
 
-            # Pre-compute other phases' contributions — fixed during this phase's refinement
-            other_pat = np.zeros(len(tt_r))
-            for j, st2 in enumerate(phase_state):
-                if j == i_ph: continue
-                p2 = _get_profiles(tt_r, st2['refs'],
-                                    st2['U'], st2['V'], st2['W'], st2['eta'],
-                                    zero, st2['X'], st2['Y'])
-                for k in range(len(st2['refs'])):
-                    other_pat += st2['S'] * st2['I_hkl'][k] * p2[k]
+            fv0 = list(st['free_v'])
+            n_cell = len(fv0)
+            x0_lb.extend(fv0)
+            lo_lb.extend([v * 0.94 for v in fv0])
+            hi_lb.extend([v * 1.06 for v in fv0])
+            for i_p, nm in enumerate(free_n):
+                if nm in ('alpha', 'beta', 'gamma'):
+                    lo_lb[offset + i_p] = fv0[i_p] - 5
+                    hi_lb[offset + i_p] = fv0[i_p] + 5
 
-            # Cache for generate_reflections — only regenerate if cell changes >0.1%
-            _ref_cache = {'fv': None, 'refs': st['refs']}
+            # S, U, V, W, X, Y
+            x0_lb.extend([st['S'], st['U'], st['V'], st['W'], st['X'], st['Y']])
+            lo_lb.extend([1e-6, 0.0, -1.0, 0.005, 0.0, 0.0])
+            hi_lb.extend([1e4,  5.0,  1.0, 3.0,   2.0, 5.0])
 
-            # TCH parameter vector:
-            #   x = [cell_params..., S, U, V, W, X, Y, zero]
-            def resid_cp(x, _cache=_ref_cache):
-                nf  = len(free_n)
-                fv  = x[:nf]
-                S_ph = max(x[nf], 1e-6)
-                U_, V_, W_ = x[nf+1], x[nf+2], max(x[nf+3], 0.005)
-                X_, Y_     = x[nf+4], x[nf+5]
-                zero_      = x[nf+6]
+            phase_layouts_lb.append((offset, n_cell))
 
-                # Only regenerate reflections if cell params changed meaningfully
-                if (_cache['fv'] is None or
-                        np.max(np.abs(np.array(fv) - np.array(_cache['fv']))) > 1e-4):
+        # Global zero
+        x0_lb.append(zero); lo_lb.append(-0.3); hi_lb.append(0.3)
+
+        def resid_lb_joint(x):
+            zero_ = x[-1]
+            pat = np.zeros(len(tt_r))
+
+            for i_ph, st in enumerate(phase_state):
+                off, n_cell = phase_layouts_lb[i_ph]
+                ph = st['ph']
+                free_n = st['free_n']
+                sys_ = (ph.get('system') or 'triclinic').lower()
+
+                fv = x[off:off + n_cell]
+                idx = off + n_cell
+                S_ph = max(x[idx], 1e-6)
+                U_ = x[idx+1]; V_ = x[idx+2]; W_ = max(x[idx+3], 0.005)
+                X_ = x[idx+4]; Y_ = x[idx+5]
+
+                cache = _ref_caches_lb[i_ph]
+                if (cache['fv'] is None or
+                        np.max(np.abs(np.array(fv) - np.array(cache['fv']))) > 1e-4):
                     a_,b_,c_,al_,be_,ga_ = _full_cell(fv, free_n, ph)
                     try:
-                        _cache['refs'] = generate_reflections(
+                        cache['refs'] = generate_reflections(
                             a_,b_,c_,al_,be_,ga_, sys_,
                             ph.get('spacegroup_number', 1),
                             wavelength, tt_min, tt_max, hkl_max=12,
                             sites=ph.get('_sites'))
                     except Exception:
                         pass
-                    _cache['fv'] = list(fv)
+                    cache['fv'] = list(fv)
 
-                refs_l = _cache['refs']
-                n      = min(len(refs_l), len(st['I_hkl']))
+                refs_l = cache['refs']
+                n = min(len(refs_l), len(st['I_hkl']))
                 profs_l = _get_profiles(tt_r, refs_l, U_, V_, W_, 0.5,
                                         zero_, X_, Y_)
-                pat_    = other_pat + S_ph * sum(st['I_hkl'][k] * profs_l[k]
-                                                  for k in range(n))
-                return (y_r - pat_ - bg_fixed) * np.sqrt(weights)
+                for k in range(n):
+                    pat += S_ph * st['I_hkl'][k] * profs_l[k]
 
-            fv0 = list(st['free_v'])
-            # TCH vector: [cell..., S, U, V, W, X, Y, zero]
-            x0_ = fv0 + [st['S'], st['U'], st['V'], st['W'],
-                          st['X'], st['Y'], zero]
-            # Bounds:
-            #   U (Gaussian strain): ≥0      X (Lorentz strain): ≥0
-            #   V (instrumental):  can be -   Y (Lorentz size):   ≥0
-            #   W (instrumental):  >0
-            lo_ = ([v*0.94 for v in fv0] +
-                   [1e-6,  0.0, -1.0, 0.005, 0.0, 0.0, -0.3])
-            hi_ = ([v*1.06 for v in fv0] +
-                   [1e4,   5.0,  1.0, 3.0,   2.0, 5.0,  0.3])
-            for i_p, nm in enumerate(free_n):
-                if nm in ('alpha', 'beta', 'gamma'):
-                    lo_[i_p] = fv0[i_p] - 5
-                    hi_[i_p] = fv0[i_p] + 5
+            return (y_r - pat - bg_fixed) * np.sqrt(weights)
 
-            try:
-                rs = least_squares(resid_cp, x0_, bounds=(lo_, hi_),
-                                   method='trf', max_nfev=300,
-                                   ftol=1e-6, xtol=1e-6, verbose=0)
-                x_out = rs.x
-            except Exception:
-                x_out = x0_
+        try:
+            rs = least_squares(resid_lb_joint, x0_lb, bounds=(lo_lb, hi_lb),
+                               method='trf', max_nfev=500,
+                               ftol=1e-6, xtol=1e-6, verbose=0)
+            x_out = rs.x
+        except Exception:
+            x_out = np.array(x0_lb)
 
-            nf = len(free_n)
-            fv_new = x_out[:nf]
-            S_n = max(x_out[nf], 1e-6)
-            U_n, V_n, W_n = x_out[nf+1], x_out[nf+2], max(x_out[nf+3], 0.005)
-            X_n, Y_n      = x_out[nf+4], x_out[nf+5]
-            zero           = x_out[nf+6]
+        # Unpack results back into phase_state
+        zero = x_out[-1]
+        for i_ph, st in enumerate(phase_state):
+            off, n_cell = phase_layouts_lb[i_ph]
+            ph = st['ph']
+            free_n = st['free_n']
+            sys_ = (ph.get('system') or 'triclinic').lower()
 
-            a_n,b_n,c_n,al_n,be_n,ga_n = _full_cell(fv_new, free_n, ph)
+            fv_new = x_out[off:off + n_cell]
+            idx = off + n_cell
+            S_n = max(x_out[idx], 1e-6)
+            U_n = x_out[idx+1]; V_n = x_out[idx+2]
+            W_n = max(x_out[idx+3], 0.005)
+            X_n = x_out[idx+4]; Y_n = x_out[idx+5]
+
+            a_n, b_n, c_n, al_n, be_n, ga_n = _full_cell(fv_new, free_n, ph)
             try:
                 refs_new = generate_reflections(
-                    a_n,b_n,c_n,al_n,be_n,ga_n,sys_,
-                    ph.get('spacegroup_number',1),
+                    a_n, b_n, c_n, al_n, be_n, ga_n, sys_,
+                    ph.get('spacegroup_number', 1),
                     wavelength, tt_min, tt_max, hkl_max=12,
                     sites=ph.get('_sites'))
             except Exception:
@@ -542,12 +553,11 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
             n_copy = min(n_new, len(st['I_hkl']))
             I_new[:n_copy] = st['I_hkl'][:n_copy]
 
-            # Update phase dict
             for nm, vl in zip(free_n, fv_new):
                 ph[nm] = vl
             if sys_ in ('cubic',):
                 ph['b'] = ph['c'] = a_n
-            elif sys_ in ('hexagonal','trigonal','tetragonal'):
+            elif sys_ in ('hexagonal', 'trigonal', 'tetragonal'):
                 ph['b'] = a_n
             ph['c'] = c_n
 
@@ -909,121 +919,120 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
                            max_nfev=200, ftol=1e-10, verbose=0)
         bg_c = rb.x
 
-        # ── Step 3: Refine parameters per phase (staged) ─────────────────
+        # ── Step 3: SIMULTANEOUS multi-phase refinement (staged) ──────────
+        # All phases' parameters are refined together so that overlapping
+        # peaks are correctly apportioned between phases.
         bg_fixed = np.maximum(chebyshev_background(tt_r, bg_c, tt_min, tt_max), 0)
 
+        # Build layout: per-phase parameter offsets
+        # Each phase block: [cell_params...?, S, B_iso?, U, V, W, X, Y]
+        # Followed by global [zero]
+        phase_layouts = []  # list of (offset, n_cell, has_biso) per phase
+        x0, lo, hi = [], [], []
+        _ref_caches = [{'fv': None, 'refs': st['refs']} for st in phase_state]
+
         for i_ph, st in enumerate(phase_state):
-            ph     = st['ph']
+            ph = st['ph']
             free_n = st['free_n']
-            sys_   = st['sys']
-            sg     = st['sg']
-            sites  = st['sites']
+            offset = len(x0)
 
-            # Other phases' contribution (fixed)
-            other_pat = np.zeros(n_pts)
-            for j, st2 in enumerate(phase_state):
-                if j == i_ph:
-                    continue
-                I2 = compute_rietveld_intensities(
-                    st2['refs'], st2['sites'], {'_all': st2['B_iso']})
-                p2 = _get_profiles(tt_r, _refs_to_legacy(st2['refs']),
-                                    st2['U'], st2['V'], st2['W'],
-                                    st2.get('eta', 0.5), zero,
-                                    st2['X'], st2['Y'])
-                for k in range(len(st2['refs'])):
-                    other_pat += st2['S'] * I2[k] * p2[k]
-
-            _ref_cache = {'fv': None, 'refs': st['refs']}
-
-            # TCH parameter vector based on current stage:
-            # Always: S, U, V, W, X, Y, zero
-            # Stage 2+: cell params (free_v)
-            # Stage 3+: B_iso
-
-            def resid_riet(x, _cache=_ref_cache,
-                           _free_n=free_n, _ph=ph, _sys=sys_, _sg=sg,
-                           _sites=sites, _st=st,
-                           _refine_cell=refine_cell, _refine_biso=refine_biso):
-                idx = 0
-                # Parse cell params if being refined
-                if _refine_cell:
-                    nf = len(_free_n)
-                    fv = x[idx:idx+nf]
-                    idx += nf
-                else:
-                    fv = list(_st['free_v'])
-
-                S_ph = max(x[idx], 1e-6); idx += 1
-
-                if _refine_biso:
-                    B_iso = max(x[idx], 0.0); idx += 1
-                else:
-                    B_iso = _st['B_iso']
-
-                U_ = x[idx]; V_ = x[idx+1]; W_ = max(x[idx+2], 0.005)
-                X_ = x[idx+3]; Y_ = x[idx+4]; zero_ = x[idx+5]
-
-                # Regenerate reflections if cell changed
-                if _refine_cell:
-                    if (_cache['fv'] is None or
-                            np.max(np.abs(np.array(fv) - np.array(_cache['fv']))) > 1e-4):
-                        a_,b_,c_,al_,be_,ga_ = _full_cell(fv, _free_n, _ph)
-                        try:
-                            _cache['refs'] = generate_reflections_rietveld(
-                                a_,b_,c_,al_,be_,ga_, _sys, _sg,
-                                wavelength, tt_min, tt_max, _sites, hkl_max=12)
-                        except Exception:
-                            pass
-                        _cache['fv'] = list(fv)
-
-                refs_l = _cache['refs']
-                I_hkl = compute_rietveld_intensities(refs_l, _sites, {'_all': B_iso})
-                profs = _get_profiles(tt_r, _refs_to_legacy(refs_l),
-                                       U_, V_, W_, 0.5, zero_, X_, Y_)
-                pat = other_pat.copy()
-                for k in range(len(refs_l)):
-                    pat += S_ph * I_hkl[k] * profs[k]
-                return (y_r - pat - bg_fixed) * np.sqrt(weights)
-
-            # Assemble x0, lo, hi based on stage
-            x0, lo, hi = [], [], []
-
+            n_cell = 0
             if refine_cell:
                 fv0 = list(st['free_v'])
+                n_cell = len(fv0)
                 x0.extend(fv0)
-                lo.extend([v * 0.92 for v in fv0])  # ±8% cell bounds
+                lo.extend([v * 0.92 for v in fv0])
                 hi.extend([v * 1.08 for v in fv0])
                 for i_p, nm in enumerate(free_n):
                     if nm in ('alpha', 'beta', 'gamma'):
-                        lo[i_p] = fv0[i_p] - 5
-                        hi[i_p] = fv0[i_p] + 5
+                        lo[offset + i_p] = fv0[i_p] - 5
+                        hi[offset + i_p] = fv0[i_p] + 5
 
             # Scale
             x0.append(st['S']); lo.append(1e-6); hi.append(1e4)
 
-            # B_iso (only if stage 3)
+            # B_iso
+            has_biso = refine_biso
             if refine_biso:
                 x0.append(st['B_iso']); lo.append(0.0); hi.append(8.0)
 
-            # U, V, W, X, Y, zero  (TCH profile)
-            x0.extend([st['U'], st['V'], st['W'], st['X'], st['Y'], zero])
-            lo.extend([0.0, -1.0, 0.005, 0.0, 0.0, -0.5])
-            hi.extend([5.0,  1.0, 3.0,   2.0, 5.0,  0.5])
+            # U, V, W, X, Y
+            x0.extend([st['U'], st['V'], st['W'], st['X'], st['Y']])
+            lo.extend([0.0, -1.0, 0.005, 0.0, 0.0])
+            hi.extend([5.0,  1.0, 3.0,   2.0, 5.0])
 
-            try:
-                rs = least_squares(resid_riet, x0, bounds=(lo, hi),
-                                   method='trf', max_nfev=500,
-                                   ftol=1e-7, xtol=1e-7, verbose=0)
-                x_out = rs.x
-            except Exception:
-                x_out = np.array(x0)
+            phase_layouts.append((offset, n_cell, has_biso))
 
-            # Unpack results
-            idx = 0
-            if refine_cell:
-                nf = len(free_n)
-                fv_new = x_out[idx:idx+nf]
-                idx += nf
+        # Global zero
+        x0.append(zero); lo.append(-0.5); hi.append(0.5)
+
+        def resid_joint(x):
+            zero_ = x[-1]
+            pat = np.zeros(n_pts)
+
+            for i_ph, st in enumerate(phase_state):
+                off, n_cell, has_biso = phase_layouts[i_ph]
+                idx = off
+                ph = st['ph']
+                free_n = st['free_n']
+
+                if refine_cell and n_cell > 0:
+                    fv = x[idx:idx + n_cell]
+                    idx += n_cell
+                else:
+                    fv = list(st['free_v'])
+
+                S_ph = max(x[idx], 1e-6); idx += 1
+                B_iso = max(x[idx], 0.0) if has_biso else st['B_iso']
+                if has_biso: idx += 1
+
+                U_ = x[idx]; V_ = x[idx+1]; W_ = max(x[idx+2], 0.005)
+                X_ = x[idx+3]; Y_ = x[idx+4]
+
+                cache = _ref_caches[i_ph]
+                if refine_cell and n_cell > 0:
+                    if (cache['fv'] is None or
+                            np.max(np.abs(np.array(fv) - np.array(cache['fv']))) > 1e-4):
+                        a_,b_,c_,al_,be_,ga_ = _full_cell(fv, free_n, ph)
+                        try:
+                            cache['refs'] = generate_reflections_rietveld(
+                                a_,b_,c_,al_,be_,ga_, st['sys'], st['sg'],
+                                wavelength, tt_min, tt_max, st['sites'], hkl_max=12)
+                        except Exception:
+                            pass
+                        cache['fv'] = list(fv)
+
+                refs_l = cache['refs']
+                I_hkl = compute_rietveld_intensities(refs_l, st['sites'], {'_all': B_iso})
+                profs = _get_profiles(tt_r, _refs_to_legacy(refs_l),
+                                       U_, V_, W_, 0.5, zero_, X_, Y_)
+                for k in range(len(refs_l)):
+                    pat += S_ph * I_hkl[k] * profs[k]
+
+            return (y_r - pat - bg_fixed) * np.sqrt(weights)
+
+        try:
+            rs = least_squares(resid_joint, x0, bounds=(lo, hi),
+                               method='trf', max_nfev=800,
+                               ftol=1e-7, xtol=1e-7, verbose=0)
+            x_out = rs.x
+        except Exception:
+            x_out = np.array(x0)
+
+        # Unpack results back into phase_state
+        zero = x_out[-1]
+        for i_ph, st in enumerate(phase_state):
+            off, n_cell, has_biso = phase_layouts[i_ph]
+            ph = st['ph']
+            free_n = st['free_n']
+            sys_ = st['sys']
+            sg = st['sg']
+            sites = st['sites']
+            idx = off
+
+            if refine_cell and n_cell > 0:
+                fv_new = x_out[idx:idx + n_cell]
+                idx += n_cell
                 st['free_v'] = fv_new
                 for nm, vl in zip(free_n, fv_new):
                     ph[nm] = vl
@@ -1040,16 +1049,12 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
                 except Exception:
                     pass
 
-            S_n = max(x_out[idx], 1e-6); idx += 1
-            st['S'] = S_n
-
-            if refine_biso:
+            st['S'] = max(x_out[idx], 1e-6); idx += 1
+            if has_biso:
                 st['B_iso'] = max(x_out[idx], 0.0); idx += 1
-
             st['U'] = x_out[idx]; st['V'] = x_out[idx+1]
             st['W'] = max(x_out[idx+2], 0.005)
             st['X'] = x_out[idx+3]; st['Y'] = x_out[idx+4]
-            zero = x_out[idx+5]
 
         # ── Convergence check ─────────────────────────────────────────────
         yc_cur, _, _ = calc_pattern(phase_state, bg_c, zero)
