@@ -341,7 +341,8 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
         pat_ = np.zeros(len(tt_r))
         for st in states:
             profs = _get_profiles(tt_r, st['refs'],
-                                   st['U'], st['V'], st['W'], st['eta'],
+                                   st['U'], st['V'], st['W'],
+                                   st.get('eta', 0.5),
                                    zero_, st['X'], st['Y'])
             for k in range(len(st['refs'])):
                 pat_ += st['S'] * st['I_hkl'][k] * profs[k]
