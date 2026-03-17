@@ -19,9 +19,10 @@ from scipy.optimize import least_squares
 from .crystallography import (
     generate_reflections, chebyshev_background,
     caglioti_fwhm, scherrer_size, pseudo_voigt,
-    compute_fit_statistics, d_spacing,
+    compute_fit_statistics, d_spacing, cell_volume,
     generate_reflections_rietveld, compute_rietveld_intensities,
     structure_factor_sq_dw, parse_cif as _parse_cif_cryst,
+    molar_mass_from_formula,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -525,11 +526,41 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
             st.update({'free_v': fv_new, 'refs': refs_new, 'I_hkl': I_new,
                        'S': S_n, 'U': U_n, 'V': V_n, 'W': W_n, 'eta': eta_n})
 
+        # ── E: Quick I_hkl re-partitioning after cell refinement ─────────
+        # Peaks may have shifted; re-update intensities for consistency.
+        _profs_e = [_get_profiles(tt_r, st['refs'],
+                                   st['U'], st['V'], st['W'], st['eta'], zero)
+                    for st in phase_state]
+        bg_e = np.maximum(chebyshev_background(tt_r, bg_c, tt_min, tt_max), 0)
+        for _inner_e in range(10):
+            pat_e = np.zeros(len(tt_r))
+            for i_ph, st in enumerate(phase_state):
+                for k in range(len(st['refs'])):
+                    pat_e += st['S'] * st['I_hkl'][k] * _profs_e[i_ph][k]
+            sum_e = np.maximum(pat_e, 1e-8)
+            y_nob = np.maximum(y_r - bg_e, 0.1)
+            max_chg = 0.0
+            for i_ph, st in enumerate(phase_state):
+                I_up = np.zeros(len(st['refs']))
+                for k in range(len(st['refs'])):
+                    phi = _profs_e[i_ph][k]
+                    if phi.sum() < 1e-10:
+                        I_up[k] = st['I_hkl'][k]; continue
+                    ratio = st['S'] * st['I_hkl'][k] * phi / sum_e
+                    I_up[k] = max(np.sum(weights * y_nob * ratio) /
+                                  max(np.sum(weights * phi) * st['S'], 1e-10), 1e-6)
+                I_up = np.clip(I_up, 1e-6, 1e7)
+                max_chg = max(max_chg, np.max(np.abs(I_up - st['I_hkl']) /
+                              np.maximum(st['I_hkl'], 1e-6)))
+                st['I_hkl'] = I_up
+            if max_chg < 0.005:
+                break
+
         yc_cur, _, _ = total_calc(phase_state, bg_c, zero)
         cur_rwp = rwp(y_r, yc_cur, weights)
         if progress_callback:
             progress_callback(f'Outer iteration {outer+1}: Rwp = {cur_rwp:.2f}%')
-        if abs(prev_rwp - cur_rwp) < 0.005:  # stop when Rwp changes less than 0.005%
+        if abs(prev_rwp - cur_rwp) < 0.1:  # stop when Rwp changes less than 0.1%
             break
         prev_rwp = cur_rwp
 
@@ -544,12 +575,40 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
 
     phase_patterns = []
     phase_results  = []
-    total_pat_area = sum(
-        st['S'] * sum(st['I_hkl'][k]*_get_profiles(tt_r, st['refs'],
-            st['U'], st['V'], st['W'], st['eta'], zero)[k].sum()
-            for k in range(len(st['refs'])))
-        for st in phase_state
-    )
+
+    # ── Weight fractions via Hill & Howard (1987) ────────────────────────
+    # W_α = S_α · Z_α · M_α · V_α  /  Σ_i(S_i · Z_i · M_i · V_i)
+    # If Z or M are unavailable for any phase, fall back to S·V² (area-based).
+    zmv_values = []
+    use_zmv = True
+    for st in phase_state:
+        ph = st['ph']
+        a_ = float(ph.get('a', 4.0))
+        b_ = float(ph.get('b') or a_)
+        c_ = float(ph.get('c') or a_)
+        al_ = float(ph.get('alpha', 90.0) or 90.0)
+        be_ = float(ph.get('beta',  90.0) or 90.0)
+        ga_ = float(ph.get('gamma', 90.0) or 90.0)
+        V = cell_volume(a_, b_, c_, al_, be_, ga_)
+        Z = ph.get('Z')
+        M = molar_mass_from_formula(ph.get('formula', ''))
+        if Z and M:
+            zmv_values.append(float(st['S']) * float(Z) * float(M) * V)
+        else:
+            use_zmv = False
+            break
+
+    if not use_zmv:
+        # Fallback: use integrated pattern areas (semi-quantitative)
+        zmv_values = []
+        for st in phase_state:
+            profs_tmp = _get_profiles(tt_r, st['refs'],
+                                       st['U'], st['V'], st['W'], st['eta'], zero)
+            area = st['S'] * sum(st['I_hkl'][k] * profs_tmp[k].sum()
+                                 for k in range(len(st['refs'])))
+            zmv_values.append(float(area))
+
+    total_zmv = sum(zmv_values) or 1e-10
 
     for i_ph, st in enumerate(phase_state):
         profs = _get_profiles(tt_r, st['refs'],
@@ -570,10 +629,7 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
         fwhm_sc = caglioti_fwhm(strongest_tt, st['U'], st['V'], st['W'])
         cryst_A = scherrer_size(fwhm_sc, strongest_tt, wavelength)
 
-        # Weight fraction: proportional to scale * integrated pattern area
-        ph_area = st['S'] * sum(st['I_hkl'][k]*profs[k].sum()
-                      for k in range(len(st['refs'])))
-        wt_frac = (ph_area / max(total_pat_area, 1e-10)) * 100
+        wt_frac = (zmv_values[i_ph] / total_zmv) * 100
 
         phase_results.append({
             'name':              ph.get('name', f'Phase {i_ph+1}'),
@@ -942,7 +998,7 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
             progress_callback(
                 f'Rietveld iter {iteration+1} [{stage_name}]: Rwp = {cur_rwp:.2f}%')
         # Only check convergence after all parameters are free (stage 3)
-        if refine_biso and abs(prev_rwp - cur_rwp) < 0.005:
+        if refine_biso and abs(prev_rwp - cur_rwp) < 0.1:
             break
         prev_rwp = cur_rwp
 
@@ -959,14 +1015,38 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
     phase_patterns = []
     phase_results  = []
 
-    total_pat_area = 0.0
+    # ── Weight fractions via Hill & Howard (1987) ────────────────────────
+    zmv_values_r = []
+    use_zmv_r = True
     for st in phase_state:
-        I_hkl = compute_rietveld_intensities(
-            st['refs'], st['sites'], {'_all': st['B_iso']})
-        profs = _get_profiles(tt_r, _refs_to_legacy(st['refs']),
-                               st['U'], st['V'], st['W'], st['eta'], zero)
-        total_pat_area += st['S'] * sum(
-            I_hkl[k] * profs[k].sum() for k in range(len(st['refs'])))
+        ph = st['ph']
+        a_ = float(ph.get('a', 4.0))
+        b_ = float(ph.get('b') or a_)
+        c_ = float(ph.get('c') or a_)
+        al_ = float(ph.get('alpha', 90.0) or 90.0)
+        be_ = float(ph.get('beta',  90.0) or 90.0)
+        ga_ = float(ph.get('gamma', 90.0) or 90.0)
+        V = cell_volume(a_, b_, c_, al_, be_, ga_)
+        Z = ph.get('Z')
+        M = molar_mass_from_formula(ph.get('formula', ''))
+        if Z and M:
+            zmv_values_r.append(float(st['S']) * float(Z) * float(M) * V)
+        else:
+            use_zmv_r = False
+            break
+
+    if not use_zmv_r:
+        zmv_values_r = []
+        for st in phase_state:
+            I_hkl_tmp = compute_rietveld_intensities(
+                st['refs'], st['sites'], {'_all': st['B_iso']})
+            profs_tmp = _get_profiles(tt_r, _refs_to_legacy(st['refs']),
+                                       st['U'], st['V'], st['W'], st['eta'], zero)
+            area = st['S'] * sum(
+                I_hkl_tmp[k] * profs_tmp[k].sum() for k in range(len(st['refs'])))
+            zmv_values_r.append(float(area))
+
+    total_zmv_r = sum(zmv_values_r) or 1e-10
 
     for i_ph, st in enumerate(phase_state):
         I_hkl = compute_rietveld_intensities(
@@ -989,9 +1069,7 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
         fwhm_sc = caglioti_fwhm(strongest_tt, st['U'], st['V'], st['W'])
         cryst_A = scherrer_size(fwhm_sc, strongest_tt, wavelength)
 
-        ph_area = st['S'] * sum(
-            I_hkl[k] * profs[k].sum() for k in range(len(st['refs'])))
-        wt_frac = (ph_area / max(total_pat_area, 1e-10)) * 100
+        wt_frac = (zmv_values_r[i_ph] / total_zmv_r) * 100
 
         phase_results.append({
             'name':              ph.get('name', f'Phase {i_ph+1}'),

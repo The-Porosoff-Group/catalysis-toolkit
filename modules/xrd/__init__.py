@@ -266,11 +266,13 @@ def validate_phases(phases, fetch_missing=True):
                 parsed = parse_cif(cif_text)
                 # Only fill fields that are missing or None
                 for key in ['a','b','c','alpha','beta','gamma',
-                            'spacegroup_number','system']:
+                            'spacegroup_number','system','Z']:
                     if ph.get(key) is None and parsed.get(key) is not None:
                         ph[key] = parsed[key]
                 if not ph.get('name'):
                     ph['name'] = parsed.get('formula', 'Phase')
+                if not ph.get('formula') and parsed.get('formula'):
+                    ph['formula'] = parsed['formula']
             except Exception:
                 pass
 
