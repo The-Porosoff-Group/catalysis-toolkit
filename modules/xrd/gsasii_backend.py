@@ -213,18 +213,14 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         progress_callback('GSAS-II: setting up project...')
 
     # ── Create temporary files ───────────────────────────────────────────
-    work_dir = tempfile.mkdtemp(prefix='gsas2_')
-    # On Windows, resolve 8.3 short paths (e.g. MARCPO~1) to long paths
-    # so that GSAS-II's file readers can find the files.
-    if sys.platform == 'win32':
-        try:
-            import ctypes
-            buf = ctypes.create_unicode_buffer(512)
-            ctypes.windll.kernel32.GetLongPathNameW(work_dir, buf, 512)
-            if buf.value:
-                work_dir = buf.value
-        except Exception:
-            pass
+    # Use a temp dir inside the app directory to avoid spaces / short-path
+    # issues in the user-profile temp folder (GSAS-II can't read files
+    # whose path contains spaces).
+    _app_tmp = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            os.pardir, os.pardir, '.gsas_tmp')
+    _app_tmp = os.path.normpath(_app_tmp)
+    os.makedirs(_app_tmp, exist_ok=True)
+    work_dir = tempfile.mkdtemp(prefix='gsas2_', dir=_app_tmp)
     gpx_path = os.path.join(work_dir, 'refine.gpx')
     data_path = os.path.join(work_dir, 'data.xye')
     instprm_path = _write_instprm(work_dir, wavelength)
