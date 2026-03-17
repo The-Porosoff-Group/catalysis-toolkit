@@ -8,8 +8,25 @@ import os, sys, re, json, base64, webbrowser
 from datetime import datetime
 from threading import Timer
 
+import numpy as np
 import yaml
 from flask import Flask, render_template, request, jsonify, send_file
+from flask.json.provider import DefaultJSONProvider
+
+
+class NumpyJSONProvider(DefaultJSONProvider):
+    """JSON provider that serialises numpy scalars and arrays."""
+
+    def default(self, o):
+        if isinstance(o, np.integer):
+            return int(o)
+        if isinstance(o, np.floating):
+            return float(o)
+        if isinstance(o, np.bool_):
+            return bool(o)
+        if isinstance(o, np.ndarray):
+            return o.tolist()
+        return super().default(o)
 
 # ── Path setup ────────────────────────────────────────────────────────────────
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
@@ -83,6 +100,8 @@ if CONFIG['performance'].get('preload_pymatgen', True):
 
 # ── Flask app ─────────────────────────────────────────────────────────────────
 app = Flask(__name__)
+app.json_provider_class = NumpyJSONProvider
+app.json = NumpyJSONProvider(app)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
 MODULES = [
@@ -491,10 +510,9 @@ def xrd_preview():
         path = os.path.join(UPLOAD_DIR, safe)
         f.save(path)
 
-        import xrd_processor
         data = xrd_processor.parse_xrd_file(path)
-        tt   = data['tt'].tolist()
-        y    = data['intensity'].tolist()
+        tt   = [float(v) for v in data['tt']]
+        y    = [float(v) for v in data['intensity']]
 
         MAX_PTS = 2000
         if len(tt) > MAX_PTS:
