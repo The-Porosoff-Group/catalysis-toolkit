@@ -47,20 +47,45 @@ if errorlevel 1 (
 )
 
 :: Install GSAS-II if not present
-python -c "import GSASIIscriptable" >nul 2>&1
+python -c "import GSASII.GSASIIscriptable" >nul 2>&1
 if errorlevel 1 (
-    echo  Installing GSAS-II ^(one-time, may take several minutes^)...
-    echo.
-    conda install gsas2full -c briantoby -y
+    python -c "import GSASIIscriptable" >nul 2>&1
     if errorlevel 1 (
+        echo  Installing GSAS-II from GitHub ^(one-time, may take several minutes^)...
         echo.
-        echo  WARNING: GSAS-II installation failed.
-        echo  GSAS-II button will be hidden, but Le Bail and Rietveld will still work.
-        echo.
-    ) else (
-        echo.
-        echo  GSAS-II installed successfully.
-        echo.
+        :: Check if git is available
+        where git >nul 2>&1
+        if errorlevel 1 (
+            echo  WARNING: git not found. Cannot install GSAS-II automatically.
+            echo  Install git from https://git-scm.com/downloads then re-run.
+            echo  GSAS-II button will be hidden, but Le Bail and Rietveld will still work.
+            echo.
+        ) else (
+            :: Clone and pip-install GSAS-II
+            set "GSAS_CLONE=%TOOLKIT_DIR%.gsas2_src"
+            if not exist "%GSAS_CLONE%" (
+                git clone --depth 1 https://github.com/AdvancedPhotonSource/GSAS-II.git "%GSAS_CLONE%"
+            )
+            if exist "%GSAS_CLONE%\setup.py" (
+                pip install "%GSAS_CLONE%"
+            ) else if exist "%GSAS_CLONE%\pyproject.toml" (
+                pip install "%GSAS_CLONE%"
+            ) else (
+                echo  WARNING: GSAS-II clone incomplete. Trying pip install anyway...
+                pip install "%GSAS_CLONE%"
+            )
+            python -c "import GSASII.GSASIIscriptable" >nul 2>&1
+            if errorlevel 1 (
+                echo.
+                echo  WARNING: GSAS-II installation failed.
+                echo  GSAS-II button will be hidden, but Le Bail and Rietveld will still work.
+                echo.
+            ) else (
+                echo.
+                echo  GSAS-II installed successfully.
+                echo.
+            )
+        )
     )
 )
 

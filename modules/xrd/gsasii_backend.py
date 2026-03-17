@@ -2,7 +2,9 @@
 modules/xrd/gsasii_backend.py
 GSAS-II integration for Rietveld/Le Bail refinement via GSASIIscriptable.
 
-Requires GSAS-II installed in the Python environment (conda install gsas2full -c briantoby).
+Requires GSAS-II installed in the Python environment.
+Install via:  git clone https://github.com/AdvancedPhotonSource/GSAS-II.git
+              cd GSAS-II && pip install .
 This module wraps GSASIIscriptable to provide a refinement backend compatible
 with the toolkit's result format (same keys as run_lebail / run_rietveld).
 """
@@ -16,10 +18,16 @@ _GSASII_AVAILABLE = False
 _GSASII_IMPORT_ERROR = None
 
 try:
-    import GSASIIscriptable as G2sc
+    # New-style import (pip-installed from GitHub repo)
+    import GSASII.GSASIIscriptable as G2sc
     _GSASII_AVAILABLE = True
-except ImportError as e:
-    _GSASII_IMPORT_ERROR = str(e)
+except ImportError:
+    try:
+        # Legacy import (older conda gsas2full package)
+        import GSASIIscriptable as G2sc
+        _GSASII_AVAILABLE = True
+    except ImportError as e:
+        _GSASII_IMPORT_ERROR = str(e)
 
 try:
     from .crystallography import (
@@ -130,7 +138,8 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
     if not _GSASII_AVAILABLE:
         raise RuntimeError(
             f"GSAS-II is not installed or not importable in this Python environment. "
-            f"Install with: conda install gsas2full -c briantoby\n"
+            f"Install with: git clone https://github.com/AdvancedPhotonSource/GSAS-II.git "
+            f"&& cd GSAS-II && pip install .\n"
             f"Import error: {_GSASII_IMPORT_ERROR}")
 
     # Validate: all phases need CIF text

@@ -28,17 +28,19 @@ Click the green **Code** button on GitHub → **Download ZIP** → extract the f
 
 ### 3. (Optional) Enable GSAS-II refinement
 
-GSAS-II is a powerful refinement engine that can be used alongside the built-in Le Bail and Rietveld methods. It requires a separate install via conda.
+GSAS-II is a powerful refinement engine that can be used alongside the built-in Le Bail and Rietveld methods. It requires **git** and is installed automatically from GitHub.
 
-1. Install **Miniforge** from https://conda-forge.org/miniforge/ (Windows x86_64)
-   - Check **"Add to PATH"** — or if you forget, add `C:\miniforge`, `C:\miniforge\Scripts`, `C:\miniforge\condabin` to your user PATH manually
-2. Open **Command Prompt** and run:
-   ```
-   C:\miniforge\condabin\conda init cmd.exe
-   ```
-3. Close and reopen Command Prompt
+1. Install **Git** from https://git-scm.com/downloads (if not already installed)
+2. That's it — `run.bat` will clone and install GSAS-II automatically on the next launch
 
-`run.bat` will detect conda automatically and install GSAS-II on the next launch. The purple **GSAS-II Refinement** button will appear in the XRD panel once it's installed.
+**Manual install** (if you prefer):
+```
+git clone --depth 1 https://github.com/AdvancedPhotonSource/GSAS-II.git
+cd GSAS-II
+pip install .
+```
+
+The purple **GSAS-II Refinement** button will appear in the XRD panel once it's installed.
 
 > **Note:** If your folder path contains spaces (e.g. `C:\Users\Marc Porosoff\...`), conda may warn about this. It usually still works, but moving the toolkit to `C:\catalysis-toolkit` avoids the issue entirely.
 

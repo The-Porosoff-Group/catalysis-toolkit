@@ -28,7 +28,7 @@ where python
 echo.
 
 echo  Step 5: Checking GSAS-II...
-python -c "import GSASIIscriptable; print('GSAS-II OK')"
+python -c "exec('try:\n import GSASII.GSASIIscriptable as G\n print(\"GSAS-II OK (new-style)\")\nexcept ImportError:\n import GSASIIscriptable as G\n print(\"GSAS-II OK (legacy)\")')"
 echo.
 
 echo  Step 6: Checking other deps...
