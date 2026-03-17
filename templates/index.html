@@ -70,7 +70,7 @@
   .nav-item.disabled { pointer-events: none; opacity: 0.5; }
 
   /* ── Main area ── */
-  main { overflow-y: auto; padding: 32px 36px; display: flex; flex-direction: column; gap: 24px; }
+  main { overflow-y: auto; padding: 24px 28px; display: flex; flex-direction: column; gap: 20px; }
 
   /* ── Module panels ── */
   .module-panel { display: none; flex-direction: column; gap: 24px; }
@@ -505,7 +505,7 @@
     <div class="module-panel" id="module-xrd">
 
       <!-- Step 1: Upload + Settings row -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div style="display:grid;grid-template-columns:1.2fr 0.8fr;gap:16px;">
 
         <div class="card">
           <div class="card-header"><div class="step">1</div><h2>Upload XRD File</h2></div>
@@ -523,15 +523,16 @@
             <div id="xrd-preview-wrap" style="display:none;">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
                 <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;">Data Preview</span>
-                <span style="font-size:10px;color:var(--muted);">Scroll to zoom · drag to pan</span>
+                <span style="font-size:10px;color:var(--muted);">Scroll to zoom · drag to pan · double-click to reset</span>
               </div>
               <canvas id="xrd-preview-canvas"
-                      style="width:100%;height:220px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;cursor:crosshair;"
+                      style="width:100%;height:280px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;cursor:crosshair;"
                       onwheel="previewZoom(event)"
                       onmousedown="previewPanStart(event)"
                       onmousemove="previewPanMove(event)"
                       onmouseup="previewPanEnd()"
-                      onmouseleave="previewPanEnd()">
+                      onmouseleave="previewPanEnd()"
+                      ondblclick="previewResetZoom()">
               </canvas>
             </div>
           </div>
@@ -600,7 +601,7 @@
         <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
 
           <!-- Search inputs -->
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto auto;gap:10px;align-items:flex-end;">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto auto;gap:10px;align-items:flex-end;min-width:0;">
             <div class="form-group">
               <label>Elements (space-separated)</label>
               <input type="text" id="xrd-elements" placeholder="e.g.  Mo  C"
@@ -671,7 +672,7 @@
               <span>a (Å)</span><span>b (Å)</span><span>c (Å)</span><span>Year</span><span></span>
             </div>
             <div id="xrd-candidate-list"
-                 style="max-height:320px;overflow-y:auto;border:1px solid var(--border);
+                 style="max-height:420px;overflow-y:auto;border:1px solid var(--border);
                         border-top:none;border-radius:0 0 6px 6px;"></div>
             <div id="xrd-load-more-wrap" style="display:none;margin-top:8px;">
               <button class="btn-sm" onclick="loadMoreCOD()">Load 100 more results...</button>
@@ -989,7 +990,8 @@ async function loadXrdPreview(file) {
     };
     _stickPhases = [];
     document.getElementById('xrd-preview-wrap').style.display = 'block';
-    drawPreview();
+    // Delay draw until browser has reflowed (getBoundingClientRect returns 0 otherwise)
+    requestAnimationFrame(() => { requestAnimationFrame(() => { drawPreview(); }); });
   } catch(e) { /* silent — preview is optional */ }
 }
 
@@ -1178,6 +1180,21 @@ function computeSticks(phase, wavelength) {
     .sort((a,b) => a.two_theta - b.two_theta);
 }
 
+// ── Auto-scale Y to visible data range ─────────────────────────────────────
+function autoScaleY() {
+  if (!_previewData || !_previewView) return;
+  const tt = _previewData.tt;
+  const iy = _previewData.intensity;
+  let yMax = 0;
+  for (let i = 0; i < tt.length; i++) {
+    if (tt[i] >= _previewView.xMin && tt[i] <= _previewView.xMax) {
+      if (iy[i] > yMax) yMax = iy[i];
+    }
+  }
+  _previewView.yMin = 0;
+  _previewView.yMax = Math.max(yMax * 1.15, 1);
+}
+
 // ── Zoom & Pan ──────────────────────────────────────────────────────────────
 function previewZoom(e) {
   if (!_previewView) return;
@@ -1186,7 +1203,7 @@ function previewZoom(e) {
   const rect   = canvas.getBoundingClientRect();
   const mouseX = e.clientX - rect.left;
   const PAD_L  = 48, pw = rect.width - PAD_L - 12;
-  const frac   = (mouseX - PAD_L) / pw;
+  const frac   = Math.max(0, Math.min(1, (mouseX - PAD_L) / pw));
 
   const {xMin, xMax} = _previewView;
   const range = xMax - xMin;
@@ -1195,6 +1212,16 @@ function previewZoom(e) {
   const centre = xMin + frac * range;
   _previewView.xMin = Math.max(_previewData.tt_min, centre - frac * newRange);
   _previewView.xMax = Math.min(_previewData.tt_max, _previewView.xMin + newRange);
+  autoScaleY();
+  drawPreview();
+}
+
+function previewResetZoom() {
+  if (!_previewData) return;
+  _previewView = {
+    xMin: _previewData.tt_min, xMax: _previewData.tt_max,
+    yMin: 0,                   yMax: _previewData.y_max * 1.15,
+  };
   drawPreview();
 }
 
@@ -1215,6 +1242,7 @@ function previewPanMove(e) {
   if (newMax > _previewData.tt_max) { newMax = _previewData.tt_max; newMin = newMax - range; }
   _previewView.xMin = newMin;
   _previewView.xMax = newMax;
+  autoScaleY();
   drawPreview();
 }
 function previewPanEnd() { _previewPan = null; }
@@ -1492,6 +1520,7 @@ async function uploadCIF(e) {
     cif_text: text,
   };
   xrdPhases.push(phase);
+  addStickPhase(phase);
   renderSelectedPhases();
   setXrdStatus(`✓ Added ${formula} from uploaded CIF.`, 'ok');
 }
