@@ -133,6 +133,11 @@ import re  # needed by _key_to_filename
 
 _cache_instance = None
 
+def get_cif(key):
+    """Return cached CIF text for a key (e.g. 'cod:1010048', 'mp:mp-91'), or None."""
+    return get_cache().get(key)
+
+
 def get_cache(cache_dir=None, max_size_mb=500):
     """Get the shared cache instance (creates on first call)."""
     global _cache_instance
