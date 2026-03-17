@@ -90,7 +90,7 @@ if errorlevel 1 (
 
 echo  Conda package failed, trying GitHub install...
 echo.
-set "GSAS_CLONE=%TOOLKIT_DIR%.gsas2_src"
+set "GSAS_CLONE=%~dp0.gsas2_src"
 if not exist "%GSAS_CLONE%" (
     git clone --depth 1 https://github.com/AdvancedPhotonSource/GSAS-II.git "%GSAS_CLONE%"
 )
