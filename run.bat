@@ -61,6 +61,9 @@ echo  Trying: conda install gsas2pkg -c briantoby ...
 conda install gsas2pkg -c briantoby -y
 if errorlevel 1 goto :GSAS_TRY_GIT
 
+:: Install GSAS-II's optional dependencies needed for CIF import
+pip install pycifrw xmltodict >nul 2>&1
+
 :: Verify conda install worked
 python -c "import GSASIIscriptable" >nul 2>&1
 if not errorlevel 1 (
@@ -95,6 +98,9 @@ if not exist "%GSAS_CLONE%" (
     git clone --depth 1 https://github.com/AdvancedPhotonSource/GSAS-II.git "%GSAS_CLONE%"
 )
 pip install "%GSAS_CLONE%"
+
+:: Install GSAS-II's optional dependencies needed for CIF import
+pip install pycifrw xmltodict >nul 2>&1
 
 :: Verify git install worked
 python -c "import GSASII.GSASIIscriptable" >nul 2>&1

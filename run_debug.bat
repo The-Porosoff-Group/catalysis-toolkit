@@ -35,6 +35,16 @@ echo  Step 6: Checking other deps...
 python -c "import flask; print('flask OK')"
 python -c "import numpy; print('numpy OK')"
 python -c "import pymatgen; print('pymatgen OK')"
+python -c "import CifFile; print('pycifrw OK')"
+python -c "import xmltodict; print('xmltodict OK')"
+echo.
+
+echo  Step 6b: Installing missing GSAS-II deps if needed...
+python -c "import CifFile" >nul 2>&1
+if errorlevel 1 (
+    echo  Installing pycifrw and xmltodict...
+    pip install pycifrw xmltodict
+)
 echo.
 
 echo  Step 7: Starting app...
