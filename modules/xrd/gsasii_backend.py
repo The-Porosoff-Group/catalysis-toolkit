@@ -275,6 +275,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             'set': {
                 'Background': {'type': 'chebyschev-1', 'refine': True,
                                 'no. coeffs': n_bg_coeffs},
+                'Scale': True,  # Refine phase scale factors
             }
         })
         gpx.do_refinements([{'set': {}, 'cycles': min(max_cycles, 5)}])
