@@ -51,40 +51,48 @@ python -c "import GSASII.GSASIIscriptable" >nul 2>&1
 if errorlevel 1 (
     python -c "import GSASIIscriptable" >nul 2>&1
     if errorlevel 1 (
-        echo  Installing GSAS-II from GitHub ^(one-time, may take several minutes^)...
+        echo  Installing GSAS-II ^(one-time, may take several minutes^)...
         echo.
-        :: Check if git is available
-        where git >nul 2>&1
+        :: Try conda package gsas2pkg first (replaces old gsas2full)
+        conda install gsas2pkg -c briantoby -y >nul 2>&1
+        python -c "import GSASIIscriptable" >nul 2>&1
         if errorlevel 1 (
-            echo  WARNING: git not found. Cannot install GSAS-II automatically.
-            echo  Install git from https://git-scm.com/downloads then re-run.
-            echo  GSAS-II button will be hidden, but Le Bail and Rietveld will still work.
-            echo.
-        ) else (
-            :: Clone and pip-install GSAS-II
-            set "GSAS_CLONE=%TOOLKIT_DIR%.gsas2_src"
-            if not exist "%GSAS_CLONE%" (
-                git clone --depth 1 https://github.com/AdvancedPhotonSource/GSAS-II.git "%GSAS_CLONE%"
-            )
-            if exist "%GSAS_CLONE%\setup.py" (
-                pip install "%GSAS_CLONE%"
-            ) else if exist "%GSAS_CLONE%\pyproject.toml" (
-                pip install "%GSAS_CLONE%"
-            ) else (
-                echo  WARNING: GSAS-II clone incomplete. Trying pip install anyway...
-                pip install "%GSAS_CLONE%"
-            )
             python -c "import GSASII.GSASIIscriptable" >nul 2>&1
             if errorlevel 1 (
-                echo.
-                echo  WARNING: GSAS-II installation failed.
-                echo  GSAS-II button will be hidden, but Le Bail and Rietveld will still work.
-                echo.
+                :: Conda package failed, try git clone + pip install
+                where git >nul 2>&1
+                if errorlevel 1 (
+                    echo  WARNING: GSAS-II conda install failed and git not found.
+                    echo  Install git from https://git-scm.com/downloads then re-run,
+                    echo  or manually: conda install gsas2pkg -c briantoby
+                    echo  GSAS-II button will be hidden, but Le Bail and Rietveld still work.
+                    echo.
+                ) else (
+                    echo  Conda package unavailable, trying GitHub install...
+                    set "GSAS_CLONE=%TOOLKIT_DIR%.gsas2_src"
+                    if not exist "%GSAS_CLONE%" (
+                        git clone --depth 1 https://github.com/AdvancedPhotonSource/GSAS-II.git "%GSAS_CLONE%"
+                    )
+                    pip install "%GSAS_CLONE%"
+                    python -c "import GSASII.GSASIIscriptable" >nul 2>&1
+                    if errorlevel 1 (
+                        echo.
+                        echo  WARNING: GSAS-II installation failed.
+                        echo  GSAS-II button will be hidden, but Le Bail and Rietveld still work.
+                        echo.
+                    ) else (
+                        echo.
+                        echo  GSAS-II installed successfully.
+                        echo.
+                    )
+                )
             ) else (
-                echo.
                 echo  GSAS-II installed successfully.
                 echo.
             )
+        ) else (
+            echo  GSAS-II installed successfully.
+            echo.
         )
     )
 )

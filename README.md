@@ -28,12 +28,15 @@ Click the green **Code** button on GitHub → **Download ZIP** → extract the f
 
 ### 3. (Optional) Enable GSAS-II refinement
 
-GSAS-II is a powerful refinement engine that can be used alongside the built-in Le Bail and Rietveld methods. It requires **git** and is installed automatically from GitHub.
+GSAS-II is a powerful refinement engine that can be used alongside the built-in Le Bail and Rietveld methods. `run.bat` will attempt to install it automatically.
 
-1. Install **Git** from https://git-scm.com/downloads (if not already installed)
-2. That's it — `run.bat` will clone and install GSAS-II automatically on the next launch
+**Automatic:** Just run `run.bat` — it tries `conda install gsas2pkg -c briantoby` first, then falls back to a GitHub clone + pip install if git is available.
 
-**Manual install** (if you prefer):
+**Manual install** (if automatic fails):
+```
+conda install gsas2pkg -c briantoby
+```
+or:
 ```
 git clone --depth 1 https://github.com/AdvancedPhotonSource/GSAS-II.git
 cd GSAS-II
@@ -41,6 +44,8 @@ pip install .
 ```
 
 The purple **GSAS-II Refinement** button will appear in the XRD panel once it's installed.
+
+> **Spaces in paths:** GSAS-II does not fully support paths with spaces. If your toolkit folder is under e.g. `C:\Users\Marc Porosoff\...`, consider moving it to `C:\catalysis-toolkit` to avoid issues.
 
 > **Note:** If your folder path contains spaces (e.g. `C:\Users\Marc Porosoff\...`), conda may warn about this. It usually still works, but moving the toolkit to `C:\catalysis-toolkit` avoids the issue entirely.
 
