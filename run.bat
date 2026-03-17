@@ -15,13 +15,17 @@ if errorlevel 1 goto :USE_VENV
 echo  [Conda detected - using conda environment]
 echo.
 
+:: Get full path to this directory (handles spaces)
+set "TOOLKIT_DIR=%~dp0"
+set "CONDA_ENV=%TOOLKIT_DIR%.conda_env"
+
 :: Create conda environment if it doesn't exist
-if not exist ".conda_env\python.exe" (
-    if not exist ".conda_env\Scripts\python.exe" (
-        echo  Creating conda environment in .conda_env\ ...
+if not exist "%CONDA_ENV%\python.exe" (
+    if not exist "%CONDA_ENV%\Scripts\python.exe" (
+        echo  Creating conda environment...
         echo  ^(First-time setup - this takes a few minutes^)
         echo.
-        conda create -p .conda_env python=3.11 -y -q
+        conda create -p "%CONDA_ENV%" python=3.11 -y -q
         if errorlevel 1 (
             echo  ERROR: Failed to create conda environment.
             echo  Falling back to venv...
@@ -33,9 +37,11 @@ if not exist ".conda_env\python.exe" (
 )
 
 :: Activate conda environment
-call conda activate .\.conda_env
+call conda activate "%CONDA_ENV%"
 if errorlevel 1 (
     echo  ERROR: Failed to activate conda environment.
+    echo  Try running: conda init cmd.exe
+    echo  Then close and reopen this window.
     echo  Falling back to venv...
     goto :USE_VENV
 )
@@ -45,12 +51,14 @@ python -c "import GSASIIscriptable" >nul 2>&1
 if errorlevel 1 (
     echo  Installing GSAS-II ^(one-time, may take several minutes^)...
     echo.
-    conda install gsas2full -c briantoby -y -q
+    conda install gsas2full -c briantoby -y
     if errorlevel 1 (
+        echo.
         echo  WARNING: GSAS-II installation failed.
         echo  GSAS-II button will be hidden, but Le Bail and Rietveld will still work.
         echo.
     ) else (
+        echo.
         echo  GSAS-II installed successfully.
         echo.
     )
@@ -62,13 +70,15 @@ if errorlevel 1 (
     echo  Installing Python dependencies...
     echo  ^(First run: pymatgen is ~500 MB - please be patient^)
     echo.
-    pip install flask pyyaml numpy pandas scipy matplotlib requests pymatgen --quiet
+    pip install flask pyyaml numpy pandas scipy matplotlib requests pymatgen
     if errorlevel 1 (
+        echo.
         echo  ERROR: Dependency installation failed.
         echo  Check your internet connection and try again.
         pause
         exit /b
     )
+    echo.
     echo  Dependencies installed successfully.
     echo.
 )
@@ -137,4 +147,9 @@ echo.
 
 python app.py
 
+echo.
+echo  ============================================
+echo  Server stopped. If this was unexpected,
+echo  check the error message above.
+echo  ============================================
 pause
