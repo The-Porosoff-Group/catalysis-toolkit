@@ -9,7 +9,7 @@ This module wraps GSASIIscriptable to provide a refinement backend compatible
 with the toolkit's result format (same keys as run_lebail / run_rietveld).
 """
 
-import math, os, tempfile, warnings
+import math, os, sys, tempfile, warnings
 import numpy as np
 
 # ── GSAS-II availability check ──────────────────────────────────────────────
@@ -17,13 +17,28 @@ import numpy as np
 _GSASII_AVAILABLE = False
 _GSASII_IMPORT_ERROR = None
 
+def _add_gsas2pkg_paths():
+    """Add gsas2pkg conda install paths to sys.path if not already present.
+    gsas2pkg installs to {conda_prefix}/GSAS-II/ rather than site-packages."""
+    prefix = sys.prefix  # e.g. C:\catalysis-toolkit\.conda_env
+    candidates = [
+        os.path.join(prefix, 'GSAS-II', 'GSASII'),   # for import GSASIIscriptable
+        os.path.join(prefix, 'GSAS-II'),               # for import GSASII.GSASIIscriptable
+        os.path.join(prefix, 'GSAS-II', 'backcompat'), # backcompat shim
+    ]
+    for p in candidates:
+        if os.path.isdir(p) and p not in sys.path:
+            sys.path.insert(0, p)
+
+_add_gsas2pkg_paths()
+
 try:
-    # New-style import (pip-installed from GitHub repo)
+    # New-style import (pip-installed from GitHub, or gsas2pkg via GSAS-II subpackage)
     import GSASII.GSASIIscriptable as G2sc
     _GSASII_AVAILABLE = True
 except ImportError:
     try:
-        # Legacy import (older conda gsas2full package)
+        # Direct import (gsas2pkg installs GSASII/ dir; backcompat or GSASII on path)
         import GSASIIscriptable as G2sc
         _GSASII_AVAILABLE = True
     except ImportError as e:
