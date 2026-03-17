@@ -242,19 +242,8 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             databank=None,
         )
 
-        # Set instrument parameters manually
-        inst_params = histogram.data['Instrument Parameters'][0]
-        inst_params['Type'] = ['PXC', 'PXC']  # Powder X-ray, CW
-        inst_params['Lam'] = [wavelength, wavelength]
-        inst_params['Zero'] = [0.0, 0.0]
-
-        # Initial profile parameters (will be refined)
-        inst_params['U'] = [0.01, 0.01]
-        inst_params['V'] = [-0.01, -0.01]
-        inst_params['W'] = [0.15, 0.15]
-        inst_params['X'] = [0.0, 0.0]
-        inst_params['Y'] = [0.1, 0.1]
-        inst_params['SH/L'] = [0.002, 0.002]  # asymmetry
+        # Instrument parameters are set by the .instprm file written by
+        # _write_instprm() — no manual override needed.
 
         # Set data range
         histogram.data['Limits'] = [[tt_min, tt_max], [tt_min, tt_max]]
