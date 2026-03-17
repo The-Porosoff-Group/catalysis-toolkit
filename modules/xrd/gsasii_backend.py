@@ -309,7 +309,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # Get calculated pattern
         y_calc_full = np.array(histogram.getdata('ycalc'))
         y_obs_full = np.array(histogram.getdata('yobs'))
-        y_bg_full = np.array(histogram.getdata('yback'))
+        y_bg_full = np.array(histogram.getdata('background'))
         tt_full = np.array(histogram.getdata('x'))
 
         # Trim to our range
