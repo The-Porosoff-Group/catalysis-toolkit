@@ -100,8 +100,21 @@ def _write_instprm(work_dir, wavelength):
     return path
 
 
-def _write_temp_cif(cif_text, phase_name='phase'):
-    """Write CIF text to a temporary file. Returns path."""
+def _write_temp_cif(cif_text, phase_name='phase', work_dir=None):
+    """Write CIF text to a temporary file. Returns path.
+
+    If *work_dir* is given the file is created there (avoids Windows
+    short-path / permission issues with the system temp directory).
+    """
+    if work_dir is not None:
+        # Sanitise phase_name for use as a filename component
+        safe = "".join(c if c.isalnum() or c in ('_', '-') else '_'
+                       for c in phase_name)
+        path = os.path.join(work_dir, f'gsas_{safe}.cif')
+        with open(path, 'w') as f:
+            f.write(cif_text)
+        return path
+    # Fallback: system temp
     fd, path = tempfile.mkstemp(suffix='.cif', prefix=f'gsas_{phase_name}_')
     with os.fdopen(fd, 'w') as f:
         f.write(cif_text)
@@ -208,7 +221,8 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
 
     cif_paths = []
     for ph in phases:
-        cif_path = _write_temp_cif(ph['cif_text'], ph.get('name', 'phase'))
+        cif_path = _write_temp_cif(ph['cif_text'], ph.get('name', 'phase'),
+                                   work_dir=work_dir)
         cif_paths.append(cif_path)
 
     try:
