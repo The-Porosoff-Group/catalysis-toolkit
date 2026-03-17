@@ -719,11 +719,15 @@
             <button class="btn-process" id="btn-xrd-rietveld" onclick="runXRD('rietveld')" style="background:linear-gradient(135deg,#238636,#2ea043);">
               <span>🔬</span> Rietveld Refinement
             </button>
+            <button class="btn-process" id="btn-xrd-gsas2" onclick="runXRD('gsas2')" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);display:none;" title="Requires GSAS-II installation">
+              <span>🔬</span> GSAS-II Refinement
+            </button>
             <button class="btn-sm" onclick="resetXRD()" title="Clear everything and start fresh">↺ Reset</button>
           </div>
           <div style="font-size:11px;color:var(--muted);line-height:1.4;">
             <b>Le Bail</b> — free peak intensities, good for phase ID and cell params.<br>
-            <b>Rietveld</b> — structure-constrained intensities (requires CIF with atom positions), better intensity balance.
+            <b>Rietveld</b> — structure-constrained intensities (requires CIF with atom positions), better intensity balance.<br>
+            <b>GSAS-II</b> — full-featured Rietveld via GSAS-II engine (requires separate install).
           </div>
 
           <div class="progress-wrap" id="xrd-progress-wrap">
@@ -1350,6 +1354,17 @@ function updateSourceBadge() {
 // Set initial badge state
 document.addEventListener('DOMContentLoaded', () => {
   updateSourceBadge();
+
+  // Check GSAS-II availability and show/hide button
+  fetch('/api/xrd/gsas2_status')
+    .then(r => r.json())
+    .then(data => {
+      if (data.available) {
+        const btn = document.getElementById('btn-xrd-gsas2');
+        if (btn) btn.style.display = '';
+      }
+    })
+    .catch(() => {});  // silently ignore if endpoint not available
 });
 
 // ── COD Search ─────────────────────────────────────────────────────────────
@@ -1615,10 +1630,20 @@ async function runXRD(method) {
 
   document.getElementById('btn-xrd').disabled = true;
   document.getElementById('btn-xrd-rietveld').disabled = true;
+  const gsas2Btn = document.getElementById('btn-xrd-gsas2');
+  if (gsas2Btn) gsas2Btn.disabled = true;
   document.getElementById('xrd-progress-wrap').classList.add('visible');
 
-  const methodLabel = method === 'rietveld' ? 'Rietveld' : 'Le Bail';
-  const steps = method === 'rietveld' ? [
+  const methodLabel = {rietveld:'Rietveld', gsas2:'GSAS-II'}[method] || 'Le Bail';
+  const steps = method === 'gsas2' ? [
+    'Parsing data file...',
+    'Validating CIF structures...',
+    'GSAS-II: building project...',
+    'GSAS-II: refining background + scale...',
+    'GSAS-II: refining profile parameters...',
+    'GSAS-II: refining cell + atoms...',
+    'Extracting results and generating plots...',
+  ] : method === 'rietveld' ? [
     'Parsing data file...',
     'Validating phase structures...',
     'Computing structure factors from CIF...',
@@ -1670,6 +1695,7 @@ async function runXRD(method) {
       showXrdError(data.error + (data.trace ? '\n\n' + data.trace : ''));
       document.getElementById('btn-xrd').disabled = false;
       document.getElementById('btn-xrd-rietveld').disabled = false;
+      if (document.getElementById('btn-xrd-gsas2')) document.getElementById('btn-xrd-gsas2').disabled = false;
       return;
     }
     showXRDResults(data);

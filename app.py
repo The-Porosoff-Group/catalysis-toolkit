@@ -417,6 +417,19 @@ def validate_mp_key():
     return jsonify({'valid': valid, 'message': msg})
 
 
+@app.route('/api/xrd/gsas2_status', methods=['GET'])
+def gsas2_status():
+    """Check if GSAS-II is available in this Python environment."""
+    try:
+        from modules.xrd.gsasii_backend import is_available, import_error
+        return jsonify({
+            'available': is_available(),
+            'error': import_error(),
+        })
+    except Exception as e:
+        return jsonify({'available': False, 'error': str(e)})
+
+
 @app.route('/api/process_xrd', methods=['POST'])
 def process_xrd():
     try:

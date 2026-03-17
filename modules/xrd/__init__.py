@@ -368,7 +368,32 @@ def run(filepath, output_dir, metadata, params):
     method     = params.get('method', 'lebail').lower()
 
     # Run refinement
-    if method == 'rietveld':
+    if method == 'gsas2':
+        from .gsasii_backend import run_gsas2, is_available as gsas2_available
+        if not gsas2_available():
+            from .gsasii_backend import import_error
+            raise RuntimeError(
+                f"GSAS-II is not available: {import_error()}\n"
+                f"Install with: conda install gsas2full -c briantoby")
+        # GSAS-II needs CIF text — pull from cache if stripped
+        from .cif_cache import get_cif
+        for ph in phases:
+            if not ph.get('cif_text'):
+                cid = ph.get('cod_id') or ph.get('mp_id')
+                if cid:
+                    ph['cif_text'] = get_cif(cid)
+        missing = [ph.get('name', '?') for ph in phases
+                   if not ph.get('cif_text')]
+        if missing:
+            raise ValueError(
+                f"GSAS-II requires CIF with atom coordinates for all phases. "
+                f"Missing for: {', '.join(missing)}.")
+        result = run_gsas2(
+            tt, intensity, sigma, phases, wavelength,
+            tt_min=tt_min, tt_max=tt_max,
+            n_bg_coeffs=n_bg, max_cycles=max_outer * 3,
+        )
+    elif method == 'rietveld':
         # Check that all phases have atom sites (CIF text)
         missing = [ph.get('name','?') for ph in phases
                    if not ph.get('sites') and not ph.get('cif_text')]
@@ -390,7 +415,8 @@ def run(filepath, output_dir, metadata, params):
         )
 
     # Plot
-    method_label = 'Rietveld' if method == 'rietveld' else 'Le Bail'
+    method_label = {'rietveld': 'Rietveld', 'gsas2': 'GSAS-II',
+                    }.get(method, 'Le Bail')
     plot_path = os.path.join(output_dir, 'xrd_refinement.png')
     make_xrd_plot(result, {
         'sample_id':       metadata.get('sample_id', 'Sample'),
