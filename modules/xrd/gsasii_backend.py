@@ -140,24 +140,35 @@ def _build_conventional_cif(ph):
         f'_cell_length_b {b:.5f}',
         f'_cell_length_c {c:.5f}',
         f'_cell_angle_alpha {al:.3f}',
-        f'_cell_angle_beta  {be:.3f}',
+        f'_cell_angle_beta {be:.3f}',
         f'_cell_angle_gamma {ga:.3f}',
         f'_symmetry_Int_Tables_number {sg}',
         f"_symmetry_space_group_name_H-M '{hm}'",
+        f"_space_group_IT_number {sg}",
+        f"_space_group_name_H-M_alt '{hm}'",
     ]
 
     if sites:
         lines += [
             '',
             'loop_',
+            '_atom_site_label',
             '_atom_site_type_symbol',
             '_atom_site_fract_x',
             '_atom_site_fract_y',
             '_atom_site_fract_z',
             '_atom_site_occupancy',
         ]
+        site_counts = {}
         for el, x, y, z, occ in sites:
-            lines.append(f'{el}  {x:.6f}  {y:.6f}  {z:.6f}  {occ:.4f}')
+            # Generate unique labels like W1, W2, O1, O2...
+            site_counts[el] = site_counts.get(el, 0) + 1
+            label = f'{el}{site_counts[el]}'
+            # Clamp negative zeros to 0.0 — GSAS-II CIF reader rejects "-0.000000"
+            x = abs(x) if abs(x) < 1e-8 else x
+            y = abs(y) if abs(y) < 1e-8 else y
+            z = abs(z) if abs(z) < 1e-8 else z
+            lines.append(f'{label}  {el}  {x:.6f}  {y:.6f}  {z:.6f}  {occ:.4f}')
 
     return '\n'.join(ln for ln in lines if ln is not None) + '\n'
 
@@ -379,18 +390,47 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                     phasename=phasename,
                     histograms=[histogram],
                 )
-            except Exception as e:
-                cif_size = os.path.getsize(cif_path) if os.path.exists(cif_path) else -1
-                cif_head = ''
-                if os.path.exists(cif_path):
-                    with open(cif_path, 'r', encoding='utf-8') as _f:
-                        cif_head = _f.read(500)
-                raise RuntimeError(
-                    f"GSAS-II could not read CIF for phase '{ph.get('name', '?')}' "
-                    f"(file: {cif_path}, size: {cif_size} bytes).\n"
-                    f"CIF preview:\n{cif_head}\n\n"
-                    f"Original error: {e}"
-                ) from e
+            except Exception as e1:
+                # Synthetic CIF failed — fall back to original CIF text
+                orig_cif = ph.get('cif_text', '')
+                if orig_cif:
+                    try:
+                        orig_path = _write_temp_cif(
+                            orig_cif, ph.get('name', 'phase'),
+                            work_dir=work_dir, index=100+i)
+                        cif_paths.append(orig_path)  # for cleanup
+                        phase_obj = gpx.add_phase(
+                            orig_path,
+                            phasename=phasename,
+                            histograms=[histogram],
+                        )
+                        warnings.warn(
+                            f"Synthetic CIF failed for '{ph.get('name', '?')}', "
+                            f"using original CIF text (error: {e1})")
+                    except Exception as e2:
+                        cif_size = os.path.getsize(cif_path) if os.path.exists(cif_path) else -1
+                        cif_head = ''
+                        if os.path.exists(cif_path):
+                            with open(cif_path, 'r', encoding='utf-8') as _f:
+                                cif_head = _f.read(500)
+                        raise RuntimeError(
+                            f"GSAS-II could not read CIF for phase '{ph.get('name', '?')}' "
+                            f"(file: {cif_path}, size: {cif_size} bytes).\n"
+                            f"CIF preview:\n{cif_head}\n\n"
+                            f"Original error: {e2}"
+                        ) from e2
+                else:
+                    cif_size = os.path.getsize(cif_path) if os.path.exists(cif_path) else -1
+                    cif_head = ''
+                    if os.path.exists(cif_path):
+                        with open(cif_path, 'r', encoding='utf-8') as _f:
+                            cif_head = _f.read(500)
+                    raise RuntimeError(
+                        f"GSAS-II could not read CIF for phase '{ph.get('name', '?')}' "
+                        f"(file: {cif_path}, size: {cif_size} bytes).\n"
+                        f"CIF preview:\n{cif_head}\n\n"
+                        f"Original error: {e1}"
+                    ) from e1
             gsas_phases.append(phase_obj)
 
         # Track which stage succeeded (for fallback on failure)
