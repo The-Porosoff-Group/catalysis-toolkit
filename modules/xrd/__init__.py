@@ -409,19 +409,24 @@ def _write_summary_xlsx(result, metadata, method_label, output_dir):
 
     # ── Sheet 2: Plot data + peak positions ──────────────────────────────
     tt = result.get('tt', [])
+    n_pts = len(tt)
     plot_dict = {
         '2theta':     tt,
-        'Y_obs':      result.get('y_obs', []),
-        'Y_calc':     result.get('y_calc', []),
-        'Background': result.get('y_background', []),
-        'Residual':   result.get('residuals', []),
+        'Y_obs':      result.get('y_obs', [])[:n_pts],
+        'Y_calc':     result.get('y_calc', [])[:n_pts],
+        'Background': result.get('y_background', [])[:n_pts],
+        'Residual':   result.get('residuals', [])[:n_pts],
     }
-    # Per-phase component curves
+    # Per-phase component curves (trim/pad to match length)
     phase_patterns = result.get('phase_patterns', [])
     for i, ph in enumerate(phases):
         col = ph.get('name', f'Phase {i+1}')
         if i < len(phase_patterns):
-            plot_dict[col] = phase_patterns[i]
+            pp = list(phase_patterns[i])
+            # Ensure same length as tt
+            if len(pp) < n_pts:
+                pp = pp + [0.0] * (n_pts - len(pp))
+            plot_dict[col] = pp[:n_pts]
 
     df_plot = pd.DataFrame(plot_dict)
 
@@ -482,12 +487,17 @@ def _write_summary_xlsx(result, metadata, method_label, output_dir):
             df_plot.to_excel(writer, sheet_name='Plot Data', index=False)
         return xlsx_path
     except ImportError:
-        # openpyxl not available — write two CSV files instead
-        summary_csv = os.path.join(output_dir, 'xrd_summary.csv')
-        df_summary.to_csv(summary_csv, index=False)
-        plot_csv = os.path.join(output_dir, 'xrd_plot_data.csv')
-        df_plot.to_csv(plot_csv, index=False)
-        return summary_csv
+        pass
+    except Exception as exc:
+        import warnings
+        warnings.warn(f"xlsx write failed ({exc}), falling back to CSV")
+
+    # openpyxl not available or write failed — write two CSV files
+    summary_csv = os.path.join(output_dir, 'xrd_summary.csv')
+    df_summary.to_csv(summary_csv, index=False)
+    plot_csv = os.path.join(output_dir, 'xrd_plot_data.csv')
+    df_plot.to_csv(plot_csv, index=False)
+    return summary_csv
 
 
 # ─────────────────────────────────────────────────────────────────────────────

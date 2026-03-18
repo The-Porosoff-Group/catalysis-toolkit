@@ -174,6 +174,67 @@ def _build_conventional_cif(ph):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# PER-PHASE PATTERN FROM GSAS-II REFLECTIONS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _synthesise_phase_pattern(tt_arr, ref_info, scale, y_calc, y_bg):
+    """Build a per-phase contribution curve from GSAS-II reflection data.
+
+    ref_info : list of (tt_pos, mult, Fcalc², sig, gam) tuples
+               sig and gam are GSAS-II profile width params (in centidegrees²
+               for sig, centidegrees for gam — or similar variance units).
+    scale    : GSAS-II phase scale factor.
+    y_calc   : total y_calc (all phases + background) — used to clamp.
+    y_bg     : background — the phase pattern sits on top of this.
+
+    Returns np.ndarray of same length as tt_arr.
+    """
+    n = len(tt_arr)
+    pattern = np.zeros(n, dtype=np.float64)
+
+    for tt_pos, mult, fc2, sig, gam in ref_info:
+        intensity = mult * fc2
+        if intensity <= 0:
+            continue
+
+        # GSAS-II 'sig' is Gaussian variance in centidegrees² and
+        # 'gam' is Lorentzian FWHM in centidegrees.
+        # Convert to degrees: sig_deg² = sig / 10000, gam_deg = gam / 100
+        sig_deg2 = max(sig / 10000.0, 1e-6)
+        gam_deg  = max(gam / 100.0, 0.001)
+
+        fwhm_G = 2.3548 * np.sqrt(sig_deg2)  # 2*sqrt(2*ln2) * sigma
+        fwhm_L = gam_deg
+        # Thompson-Cox-Hastings FWHM approximation
+        fwhm = (fwhm_G**5 + 2.69269*fwhm_G**4*fwhm_L
+                + 2.42843*fwhm_G**3*fwhm_L**2
+                + 4.47163*fwhm_G**2*fwhm_L**3
+                + 0.07842*fwhm_G*fwhm_L**4
+                + fwhm_L**5) ** 0.2
+        fwhm = max(fwhm, 0.005)
+        # Mixing parameter eta
+        eta = 1.36603*(fwhm_L/fwhm) - 0.47719*(fwhm_L/fwhm)**2 + 0.11116*(fwhm_L/fwhm)**3
+        eta = np.clip(eta, 0.0, 1.0)
+
+        # pseudo-Voigt profile
+        dt = tt_arr - tt_pos
+        hwhm = fwhm / 2.0
+        G = np.exp(-4.0 * np.log(2.0) * (dt / fwhm)**2)
+        L = 1.0 / (1.0 + 4.0 * (dt / fwhm)**2)
+        pV = eta * L + (1.0 - eta) * G
+        # Normalise and scale
+        area = np.trapz(pV, tt_arr) if np.trapz(pV, tt_arr) > 0 else 1.0
+        pattern += scale * intensity * pV / area
+
+    # Clamp: phase contribution should not exceed total pattern minus background
+    total_above_bg = np.maximum(y_calc - y_bg, 0.0)
+    pattern = np.minimum(pattern, total_above_bg)
+    pattern = np.maximum(pattern, 0.0)
+
+    return pattern
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -667,28 +728,24 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             zmv_val = zmv_values.get(phase_obj.name, scale_val)
             wt_pct = (zmv_val / total_zmv) * 100 if total_zmv > 0 else 0
 
-            # Tick positions (reflection list)
+            # Tick positions & per-reflection data (for pattern synthesis)
             # GSAS-II stores reflections in several possible locations
             # depending on the version and how the phase was added.
             # Standard reflection array: [h,k,l,mult,d,2theta,sig,gam,Fobs²,Fcalc²,...]
             tick_positions = []
+            phase_ref_info = []   # [(tt, mult, fc2, sig_ref, gam_ref), ...] for pattern
             try:
                 hapData = list(phase_obj.data['Histograms'].values())[0]
-                # Try 'Reflection Lists' first (newer GSAS-II)
                 refDict = hapData.get('Reflection Lists', {})
                 if not refDict:
-                    # Fallback: older GSAS-II stores it directly
                     refDict = hapData.get('RefList', {})
                 if isinstance(refDict, dict) and refDict:
                     for key in refDict:
                         rlist = refDict[key]
-                        # rlist may be a dict with 'RefList' key or a direct list
                         if isinstance(rlist, dict):
                             rlist = rlist.get('RefList', [])
                         if isinstance(rlist, (list, np.ndarray)) and len(rlist) > 0:
-                            # Determine 2theta column index by checking if
-                            # index 5 contains plausible 2theta values (0-180°).
-                            # Fall back to index 4 if not.
+                            # 2theta column: index 5 (or 4)
                             tt_col = 5
                             try:
                                 test_val = float(rlist[0][5])
@@ -696,10 +753,9 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                                     tt_col = 4
                             except (IndexError, TypeError, ValueError):
                                 tt_col = 4
-                            # GSAS-II reflection format:
-                            #   [h,k,l,mult,d,2theta,sig,gam,Fobs²,Fcalc²,phase,...]
-                            # Fcalc² is at index 8 or 9; find it by checking
-                            # which index has non-negative floats after 2theta.
+                            # mult at index 3, sig at index 6, gam at index 7
+                            mult_col, sig_col, gam_col = 3, 6, 7
+                            # Fcalc² at index 8 or 9
                             fcalc_col = None
                             for fc_try in (8, 9):
                                 try:
@@ -709,30 +765,33 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                                         break
                                 except (IndexError, TypeError, ValueError):
                                     continue
-                            # Collect all reflections with Fcalc² values
-                            raw_ticks = []
+                            raw_refs = []
                             for ref in rlist:
                                 try:
                                     tt_ref = float(ref[tt_col])
                                     if tt_min <= tt_ref <= tt_max:
                                         fc2 = float(ref[fcalc_col]) if fcalc_col is not None else 1.0
-                                        raw_ticks.append((round(tt_ref, 3), fc2))
+                                        mult = float(ref[mult_col]) if len(ref) > mult_col else 1.0
+                                        sig_r = float(ref[sig_col]) if len(ref) > sig_col else 0.0
+                                        gam_r = float(ref[gam_col]) if len(ref) > gam_col else 0.0
+                                        raw_refs.append((round(tt_ref, 3), mult, fc2, sig_r, gam_r))
                                 except (IndexError, TypeError, ValueError):
                                     continue
                             # Filter out ghost reflections (Fcalc² < 0.1% of max)
-                            if raw_ticks:
-                                max_fc2 = max(t[1] for t in raw_ticks)
+                            if raw_refs:
+                                max_fc2 = max(r[2] for r in raw_refs)
                                 threshold = max_fc2 * 1e-3 if max_fc2 > 0 else 0
-                                tick_positions = [t[0] for t in raw_ticks
-                                                  if t[1] > threshold]
+                                for r in raw_refs:
+                                    if r[2] > threshold:
+                                        tick_positions.append(r[0])
+                                        phase_ref_info.append(r)
                             if tick_positions:
-                                break  # found reflections, stop searching
+                                break
             except Exception as e:
                 warnings.warn(f"GSAS-II: could not extract tick positions for "
                             f"'{ph.get('name', '?')}': {e}")
 
             # Fallback: compute tick positions from cell parameters + space group
-            # Always pass sites so structure-factor-extinct peaks are excluded.
             if not tick_positions:
                 try:
                     from .crystallography import generate_reflections, parse_cif
@@ -766,10 +825,15 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             except Exception:
                 pass
 
-            # Phase pattern: we don't get per-phase patterns from GSAS-II
-            # easily in scriptable mode. Approximate by scaling the total
-            # calculated pattern by weight fraction.
-            phase_pat = (y_calc_out - y_bg_out) * (wt_pct / 100.0)
+            # Synthesise per-phase pattern from GSAS-II reflection data.
+            # Each reflection contributes a pseudo-Voigt peak with position,
+            # width (sig/gam from GSAS-II) and intensity (mult × Fcalc²).
+            if phase_ref_info:
+                phase_pat = _synthesise_phase_pattern(
+                    tt_out, phase_ref_info, scale_val, y_calc_out, y_bg_out)
+            else:
+                # No reflection data — fall back to weight-fraction scaling
+                phase_pat = (y_calc_out - y_bg_out) * (wt_pct / 100.0)
             phase_patterns.append(phase_pat.tolist())
 
             phase_results.append({
