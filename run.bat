@@ -47,9 +47,11 @@ if errorlevel 1 (
 )
 
 :: ── Check if GSAS-II is already installed ───────────────────────────────
-python -c "import GSASII.GSASIIscriptable" >nul 2>&1
+:: gsas2pkg installs into {prefix}/GSAS-II/ which isn't on sys.path by default,
+:: so we add the conda prefix paths before checking imports.
+python -c "import sys,os; p=sys.prefix; [sys.path.insert(0,d) for d in [os.path.join(p,'GSAS-II','GSASII'),os.path.join(p,'GSAS-II'),os.path.join(p,'GSAS-II','backcompat')] if os.path.isdir(d)]; import GSASII.GSASIIscriptable" >nul 2>&1
 if not errorlevel 1 goto :GSAS_DONE
-python -c "import GSASIIscriptable" >nul 2>&1
+python -c "import sys,os; p=sys.prefix; [sys.path.insert(0,d) for d in [os.path.join(p,'GSAS-II','GSASII'),os.path.join(p,'GSAS-II'),os.path.join(p,'GSAS-II','backcompat')] if os.path.isdir(d)]; import GSASIIscriptable" >nul 2>&1
 if not errorlevel 1 goto :GSAS_DONE
 
 :: ── GSAS-II not found — try to install ──────────────────────────────────
@@ -64,14 +66,14 @@ if errorlevel 1 goto :GSAS_TRY_GIT
 :: Install GSAS-II's optional dependencies needed for CIF import
 call pip install pycifrw xmltodict >nul 2>&1
 
-:: Verify conda install worked
-python -c "import GSASIIscriptable" >nul 2>&1
+:: Verify conda install worked (add gsas2pkg paths for the check)
+python -c "import sys,os; p=sys.prefix; [sys.path.insert(0,d) for d in [os.path.join(p,'GSAS-II','GSASII'),os.path.join(p,'GSAS-II'),os.path.join(p,'GSAS-II','backcompat')] if os.path.isdir(d)]; import GSASIIscriptable" >nul 2>&1
 if not errorlevel 1 (
     echo  GSAS-II installed successfully via conda.
     echo.
     goto :GSAS_DONE
 )
-python -c "import GSASII.GSASIIscriptable" >nul 2>&1
+python -c "import sys,os; p=sys.prefix; [sys.path.insert(0,d) for d in [os.path.join(p,'GSAS-II','GSASII'),os.path.join(p,'GSAS-II'),os.path.join(p,'GSAS-II','backcompat')] if os.path.isdir(d)]; import GSASII.GSASIIscriptable" >nul 2>&1
 if not errorlevel 1 (
     echo  GSAS-II installed successfully via conda.
     echo.
@@ -102,8 +104,8 @@ call pip install "%GSAS_CLONE%"
 :: Install GSAS-II's optional dependencies needed for CIF import
 call pip install pycifrw xmltodict >nul 2>&1
 
-:: Verify git install worked
-python -c "import GSASII.GSASIIscriptable" >nul 2>&1
+:: Verify git install worked (add gsas2pkg paths for the check)
+python -c "import sys,os; p=sys.prefix; [sys.path.insert(0,d) for d in [os.path.join(p,'GSAS-II','GSASII'),os.path.join(p,'GSAS-II'),os.path.join(p,'GSAS-II','backcompat')] if os.path.isdir(d)]; import GSASII.GSASIIscriptable" >nul 2>&1
 if not errorlevel 1 (
     echo.
     echo  GSAS-II installed successfully via pip.

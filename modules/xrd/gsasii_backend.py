@@ -109,22 +109,24 @@ def _write_instprm(work_dir, wavelength):
     return path
 
 
-def _write_temp_cif(cif_text, phase_name='phase', work_dir=None):
+def _write_temp_cif(cif_text, phase_name='phase', work_dir=None, index=0):
     """Write CIF text to a temporary file. Returns path.
 
     If *work_dir* is given the file is created there (avoids Windows
     short-path / permission issues with the system temp directory).
+    The *index* parameter ensures unique filenames when multiple phases
+    share the same name.
     """
     if work_dir is not None:
         # Sanitise phase_name for use as a filename component
         safe = "".join(c if c.isalnum() or c in ('_', '-') else '_'
                        for c in phase_name)
-        path = os.path.join(work_dir, f'gsas_{safe}.cif')
+        path = os.path.join(work_dir, f'gsas_{index}_{safe}.cif')
         with open(path, 'w', encoding='utf-8', newline='\n') as f:
             f.write(cif_text)
         return path
     # Fallback: system temp
-    fd, path = tempfile.mkstemp(suffix='.cif', prefix=f'gsas_{phase_name}_')
+    fd, path = tempfile.mkstemp(suffix='.cif', prefix=f'gsas_{index}_{phase_name}_')
     with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as f:
         f.write(cif_text)
     return path
@@ -236,9 +238,9 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
     _write_xye(data_path, tt_r, y_r, sig_r)
 
     cif_paths = []
-    for ph in phases:
+    for i, ph in enumerate(phases):
         cif_path = _write_temp_cif(ph['cif_text'], ph.get('name', 'phase'),
-                                   work_dir=work_dir)
+                                   work_dir=work_dir, index=i)
         cif_paths.append(cif_path)
 
     try:
@@ -261,9 +263,6 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             databank=None,
         )
 
-        # Instrument parameters are set by the .instprm file written by
-        # _write_instprm() — no manual override needed.
-
         # Set data range
         histogram.data['Limits'] = [[tt_min, tt_max], [tt_min, tt_max]]
 
@@ -272,17 +271,23 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         bkg_data[0] = ['chebyschev-1', True, n_bg_coeffs,
                         1.0] + [0.0] * (n_bg_coeffs - 1)
 
-        # Add phases from CIF files
+        # Add phases from CIF files — use unique phasenames to avoid
+        # GSAS-II internal name collisions.
         gsas_phases = []
+        used_names = set()
         for i, (ph, cif_path) in enumerate(zip(phases, cif_paths)):
+            base_name = ph.get('name', f'Phase_{i+1}')
+            phasename = base_name
+            if phasename in used_names:
+                phasename = f"{base_name}_{i+1}"
+            used_names.add(phasename)
             try:
                 phase_obj = gpx.add_phase(
                     cif_path,
-                    phasename=ph.get('name', f'Phase_{i+1}'),
+                    phasename=phasename,
                     histograms=[histogram],
                 )
             except Exception as e:
-                # Log CIF details for debugging
                 cif_size = os.path.getsize(cif_path) if os.path.exists(cif_path) else -1
                 cif_head = ''
                 if os.path.exists(cif_path):
@@ -296,48 +301,97 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 ) from e
             gsas_phases.append(phase_obj)
 
+        # Track which stage succeeded (for fallback on failure)
+        last_good_stage = 0
+
+        # ── Helper to safely run a refinement stage ──────────────────────
+        def _safe_refine(stage_name, refinement_dicts, stage_num):
+            nonlocal last_good_stage
+            try:
+                gpx.do_refinements(refinement_dicts)
+                last_good_stage = stage_num
+                return True
+            except Exception as e:
+                # GSAS-II internally restores from .bak0.gpx on failure,
+                # so the project state reverts to pre-refinement. Safe to continue.
+                warnings.warn(f"GSAS-II: {stage_name} failed ({e}). "
+                             f"Continuing with results from stage {last_good_stage}.")
+                return False
+
         if progress_callback:
             progress_callback('GSAS-II: stage 1 — refining background + scale...')
 
-        # ── Stage 1: Background + scale ──────────────────────────────────
+        # ── Stage 1: Background + scale (one phase at a time) ────────────
+        # Fix all scales first, then refine them one at a time to break
+        # the correlation that causes SVD singularities.
         for phase_obj in gsas_phases:
             hapData = list(phase_obj.data['Histograms'].values())[0]
-            hapData['Scale'] = [1.0, True]  # refine scale
+            hapData['Scale'] = [1.0, False]  # start fixed
 
-        gpx.do_refinements([{
+        # First: refine background only
+        _safe_refine('background', [{
             'set': {
                 'Background': {'type': 'chebyschev-1', 'refine': True,
                                 'no. coeffs': n_bg_coeffs},
-                'Scale': True,
             },
             'cycles': min(max_cycles, 5),
-        }])
+        }], 1)
+
+        # Then: refine each phase's scale one at a time
+        for idx, phase_obj in enumerate(gsas_phases):
+            hapData = list(phase_obj.data['Histograms'].values())[0]
+            hapData['Scale'] = [hapData['Scale'][0], True]  # turn on
+            _safe_refine(f'scale (phase {idx})', [{
+                'set': {},
+                'cycles': 3,
+            }], 1)
+
+        # Now refine all scales together (they have good starting values)
+        _safe_refine('all scales', [{
+            'set': {'Scale': True},
+            'cycles': min(max_cycles, 5),
+        }], 1)
 
         if progress_callback:
             progress_callback('GSAS-II: stage 2 — refining profile parameters...')
 
         # ── Stage 2: Profile parameters ──────────────────────────────────
-        gpx.do_refinements([{
+        _safe_refine('profile', [{
             'set': {
                 'Instrument Parameters': ['U', 'V', 'W', 'X', 'Y'],
             },
             'cycles': min(max_cycles, 5),
-        }])
+        }], 2)
 
         if progress_callback:
-            progress_callback('GSAS-II: stage 3 — refining cell + atoms...')
+            progress_callback('GSAS-II: stage 3 — refining cell parameters...')
 
-        # ── Stage 3: Cell parameters + atomic displacement ───────────────
-        for phase_obj in gsas_phases:
-            phase_obj.set_refinements({
-                'Cell': True,
-                'Atoms': {'all': 'U'},
-            })
+        # ── Stage 3: Cell parameters (one phase at a time) ───────────────
+        # Refining all cells at once with many atoms can cause arccos
+        # errors when cell angles go unphysical. Do it per phase.
+        for idx, phase_obj in enumerate(gsas_phases):
+            phase_obj.set_refinements({'Cell': True})
+            ok = _safe_refine(f'cell (phase {idx})', [{
+                'set': {},
+                'cycles': min(max_cycles, 8),
+            }], 3)
+            if not ok:
+                # Turn cell refinement back off for this phase
+                phase_obj.set_refinements({'Cell': False})
 
-        gpx.do_refinements([{
+        if progress_callback:
+            progress_callback('GSAS-II: stage 4 — refining atomic displacement...')
+
+        # ── Stage 4: Atomic displacement (Uiso) ─────────────────────────
+        for idx, phase_obj in enumerate(gsas_phases):
+            try:
+                phase_obj.set_refinements({'Atoms': {'all': 'U'}})
+            except Exception:
+                pass
+        _safe_refine('Uiso', [{
             'set': {},
-            'cycles': max_cycles,
-        }])
+            'cycles': min(max_cycles, 5),
+        }], 4)
 
         if progress_callback:
             progress_callback('GSAS-II: extracting results...')
