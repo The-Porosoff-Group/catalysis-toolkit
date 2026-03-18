@@ -720,7 +720,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         phase_patterns = []
         phase_results = []
         raw_phase_profiles = []   # for proportional decomposition
-        phase_scale_vals = []     # GSAS-II scale factors for weighting
+        phase_wt_pcts = []        # weight fractions for decomposition
 
         # ── Weight fractions via Hill & Howard (1987) ────────────────────
         # W_α = S_α · Z_α · M_α · V_α  /  Σ(S_i · Z_i · M_i · V_i)
@@ -756,6 +756,9 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             zmv_values = dict(raw_scales)
 
         total_zmv = sum(zmv_values.values()) or 1e-10
+        print(f"GSAS-II scale factors: {raw_scales}", flush=True)
+        print(f"GSAS-II ZMV values: {zmv_values}", flush=True)
+        print(f"GSAS-II use_zmv: {use_zmv}", flush=True)
 
         # Warn if all scale factors are identical (common with failed refinement)
         scale_vals = list(raw_scales.values())
@@ -822,7 +825,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             raw_prof = _compute_raw_phase_profile(
                 tt_out, phase_refs, U_deg, V_deg, W_deg, X_deg, Y_deg)
             raw_phase_profiles.append(raw_prof)
-            phase_scale_vals.append(scale_val)
+            phase_wt_pcts.append(wt_pct)
 
             # B_iso (average over atoms)
             b_iso_avg = 0.5
@@ -873,20 +876,39 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             })
 
         # ── Proportional decomposition ──────────────────────────────────
-        # Each phase's display pattern is its share of (y_calc − y_bg),
-        # apportioned by the ratio of  S_p × raw_p  to the total.
-        # S_p is the GSAS-II refined scale factor for phase p.
-        # raw_p already contains mult × |F|² × profile.
-        # Without the S_p weighting, phases with more atoms per cell
-        # (higher |F|²) would dominate the decomposition regardless of
-        # the actual refined phase fractions.
+        # We need each phase's effective scale to be consistent with its
+        # GSAS-II weight fraction.  The raw profiles use our own |F|²
+        # values, which differ from GSAS-II's (different site handling,
+        # thermal factors, normalization).  Using GSAS-II's raw scale
+        # factors with our |F|² values produces wrong ratios.
+        #
+        # Instead, set each phase's effective scale to:
+        #   eff_scale_p = wt%_p / ∫raw_p
+        # This guarantees that the integrated contribution of each phase
+        # matches its GSAS-II weight fraction, while the raw profile
+        # shape (from our structure factors) determines WHERE each phase
+        # contributes at each 2θ.  This matches how the in-house Rietveld
+        # works: S × Σ(I_hkl × profile), where S is calibrated to the
+        # same F² values used in the profiles.
         total_above_bg = np.maximum(y_calc_out - y_bg_out, 0.0)
         if raw_phase_profiles:
-            weighted = [s * raw for s, raw in zip(phase_scale_vals, raw_phase_profiles)]
+            # Compute effective scale for each phase: wt% / integrated raw
+            eff_scales = []
+            for idx, (raw, wt) in enumerate(zip(raw_phase_profiles, phase_wt_pcts)):
+                integ = np.sum(raw)
+                eff = wt / max(integ, 1e-30)
+                eff_scales.append(eff)
+                ph_name = phase_results[idx]['name'] if idx < len(phase_results) else f'Phase {idx}'
+                print(f"  Phase {idx} ({ph_name}): wt%={wt:.2f}, "
+                      f"∫raw={integ:.4e}, eff_scale={eff:.4e}, "
+                      f"raw_max={np.max(raw):.4e}", flush=True)
+            weighted = [s * raw for s, raw in zip(eff_scales, raw_phase_profiles)]
             w_sum = np.sum(weighted, axis=0)
             w_sum = np.maximum(w_sum, 1e-30)  # avoid division by zero
-            for wp in weighted:
+            for i_wp, wp in enumerate(weighted):
                 frac = wp / w_sum
+                integrated_frac = np.sum(frac * total_above_bg) / max(np.sum(total_above_bg), 1e-30) * 100
+                print(f"  Phase {i_wp}: integrated fraction of pattern = {integrated_frac:.1f}%", flush=True)
                 phase_patterns.append((frac * total_above_bg).tolist())
         else:
             # Single-phase fallback
