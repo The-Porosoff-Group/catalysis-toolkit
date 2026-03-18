@@ -25,7 +25,7 @@ if not exist "%CONDA_ENV%\python.exe" (
         echo  Creating conda environment...
         echo  ^(First-time setup - this takes a few minutes^)
         echo.
-        conda create -p "%CONDA_ENV%" python=3.11 -y -q
+        call conda create -p "%CONDA_ENV%" python=3.11 -y -q
         if errorlevel 1 (
             echo  ERROR: Failed to create conda environment.
             echo  Falling back to venv...
@@ -58,11 +58,11 @@ echo.
 
 :: Try conda package gsas2pkg first (replaces old gsas2full)
 echo  Trying: conda install gsas2pkg -c briantoby ...
-conda install gsas2pkg -c briantoby -y
+call conda install gsas2pkg -c briantoby -y
 if errorlevel 1 goto :GSAS_TRY_GIT
 
 :: Install GSAS-II's optional dependencies needed for CIF import
-pip install pycifrw xmltodict >nul 2>&1
+call pip install pycifrw xmltodict >nul 2>&1
 
 :: Verify conda install worked
 python -c "import GSASIIscriptable" >nul 2>&1
@@ -97,10 +97,10 @@ set "GSAS_CLONE=%~dp0.gsas2_src"
 if not exist "%GSAS_CLONE%" (
     git clone --depth 1 https://github.com/AdvancedPhotonSource/GSAS-II.git "%GSAS_CLONE%"
 )
-pip install "%GSAS_CLONE%"
+call pip install "%GSAS_CLONE%"
 
 :: Install GSAS-II's optional dependencies needed for CIF import
-pip install pycifrw xmltodict >nul 2>&1
+call pip install pycifrw xmltodict >nul 2>&1
 
 :: Verify git install worked
 python -c "import GSASII.GSASIIscriptable" >nul 2>&1
@@ -124,7 +124,7 @@ if errorlevel 1 (
     echo  Installing Python dependencies...
     echo  ^(First run: pymatgen is ~500 MB - please be patient^)
     echo.
-    pip install flask pyyaml numpy pandas scipy matplotlib requests pymatgen
+    call pip install flask pyyaml numpy pandas scipy matplotlib requests pymatgen
     if errorlevel 1 (
         echo.
         echo  ERROR: Dependency installation failed.
@@ -178,7 +178,7 @@ if errorlevel 1 (
     echo  Installing dependencies into .venv\
     echo  ^(First run: pymatgen is ~500 MB - please be patient^)
     echo.
-    pip install flask pyyaml numpy pandas scipy matplotlib requests pymatgen --quiet
+    call pip install flask pyyaml numpy pandas scipy matplotlib requests pymatgen --quiet
     if errorlevel 1 (
         echo.
         echo  ERROR: Dependency installation failed.
