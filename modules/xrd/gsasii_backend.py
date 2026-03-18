@@ -48,11 +48,13 @@ try:
     from .crystallography import (
         compute_fit_statistics, cell_volume, molar_mass_from_formula,
         tch_fwhm_eta, size_from_Y, scherrer_size,
+        generate_reflections, parse_cif, caglioti_fwhm,
     )
 except ImportError:
     from crystallography import (
         compute_fit_statistics, cell_volume, molar_mass_from_formula,
         tch_fwhm_eta, size_from_Y, scherrer_size,
+        generate_reflections, parse_cif, caglioti_fwhm,
     )
 
 
@@ -177,54 +179,57 @@ def _build_conventional_cif(ph):
 # PER-PHASE PATTERN FROM GSAS-II REFLECTIONS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _synthesise_phase_pattern(tt_arr, ref_info, scale, y_calc, y_bg):
-    """Build a per-phase contribution curve from GSAS-II reflection data.
+def _compute_phase_display_pattern(tt_arr, refs, U_deg, V_deg, W_deg,
+                                    X_deg, Y_deg, scale, y_calc, y_bg):
+    """Build a per-phase display pattern using our own reflection list.
 
-    ref_info : list of (tt_pos, mult, Fcalc², sig, gam) tuples
-               sig and gam are GSAS-II profile width params (in centidegrees²
-               for sig, centidegrees for gam — or similar variance units).
-    scale    : GSAS-II phase scale factor.
-    y_calc   : total y_calc (all phases + background) — used to clamp.
-    y_bg     : background — the phase pattern sits on top of this.
+    Uses the same tight-window profile approach as the in-house Rietveld,
+    avoiding dependence on GSAS-II's internal data structures.
+
+    refs : list of [two_theta, d, (h,k,l), intensity_weight] from
+           generate_reflections (with structure factor filtering).
+    U/V/W_deg : Caglioti parameters in degrees² (already converted from
+                GSAS-II centidegrees²).
+    scale : GSAS-II refined phase scale factor.
+    y_calc, y_bg : total calculated pattern and background from GSAS-II.
 
     Returns np.ndarray of same length as tt_arr.
     """
     n = len(tt_arr)
     pattern = np.zeros(n, dtype=np.float64)
 
-    for tt_pos, mult, fc2, sig, gam in ref_info:
-        intensity = mult * fc2
-        if intensity <= 0:
+    use_tch = (X_deg != 0.0 or Y_deg != 0.0)
+
+    for tt_pos, d, hkl, weight in refs:
+        if weight <= 0:
             continue
 
-        # GSAS-II 'sig' is Gaussian variance in centidegrees² and
-        # 'gam' is Lorentzian FWHM in centidegrees.
-        # Convert to degrees: sig_deg² = sig / 10000, gam_deg = gam / 100
-        sig_deg2 = max(sig / 10000.0, 1e-6)
-        gam_deg  = max(gam / 100.0, 0.001)
+        if use_tch:
+            fwhm, eta = tch_fwhm_eta(tt_pos, U_deg, V_deg, W_deg,
+                                      X_deg, Y_deg)
+        else:
+            fwhm = max(caglioti_fwhm(tt_pos, U_deg, V_deg, W_deg), 0.005)
+            eta = 0.5
 
-        fwhm_G = 2.3548 * np.sqrt(sig_deg2)  # 2*sqrt(2*ln2) * sigma
-        fwhm_L = gam_deg
-        # Thompson-Cox-Hastings FWHM approximation
-        fwhm = (fwhm_G**5 + 2.69269*fwhm_G**4*fwhm_L
-                + 2.42843*fwhm_G**3*fwhm_L**2
-                + 4.47163*fwhm_G**2*fwhm_L**3
-                + 0.07842*fwhm_G*fwhm_L**4
-                + fwhm_L**5) ** 0.2
-        fwhm = max(fwhm, 0.005)
-        # Mixing parameter eta
-        eta = 1.36603*(fwhm_L/fwhm) - 0.47719*(fwhm_L/fwhm)**2 + 0.11116*(fwhm_L/fwhm)**3
-        eta = np.clip(eta, 0.0, 1.0)
+        sigma_g = fwhm / (2.0 * math.sqrt(2.0 * math.log(2.0)))
+        gamma_l = fwhm / 2.0
+        # Tight window (3× FWHM) to prevent cross-phase bleed
+        window = 3.0 * fwhm
 
-        # pseudo-Voigt profile
-        dt = tt_arr - tt_pos
-        hwhm = fwhm / 2.0
-        G = np.exp(-4.0 * np.log(2.0) * (dt / fwhm)**2)
-        L = 1.0 / (1.0 + 4.0 * (dt / fwhm)**2)
-        pV = eta * L + (1.0 - eta) * G
-        # Normalise and scale
-        area = np.trapz(pV, tt_arr) if np.trapz(pV, tt_arr) > 0 else 1.0
-        pattern += scale * intensity * pV / area
+        msk = np.abs(tt_arr - tt_pos) < window
+        if not msk.any():
+            continue
+
+        dx = tt_arr[msk] - tt_pos
+        G = np.exp(-0.5 * (dx / sigma_g) ** 2)
+        L = 1.0 / (1.0 + (dx / gamma_l) ** 2)
+        prof = eta * L + (1.0 - eta) * G
+        # Normalise
+        area = np.trapz(prof, tt_arr[msk]) if np.trapz(prof, tt_arr[msk]) > 0 else 1.0
+        pattern[msk] += weight * prof / area
+
+    # Scale by GSAS-II phase scale factor
+    pattern *= scale
 
     # Clamp: phase contribution should not exceed total pattern minus background
     total_above_bg = np.maximum(y_calc - y_bg, 0.0)
@@ -435,15 +440,19 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         bkg_data[0] = ['chebyschev-1', True, n_bg_coeffs,
                         1.0] + [0.0] * (n_bg_coeffs - 1)
 
-        # Add phases from CIF files — use unique phasenames to avoid
-        # GSAS-II internal name collisions.
+        # Add phases from CIF files — always embed the space group number in
+        # the GSAS-II phasename so that two phases with the same formula
+        # (e.g. W Pm-3n vs W Im-3m) are never treated as the same phase.
         gsas_phases = []
         used_names = set()
         for i, (ph, cif_path) in enumerate(zip(phases, cif_paths)):
-            base_name = ph.get('name', f'Phase_{i+1}')
-            phasename = base_name
+            formula  = ph.get('formula', '') or ph.get('name', '') or 'Phase'
+            sg_num   = ph.get('spacegroup_number', 1)
+            # Always include SG number for unambiguous internal naming
+            phasename = f"{formula}_sg{sg_num}"
+            # Deduplicate in case two phases have the same formula + SG (rare)
             if phasename in used_names:
-                phasename = f"{base_name}_{i+1}"
+                phasename = f"{phasename}_{i+1}"
             used_names.add(phasename)
             try:
                 phase_obj = gpx.add_phase(
@@ -736,114 +745,27 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             zmv_val = zmv_values.get(phase_obj.name, scale_val)
             wt_pct = (zmv_val / total_zmv) * 100 if total_zmv > 0 else 0
 
-            # Tick positions & per-reflection data (for pattern synthesis)
-            # GSAS-II stores reflections on the *histogram* object, keyed
-            # by phase name:  histogram.data['Reflection Lists'][phase_name]
-            # Each entry is a dict with 'RefList' → array of reflections.
-            # Standard reflection array: [h,k,l,mult,d,2theta,sig,gam,Fobs²,Fcalc²,...]
-            tick_positions = []
-            phase_ref_info = []   # [(tt, mult, fc2, sig_ref, gam_ref), ...] for pattern
-            try:
-                # Primary: get reflections from histogram keyed by phase name
-                hist_ref_lists = histogram.data.get('Reflection Lists', {})
-                rlist = None
-                # Try the phase name used in GSAS-II (may differ from input)
-                for try_name in [phase_obj.name,
-                                 ph.get('name', ''),
-                                 f"Phase_{i+1}"]:
-                    entry = hist_ref_lists.get(try_name)
-                    if entry is not None:
-                        if isinstance(entry, dict):
-                            rlist = entry.get('RefList', [])
-                        elif isinstance(entry, (list, np.ndarray)):
-                            rlist = entry
-                        if rlist is not None and len(rlist) > 0:
-                            break
-                        rlist = None
-
-                # Fallback: try phase_obj's own hapData
-                if rlist is None or len(rlist) == 0:
-                    hapData = list(phase_obj.data['Histograms'].values())[0]
-                    refDict = hapData.get('Reflection Lists', {})
-                    if not refDict:
-                        refDict = hapData.get('RefList', {})
-                    if isinstance(refDict, dict) and refDict:
-                        for key in refDict:
-                            entry = refDict[key]
-                            if isinstance(entry, dict):
-                                rlist = entry.get('RefList', [])
-                            elif isinstance(entry, (list, np.ndarray)):
-                                rlist = entry
-                            if rlist is not None and len(rlist) > 0:
-                                break
-
-                if rlist is not None and isinstance(rlist, (list, np.ndarray)) and len(rlist) > 0:
-                    # 2theta column: index 5 (or 4)
-                    tt_col = 5
-                    try:
-                        test_val = float(rlist[0][5])
-                        if not (0 < test_val < 180):
-                            tt_col = 4
-                    except (IndexError, TypeError, ValueError):
-                        tt_col = 4
-                    # mult at index 3, sig at index 6, gam at index 7
-                    mult_col, sig_col, gam_col = 3, 6, 7
-                    # Fcalc² at index 8 or 9
-                    fcalc_col = None
-                    for fc_try in (8, 9):
-                        try:
-                            v = float(rlist[0][fc_try])
-                            if v >= 0:
-                                fcalc_col = fc_try
-                                break
-                        except (IndexError, TypeError, ValueError):
-                            continue
-                    raw_refs = []
-                    for ref in rlist:
-                        try:
-                            tt_ref = float(ref[tt_col])
-                            if tt_min <= tt_ref <= tt_max:
-                                fc2 = float(ref[fcalc_col]) if fcalc_col is not None else 1.0
-                                mult = float(ref[mult_col]) if len(ref) > mult_col else 1.0
-                                sig_r = float(ref[sig_col]) if len(ref) > sig_col else 0.0
-                                gam_r = float(ref[gam_col]) if len(ref) > gam_col else 0.0
-                                raw_refs.append((round(tt_ref, 3), mult, fc2, sig_r, gam_r))
-                        except (IndexError, TypeError, ValueError):
-                            continue
-                    # Filter out ghost reflections (Fcalc² < 0.1% of max)
-                    if raw_refs:
-                        max_fc2 = max(r[2] for r in raw_refs)
-                        threshold = max_fc2 * 1e-3 if max_fc2 > 0 else 0
-                        for r in raw_refs:
-                            if r[2] > threshold:
-                                tick_positions.append(r[0])
-                                phase_ref_info.append(r)
-            except Exception as e:
-                warnings.warn(f"GSAS-II: could not extract tick positions for "
-                            f"'{ph.get('name', '?')}': {e}")
-
-            # Fallback: compute tick positions from cell parameters + space group
-            if not tick_positions:
+            # ── Generate reflections using our own crystallography code ──
+            # This is the same approach used by the in-house Rietveld and
+            # is independent of GSAS-II's internal data structures.
+            # Each phase gets its own reflection list based on its own
+            # space group, cell parameters, and atom sites from CIF.
+            sys_ = (ph.get('system') or 'triclinic').lower()
+            sg = ph.get('spacegroup_number', 1)
+            sites = None
+            cif_text = ph.get('cif_text', '')
+            if cif_text:
                 try:
-                    from .crystallography import generate_reflections, parse_cif
-                    sys_ = (ph.get('system') or 'triclinic').lower()
-                    sg = ph.get('spacegroup_number', 1)
-                    # Try to get atom sites from the CIF for accurate F² filtering
-                    sites = None
-                    cif_text = ph.get('cif_text', '')
-                    if cif_text:
-                        try:
-                            parsed = parse_cif(cif_text)
-                            sites = parsed.get('sites') or None
-                        except Exception:
-                            pass
-                    fallback_refs = generate_reflections(
-                        a, b, c, alpha, beta, gamma, sys_, sg,
-                        wavelength, tt_min, tt_max, hkl_max=12,
-                        sites=sites)
-                    tick_positions = [round(r[0], 3) for r in fallback_refs]
+                    parsed = parse_cif(cif_text)
+                    sites = parsed.get('sites') or None
                 except Exception:
                     pass
+
+            phase_refs = generate_reflections(
+                a, b, c, alpha, beta, gamma, sys_, sg,
+                wavelength, tt_min, tt_max, hkl_max=12,
+                sites=sites)
+            tick_positions = [round(r[0], 3) for r in phase_refs]
 
             # B_iso (average over atoms)
             b_iso_avg = 0.5
@@ -856,19 +778,27 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             except Exception:
                 pass
 
-            # Synthesise per-phase pattern from GSAS-II reflection data.
-            # Each reflection contributes a pseudo-Voigt peak with position,
-            # width (sig/gam from GSAS-II) and intensity (mult × Fcalc²).
-            if phase_ref_info:
-                phase_pat = _synthesise_phase_pattern(
-                    tt_out, phase_ref_info, scale_val, y_calc_out, y_bg_out)
-            else:
-                # No reflection data — fall back to weight-fraction scaling
-                phase_pat = (y_calc_out - y_bg_out) * (wt_pct / 100.0)
+            # Compute per-phase display pattern using our own reflections
+            # with tight-window profiles (same method as in-house Rietveld).
+            phase_pat = _compute_phase_display_pattern(
+                tt_out, phase_refs, U_deg, V_deg, W_deg, X_deg, Y_deg,
+                scale_val, y_calc_out, y_bg_out)
             phase_patterns.append(phase_pat.tolist())
 
+            # Build a display name that always includes the space group symbol
+            # so that phases with the same formula are clearly distinguishable.
+            _sg_sym = (ph.get('spacegroup', '') or
+                       _SG_HM.get(ph.get('spacegroup_number', 1), '') or
+                       f"SG{ph.get('spacegroup_number', 1)}")
+            _base_name = ph.get('name') or ph.get('formula') or f'Phase {i+1}'
+            # Only append SG if not already present in the name
+            if _sg_sym and _sg_sym.replace(' ', '') not in _base_name.replace(' ', ''):
+                display_name = f"{_base_name} {_sg_sym}"
+            else:
+                display_name = _base_name
+
             phase_results.append({
-                'name':              ph.get('name', f'Phase {i+1}'),
+                'name':              display_name,
                 'cod_id':            ph.get('cod_id', ph.get('mp_id', '')),
                 'formula':           ph.get('formula', ''),
                 'a': round(a, 5), 'b': round(b, 5), 'c': round(c, 5),

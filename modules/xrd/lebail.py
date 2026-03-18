@@ -721,8 +721,16 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
 
         wt_frac = (zmv_values[i_ph] / total_zmv) * 100
 
+        _sg_sym_r  = (ph.get('spacegroup', '') or
+                      f"SG{ph.get('spacegroup_number', 1)}")
+        _base_r    = ph.get('name') or ph.get('formula') or f'Phase {i_ph+1}'
+        if _sg_sym_r and _sg_sym_r.replace(' ','') not in _base_r.replace(' ',''):
+            _display_r = f"{_base_r} {_sg_sym_r}"
+        else:
+            _display_r = _base_r
+
         phase_results.append({
-            'name':              ph.get('name', f'Phase {i_ph+1}'),
+            'name':              _display_r,
             'cod_id':            ph.get('cod_id', ''),
             'formula':           ph.get('formula', ''),
             'a': round(a,5), 'b': round(b,5), 'c': round(c,5),
@@ -1188,8 +1196,16 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
 
         wt_frac = (zmv_values_r[i_ph] / total_zmv_r) * 100
 
+        _sg_sym_rv  = (ph.get('spacegroup', '') or
+                       f"SG{ph.get('spacegroup_number', 1)}")
+        _base_rv    = ph.get('name') or ph.get('formula') or f'Phase {i_ph+1}'
+        if _sg_sym_rv and _sg_sym_rv.replace(' ','') not in _base_rv.replace(' ',''):
+            _display_rv = f"{_base_rv} {_sg_sym_rv}"
+        else:
+            _display_rv = _base_rv
+
         phase_results.append({
-            'name':              ph.get('name', f'Phase {i_ph+1}'),
+            'name':              _display_rv,
             'cod_id':            ph.get('cod_id', ''),
             'formula':           ph.get('formula', ''),
             'a': round(a,5), 'b': round(b,5), 'c': round(c,5),

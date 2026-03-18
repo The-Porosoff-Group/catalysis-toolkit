@@ -129,10 +129,10 @@ def make_xrd_plot(result, metadata, output_path):
     ]
     for i, ph in enumerate(phases):
         c  = PHASE_COLORS[i % len(PHASE_COLORS)]
-        sg = ph.get('spacegroup', '') or f"#{ph.get('spacegroup_number','')}"
         wt = ph.get('weight_fraction_%', '')
         wt_str = f"  {wt} wt%" if wt != '' else ''
-        label  = f"{ph['name']}  {sg}{wt_str}"
+        # ph['name'] already includes the space group for disambiguation
+        label  = f"{ph['name']}{wt_str}"
         handles.append(Line2D([0],[0], color=c, lw=2, label=label))
     ax_main.legend(handles=handles, fontsize=7, ncol=min(len(handles), 4),
                    facecolor='#1c2128', edgecolor=GRID, labelcolor=TEXT,
@@ -153,11 +153,10 @@ def make_xrd_plot(result, metadata, output_path):
         for tt_tick in ticks:
             ax_ticks.axvline(tt_tick, ymin=y_pos-0.08, ymax=y_pos+0.08,
                               color=color, linewidth=1.0, alpha=0.8)
-        # Phase label: name + space group + wt%
-        sg   = ph.get('spacegroup', '') or f"#{ph.get('spacegroup_number','')}"
+        # Phase label: name (already includes SG) + wt%
         wt   = ph.get('weight_fraction_%', '')
         wt_str = f"  {wt} wt%" if wt != '' else ''
-        label  = f"{ph['name']}  {sg}{wt_str}"
+        label  = f"{ph['name']}{wt_str}"
         ax_ticks.text(0.005, y_pos, label,
                       transform=ax_ticks.transAxes,
                       ha='left', va='center', fontsize=7,
