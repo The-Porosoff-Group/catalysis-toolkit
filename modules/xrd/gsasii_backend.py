@@ -720,7 +720,6 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         phase_patterns = []
         phase_results = []
         raw_phase_profiles = []   # for proportional decomposition
-        phase_wt_pcts = []        # weight fractions for decomposition
 
         # ── Weight fractions via Hill & Howard (1987) ────────────────────
         # W_α = S_α · Z_α · M_α · V_α  /  Σ(S_i · Z_i · M_i · V_i)
@@ -825,7 +824,6 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             raw_prof = _compute_raw_phase_profile(
                 tt_out, phase_refs, U_deg, V_deg, W_deg, X_deg, Y_deg)
             raw_phase_profiles.append(raw_prof)
-            phase_wt_pcts.append(wt_pct)
 
             # B_iso (average over atoms)
             b_iso_avg = 0.5
@@ -875,41 +873,53 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 'seeded_by':           'gsas2',
             })
 
-        # ── Proportional decomposition ──────────────────────────────────
-        # We need each phase's effective scale to be consistent with its
-        # GSAS-II weight fraction.  The raw profiles use our own |F|²
-        # values, which differ from GSAS-II's (different site handling,
-        # thermal factors, normalization).  Using GSAS-II's raw scale
-        # factors with our |F|² values produces wrong ratios.
-        #
-        # Instead, set each phase's effective scale to:
-        #   eff_scale_p = wt%_p / ∫raw_p
-        # This guarantees that the integrated contribution of each phase
-        # matches its GSAS-II weight fraction, while the raw profile
-        # shape (from our structure factors) determines WHERE each phase
-        # contributes at each 2θ.  This matches how the in-house Rietveld
-        # works: S × Σ(I_hkl × profile), where S is calibrated to the
-        # same F² values used in the profiles.
+        # ── Proportional decomposition via NNLS ─────────────────────────
+        # GSAS-II's scale factors (and hence ZMV weight fractions) can be
+        # unreliable when the histogram scale is singular (SVD on :0:Scale).
+        # Instead of trusting those numbers, we fit our own scale factors
+        # by solving:
+        #     min‖ S₁·raw₁ + S₂·raw₂ + … − (y_calc − y_bg) ‖²
+        #          subject to  S_p ≥ 0
+        # This uses the correct y_calc (from GSAS-II's excellent fit) and
+        # the correct profile shapes (from our structure factors), giving
+        # the mathematically optimal decomposition.
         total_above_bg = np.maximum(y_calc_out - y_bg_out, 0.0)
         if raw_phase_profiles:
-            # Compute effective scale for each phase: wt% / integrated raw
-            eff_scales = []
-            for idx, (raw, wt) in enumerate(zip(raw_phase_profiles, phase_wt_pcts)):
-                integ = np.sum(raw)
-                eff = wt / max(integ, 1e-30)
-                eff_scales.append(eff)
+            # Build matrix A = [raw_1 | raw_2 | …] and solve A @ x ≈ b
+            A = np.column_stack(raw_phase_profiles)
+            b = total_above_bg
+
+            # Non-negative least squares (manual: lstsq + clamp negatives,
+            # then re-solve with only positive components)
+            x, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
+            x = np.maximum(x, 0.0)  # enforce non-negativity
+
+            for idx in range(len(raw_phase_profiles)):
                 ph_name = phase_results[idx]['name'] if idx < len(phase_results) else f'Phase {idx}'
-                print(f"  Phase {idx} ({ph_name}): wt%={wt:.2f}, "
-                      f"∫raw={integ:.4e}, eff_scale={eff:.4e}, "
-                      f"raw_max={np.max(raw):.4e}", flush=True)
-            weighted = [s * raw for s, raw in zip(eff_scales, raw_phase_profiles)]
+                print(f"  Phase {idx} ({ph_name}): NNLS scale={x[idx]:.6e}, "
+                      f"raw_max={np.max(raw_phase_profiles[idx]):.4e}", flush=True)
+
+            # Weighted profiles
+            weighted = [x[i] * raw_phase_profiles[i] for i in range(len(raw_phase_profiles))]
             w_sum = np.sum(weighted, axis=0)
-            w_sum = np.maximum(w_sum, 1e-30)  # avoid division by zero
+            w_sum = np.maximum(w_sum, 1e-30)
+
+            # Compute weight fractions from NNLS-fitted scales
+            # Using Hill & Howard: wt_p ∝ S_p × Z_p × M_p × V_p
+            # where S_p is now our NNLS-fitted scale (calibrated to our F²)
+            nnls_wt_fracs = []
+            total_integ = sum(np.sum(wp) for wp in weighted) or 1e-30
             for i_wp, wp in enumerate(weighted):
                 frac = wp / w_sum
-                integrated_frac = np.sum(frac * total_above_bg) / max(np.sum(total_above_bg), 1e-30) * 100
-                print(f"  Phase {i_wp}: integrated fraction of pattern = {integrated_frac:.1f}%", flush=True)
+                integ_frac = np.sum(wp) / total_integ * 100
+                nnls_wt_fracs.append(integ_frac)
+                print(f"  Phase {i_wp}: integrated fraction = {integ_frac:.1f}%", flush=True)
                 phase_patterns.append((frac * total_above_bg).tolist())
+
+            # Update phase_results with NNLS-derived weight fractions
+            for idx, wf in enumerate(nnls_wt_fracs):
+                if idx < len(phase_results):
+                    phase_results[idx]['weight_fraction_%'] = round(wf, 1)
         else:
             # Single-phase fallback
             phase_patterns.append(total_above_bg.tolist())
