@@ -130,13 +130,19 @@ def seed_I_hkl_from_pymatgen(refs, intensity_map, tt_r, y_r, bg_est):
 # PROFILE FUNCTIONS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _get_profiles(tt_arr, refs, U, V, W, eta, zero=0.0, X=0.0, Y=0.0):
+def _get_profiles(tt_arr, refs, U, V, W, eta, zero=0.0, X=0.0, Y=0.0,
+                   window_factor=15.0):
     """
     Unit-normalised pseudo-Voigt profiles, one per reflection.
 
     If X or Y are non-zero, uses Thompson-Cox-Hastings (TCH) model where
     eta is computed per-peak from Gaussian (U,V,W) and Lorentzian (X,Y)
     widths.  Otherwise uses fixed-eta Caglioti pseudo-Voigt.
+
+    window_factor : float
+        Profile evaluation window as a multiple of FWHM.  Use 15.0 (default)
+        for refinement (numerical accuracy) and 3.0 for display patterns
+        (suppresses Lorentzian tail cross-contamination between phases).
     """
     if not refs:
         return []
@@ -159,7 +165,7 @@ def _get_profiles(tt_arr, refs, U, V, W, eta, zero=0.0, X=0.0, Y=0.0):
 
         sigma_g = fwhm / (2.0 * math.sqrt(2.0 * math.log(2.0)))
         gamma_l = fwhm / 2.0
-        window  = 15.0 * fwhm
+        window  = window_factor * fwhm
 
         prof = np.zeros(n_pts)
         msk  = np.abs(tt_s - tt_p) < window
@@ -235,25 +241,6 @@ def _full_cell(free_vals, free_names, phase):
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
-
-def _mask_phase_pattern(pat, tt_arr, refs, zero, U, V, W, X, Y):
-    """Zero out phase pattern intensity far from any reflection position.
-
-    For each reflection, keep intensity within 5× FWHM of its center.
-    This suppresses Lorentzian tail artifacts that create phantom humps
-    in regions with no actual diffraction peaks.
-    """
-    mask = np.zeros_like(pat, dtype=bool)
-    for ref in refs:
-        tt_p = ref['two_theta'] if isinstance(ref, dict) else ref[0]
-        if X != 0.0 or Y != 0.0:
-            fwhm, _ = tch_fwhm_eta(tt_p, U, V, W, X, Y)
-        else:
-            fwhm = max(caglioti_fwhm(tt_p, U, V, W), 0.005)
-        window = 5.0 * max(fwhm, 0.1)
-        mask |= (np.abs(tt_arr - zero - tt_p) < window)
-    return np.where(mask, pat, 0.0)
-
 
 def _filter_tick_positions(refs, I_hkl, threshold_frac=1e-3):
     """Filter tick positions, keeping only reflections with significant intensity.
@@ -698,17 +685,15 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
     total_zmv = sum(zmv_values) or 1e-10
 
     for i_ph, st in enumerate(phase_state):
-        profs = _get_profiles(tt_r, st['refs'],
-                               st['U'], st['V'], st['W'],
-                               st.get('eta', 0.5), zero,
-                               st['X'], st['Y'])
-        pat_ph = st['S'] * sum(st['I_hkl'][k]*profs[k] for k in range(len(st['refs'])))
-
-        # Zero out phase pattern far from any reflection to suppress
-        # Lorentzian tail artifacts (phantom humps between peaks).
-        pat_ph = _mask_phase_pattern(pat_ph, tt_r, st['refs'], zero,
-                                     st['U'], st['V'], st['W'],
-                                     st['X'], st['Y'])
+        # Use tight profiles (3× FWHM) for display to prevent Lorentzian
+        # tails from one phase bleeding into another phase's peak regions.
+        display_profs = _get_profiles(tt_r, st['refs'],
+                                       st['U'], st['V'], st['W'],
+                                       st.get('eta', 0.5), zero,
+                                       st['X'], st['Y'],
+                                       window_factor=3.0)
+        pat_ph = st['S'] * sum(st['I_hkl'][k]*display_profs[k]
+                               for k in range(len(st['refs'])))
         phase_patterns.append(pat_ph.tolist())
 
         ph = st['ph']
@@ -1167,17 +1152,15 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
     for i_ph, st in enumerate(phase_state):
         I_hkl = compute_rietveld_intensities(
             st['refs'], st['sites'], {'_all': st['B_iso']})
-        profs = _get_profiles(tt_r, _refs_to_legacy(st['refs']),
-                               st['U'], st['V'], st['W'],
-                               st.get('eta', 0.5), zero,
-                               st['X'], st['Y'])
-        pat_ph = st['S'] * sum(I_hkl[k] * profs[k] for k in range(len(st['refs'])))
-
-        # Zero out phase pattern far from any reflection to suppress
-        # Lorentzian tail artifacts (phantom humps between peaks).
-        pat_ph = _mask_phase_pattern(pat_ph, tt_r, st['refs'], zero,
-                                     st['U'], st['V'], st['W'],
-                                     st['X'], st['Y'])
+        # Use tight profiles (3× FWHM) for display to prevent Lorentzian
+        # tails from one phase bleeding into another phase's peak regions.
+        display_profs = _get_profiles(tt_r, _refs_to_legacy(st['refs']),
+                                       st['U'], st['V'], st['W'],
+                                       st.get('eta', 0.5), zero,
+                                       st['X'], st['Y'],
+                                       window_factor=3.0)
+        pat_ph = st['S'] * sum(I_hkl[k] * display_profs[k]
+                               for k in range(len(st['refs'])))
         phase_patterns.append(pat_ph.tolist())
 
         ph = st['ph']
