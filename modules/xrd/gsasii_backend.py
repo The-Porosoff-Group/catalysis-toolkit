@@ -285,25 +285,25 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             hapData = list(phase_obj.data['Histograms'].values())[0]
             hapData['Scale'] = [1.0, True]  # refine scale
 
-        gpx.set_refinement({
+        gpx.do_refinements([{
             'set': {
                 'Background': {'type': 'chebyschev-1', 'refine': True,
                                 'no. coeffs': n_bg_coeffs},
-                'Scale': True,  # Refine phase scale factors
-            }
-        })
-        gpx.do_refinements([{'set': {}, 'cycles': min(max_cycles, 5)}])
+                'Scale': True,
+            },
+            'cycles': min(max_cycles, 5),
+        }])
 
         if progress_callback:
             progress_callback('GSAS-II: stage 2 — refining profile parameters...')
 
         # ── Stage 2: Profile parameters ──────────────────────────────────
-        gpx.set_refinement({
+        gpx.do_refinements([{
             'set': {
                 'Instrument Parameters': ['U', 'V', 'W', 'X', 'Y'],
-            }
-        })
-        gpx.do_refinements([{'set': {}, 'cycles': min(max_cycles, 5)}])
+            },
+            'cycles': min(max_cycles, 5),
+        }])
 
         if progress_callback:
             progress_callback('GSAS-II: stage 3 — refining cell + atoms...')
@@ -312,10 +312,13 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         for phase_obj in gsas_phases:
             phase_obj.set_refinements({
                 'Cell': True,
-                'Atoms': {'all': 'U'},  # refine displacement parameters
+                'Atoms': {'all': 'U'},
             })
 
-        gpx.do_refinements([{'set': {}, 'cycles': max_cycles}])
+        gpx.do_refinements([{
+            'set': {},
+            'cycles': max_cycles,
+        }])
 
         if progress_callback:
             progress_callback('GSAS-II: extracting results...')
