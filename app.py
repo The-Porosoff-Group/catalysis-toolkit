@@ -8,6 +8,44 @@ import os, sys, re, json, base64, webbrowser
 from datetime import datetime
 from threading import Timer
 
+# ── Dependency check ─────────────────────────────────────────────────────────
+_REQUIRED = {
+    'numpy':      'numpy',
+    'yaml':       'pyyaml',
+    'flask':      'flask',
+    'scipy':      'scipy',
+    'matplotlib': 'matplotlib',
+    'requests':   'requests',
+    'pandas':     'pandas',
+}
+_missing = []
+for _mod, _pkg in _REQUIRED.items():
+    try:
+        __import__(_mod)
+    except ImportError:
+        _missing.append(_pkg)
+
+if _missing:
+    print()
+    print("  ╔══════════════════════════════════════════════════════╗")
+    print("  ║  Missing required packages:                         ║")
+    for _pkg in _missing:
+        print(f"  ║    - {_pkg:<49}║")
+    print("  ║                                                     ║")
+    print("  ║  Option 1 (recommended): Use run.bat instead        ║")
+    print("  ║    It sets up everything automatically.              ║")
+    print("  ║                                                     ║")
+    print("  ║  Option 2: Activate the conda env first, then run:  ║")
+    print("  ║    conda activate .conda_env                        ║")
+    print("  ║    python app.py                                    ║")
+    print("  ║                                                     ║")
+    print("  ║  Option 3: Install manually:                        ║")
+    print(f"  ║    pip install {' '.join(_missing):<39}║")
+    print("  ╚══════════════════════════════════════════════════════╝")
+    print()
+    input("  Press Enter to exit...")
+    sys.exit(1)
+
 import numpy as np
 import yaml
 from flask import Flask, render_template, request, jsonify, send_file
