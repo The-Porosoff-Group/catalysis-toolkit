@@ -823,6 +823,34 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             warnings.warn("GSAS-II: all phase scale factors are identical — "
                          "refinement may not have converged properly.")
 
+        # ── Extract GSAS-II RefList for physics-based profile generation ────
+        # The RefList contains GSAS-II's refined Fc² values for each reflection,
+        # giving more accurate phase envelopes than our generate_reflections output.
+        # RefList columns: 0=h, 1=k, 2=l, 3=mult, 4=dsp, 5=2theta, 6=Fo²,
+        #                  7=sig, 8=Fc², ...
+        gsas_refs = {}   # phase_name → [(two_theta, d, (h,k,l), mult*Fc²)]
+        try:
+            raw_refl_lists = histogram.data.get('Reflection Lists', {})
+            for ph_name, refl_data in raw_refl_lists.items():
+                ref_arr = refl_data.get('RefList')
+                if ref_arr is not None and len(ref_arr) > 0 and ref_arr.shape[1] > 8:
+                    refs = []
+                    for row in ref_arr:
+                        h, k, l = int(row[0]), int(row[1]), int(row[2])
+                        mult      = float(row[3])
+                        d_sp      = float(row[4])
+                        two_theta = float(row[5])
+                        fc2       = float(row[8])   # Fc²
+                        weight    = mult * fc2
+                        if weight > 0 and tt_min <= two_theta <= tt_max:
+                            refs.append((two_theta, d_sp, (h, k, l), weight))
+                    if refs:
+                        gsas_refs[ph_name] = refs
+                        print(f"  Loaded GSAS-II RefList for '{ph_name}': "
+                              f"{len(refs)} reflections with Fc²", flush=True)
+        except Exception as e:
+            print(f"  (Could not extract GSAS-II RefList: {e})", flush=True)
+
         for i, (ph, phase_obj) in enumerate(zip(phases, gsas_phases)):
             # Cell parameters — read directly from GSAS-II data structure
             # to avoid get_cell() API differences across versions.
@@ -874,13 +902,13 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 sites=sites)
             tick_positions = [round(r[0], 3) for r in phase_refs]
 
-            # Raw profile shape for proportional decomposition (computed later).
-            # Must be weighted by the GSAS-II scale factor so that the
-            # decomposition reflects the refined phase fractions, not just
-            # the relative |F|² magnitudes (which differ hugely between
-            # 8-atom A15 and 2-atom BCC, for example).
+            # Raw profile shape for scale-fitting and decomposition.
+            # Prefer GSAS-II's refined Fc² values (from RefList) over our
+            # generate_reflections output — the Rietveld code has the correct
+            # structure factors and systematic extinctions baked in.
+            refs_for_profile = gsas_refs.get(phase_obj.name, phase_refs)
             raw_prof = _compute_raw_phase_profile(
-                tt_out, phase_refs, U_deg, V_deg, W_deg, X_deg, Y_deg)
+                tt_out, refs_for_profile, U_deg, V_deg, W_deg, X_deg, Y_deg)
             raw_phase_profiles.append(raw_prof)
             phase_refs_list.append(phase_refs)
 
@@ -932,26 +960,17 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 'seeded_by':           'gsas2',
             })
 
-        # ── Try to dump GSAS-II reflection lists for diagnostics ────────
-        try:
-            refl_lists = histogram.data.get('Reflection Lists', {})
-            for ph_name, refl_data in refl_lists.items():
-                ref_arr = refl_data.get('RefList')
-                if ref_arr is not None and len(ref_arr) > 0:
-                    print(f"  GSAS-II RefList for '{ph_name}': "
-                          f"shape={ref_arr.shape}, "
-                          f"first row[:6]={ref_arr[0][:6]}", flush=True)
-        except Exception as e:
-            print(f"  (Could not read GSAS-II Reflection Lists: {e})", flush=True)
-
-        # ── Proportional decomposition via unique-peak scale fitting ────
-        # GSAS-II's scale factors can be unreliable (SVD singularity).
-        # Instead, we determine each phase's scale by looking at peaks
-        # that are UNIQUE to that phase (no other phase has a reflection
-        # within ±min_sep degrees).  At those peaks, all of y_calc−y_bg
-        # belongs to that phase, so:
+        # ── Phase decomposition via unique-peak scale fitting ───────────
+        # GSAS-II's scale factors can be unreliable when peaks overlap
+        # (SVD singularity seen in the log).  Instead, we determine each
+        # phase's absolute scale by looking at peaks UNIQUE to that phase
+        # (no other phase has a reflection within ±MIN_SEP degrees).
+        # At those points all signal belongs to that phase:
         #     scale_p = median( y_obs_at_peak / raw_profile_at_peak )
-        # This is physically grounded and avoids NNLS instabilities.
+        # We then render each phase's pattern INDEPENDENTLY as
+        #     phase_pattern_p = scale_p × raw_profile_p
+        # This gives physically distinct envelopes (correct peak positions
+        # per phase) rather than just proportional slices of the total.
         total_above_bg = np.maximum(y_calc_out - y_bg_out, 0.0)
         if raw_phase_profiles:
             n_ph = len(raw_phase_profiles)
@@ -1000,18 +1019,19 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 for i in missing:
                     fitted_scales[i] = x[i]
 
-            # Weighted profiles for decomposition
+            # Scale each phase's profile and render independently.
+            # Using scale × raw_profile directly (not frac × total) ensures
+            # each phase shows its OWN peak positions, not a proportional
+            # copy of the total pattern.
             weighted = [fitted_scales[i] * raw_phase_profiles[i] for i in range(n_ph)]
-            w_sum = np.sum(weighted, axis=0)
-            w_sum = np.maximum(w_sum, 1e-30)
 
-            # Compute weight fractions and phase patterns
+            # Compute weight fractions from integrated intensities
             total_integ = sum(np.sum(wp) for wp in weighted) or 1e-30
             for i_wp, wp in enumerate(weighted):
-                frac = wp / w_sum
                 integ_frac = np.sum(wp) / total_integ * 100
                 print(f"  Phase {i_wp}: integrated fraction = {integ_frac:.1f}%", flush=True)
-                phase_patterns.append((frac * total_above_bg).tolist())
+                # Direct phase contribution — stacks correctly in the plot
+                phase_patterns.append(wp.tolist())
                 # Update weight fractions in phase_results
                 if i_wp < len(phase_results):
                     phase_results[i_wp]['weight_fraction_%'] = round(integ_frac, 1)
