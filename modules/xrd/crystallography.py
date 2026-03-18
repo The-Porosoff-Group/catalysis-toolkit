@@ -661,6 +661,51 @@ def size_from_Y(Y_deg, wavelength, K=0.94):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SYMMETRY EXPANSION
+# ─────────────────────────────────────────────────────────────────────────────
+
+def expand_sites_from_cif(cif_text):
+    """Expand CIF asymmetric-unit sites to the full unit cell using pymatgen.
+
+    CIF files from COD and many databases list only the *asymmetric unit*.
+    Computing |F(hkl)|² from those sites alone gives incorrect structure
+    factors (e.g. F(110)≠0 for A15-W when it should be 0).
+
+    Returns a list of (element, x, y, z, occupancy) tuples covering the
+    full conventional unit cell, or *None* if expansion fails.
+    """
+    if not cif_text:
+        return None
+    try:
+        from pymatgen.io.cif import CifParser
+        try:
+            parser = CifParser.from_str(cif_text, occupancy_tolerance=100.0)
+        except (AttributeError, TypeError):
+            import tempfile as _tf, os as _os
+            _fd, _tmp = _tf.mkstemp(suffix='.cif')
+            with _os.fdopen(_fd, 'w') as _f:
+                _f.write(cif_text)
+            parser = CifParser(_tmp, occupancy_tolerance=100.0)
+            _os.unlink(_tmp)
+        structs = parser.parse_structures(primitive=False)
+        if structs:
+            sites = []
+            for site in structs[0]:
+                frac = site.frac_coords % 1.0
+                el = str(site.specie)
+                occ = 1.0
+                if hasattr(site, 'properties') and 'occupancy' in site.properties:
+                    occ = float(site.properties['occupancy'])
+                sites.append((el, float(frac[0]), float(frac[1]),
+                              float(frac[2]), occ))
+            if sites:
+                return sites
+    except Exception:
+        pass
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CIF PARSER
 # ─────────────────────────────────────────────────────────────────────────────
 

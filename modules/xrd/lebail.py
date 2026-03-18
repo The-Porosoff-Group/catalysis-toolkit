@@ -23,7 +23,7 @@ from .crystallography import (
     compute_fit_statistics, d_spacing, cell_volume,
     generate_reflections_rietveld, compute_rietveld_intensities,
     structure_factor_sq_dw, parse_cif as _parse_cif_cryst,
-    molar_mass_from_formula,
+    molar_mass_from_formula, expand_sites_from_cif,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -306,15 +306,18 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
         a, b, c, al, be, ga = _full_cell(free_v, free_n, ph)
 
         # Extract atom sites from CIF text if available
-        # (enables structure-factor-based reflection filtering)
+        # (enables structure-factor-based reflection filtering).
+        # Use pymatgen expansion to get full unit cell for correct F²,
+        # then fall back to raw parse_cif (asymmetric unit only).
         sites = ph.get('sites')
         if not sites and ph.get('cif_text'):
-            try:
-                from .crystallography import parse_cif as _pc
-                _parsed = _pc(ph['cif_text'])
-                sites = _parsed.get('sites') or None
-            except Exception:
-                sites = None
+            sites = expand_sites_from_cif(ph['cif_text'])
+            if not sites:
+                try:
+                    _parsed = _parse_cif_cryst(ph['cif_text'])
+                    sites = _parsed.get('sites') or None
+                except Exception:
+                    sites = None
         ph['_sites'] = sites or None  # stash for cell-refinement regeneration
 
         refs = generate_reflections(
@@ -819,14 +822,17 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
     phase_state = []
 
     for ph in phases:
-        # Extract atom sites
+        # Extract atom sites — use pymatgen expansion for correct F²,
+        # then fall back to raw parse_cif (asymmetric unit only).
         sites = ph.get('sites')
         if not sites and ph.get('cif_text'):
-            try:
-                parsed = _parse_cif_cryst(ph['cif_text'])
-                sites = parsed.get('sites') or None
-            except Exception:
-                sites = None
+            sites = expand_sites_from_cif(ph['cif_text'])
+            if not sites:
+                try:
+                    parsed = _parse_cif_cryst(ph['cif_text'])
+                    sites = parsed.get('sites') or None
+                except Exception:
+                    sites = None
         if not sites:
             raise ValueError(f"Phase '{ph.get('name','?')}' has no atom sites. "
                              f"Rietveld requires a CIF with atomic coordinates.")

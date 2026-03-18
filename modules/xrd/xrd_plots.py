@@ -89,14 +89,19 @@ def make_xrd_plot(result, metadata, output_path):
     ax_main.plot(tt, y_bg, color=MUT, linewidth=0.8,
                  linestyle='--', alpha=0.7, label='Background', zorder=2)
 
-    # Per-phase patterns on main panel (shaded fills)
+    # Per-phase patterns on main panel (stacked shaded fills)
+    # Stack phases on top of each other so they don't overlap —
+    # each phase's fill starts where the previous one ended.
+    cumulative = np.array(y_bg, dtype=float)
     for i, (ph, pat) in enumerate(zip(phases, result['phase_patterns'])):
         color = PHASE_COLORS[i % len(PHASE_COLORS)]
         pat_arr = np.array(pat)
-        ax_main.fill_between(tt, y_bg, y_bg + pat_arr,
-                              color=color, alpha=0.18, zorder=1)
-        ax_main.plot(tt, y_bg + pat_arr, color=color,
+        new_top = cumulative + pat_arr
+        ax_main.fill_between(tt, cumulative, new_top,
+                              color=color, alpha=0.25, zorder=1)
+        ax_main.plot(tt, new_top, color=color,
                      linewidth=0.7, alpha=0.6, zorder=2)
+        cumulative = new_top
 
     # Stats annotation
     stats_str = (f"$R_{{wp}}$ = {stats['Rwp']}%   "

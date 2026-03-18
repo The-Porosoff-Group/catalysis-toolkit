@@ -275,7 +275,7 @@ def get_stick_pattern(structure, wavelength, tt_min=5.0, tt_max=90.0):
 
     Otherwise falls back to multiplicity-only weights.
     """
-    from .crystallography import generate_reflections, parse_cif
+    from .crystallography import generate_reflections, parse_cif, expand_sites_from_cif
     a  = structure.get('a') or 4.0
     b  = structure.get('b') or a
     c  = structure.get('c') or a
@@ -285,14 +285,18 @@ def get_stick_pattern(structure, wavelength, tt_min=5.0, tt_max=90.0):
     sys_  = structure.get('system', 'triclinic') or 'triclinic'
     sg    = structure.get('spacegroup_number', 1) or 1
 
-    # Try to get atom sites for structure factor calculation
+    # Try to get atom sites for structure factor calculation.
+    # Use pymatgen expansion for correct F² (asymmetric unit → full cell),
+    # then fall back to raw parse_cif.
     sites = structure.get('sites')
     if not sites and structure.get('cif_text'):
-        try:
-            parsed = parse_cif(structure['cif_text'])
-            sites = parsed.get('sites')
-        except Exception:
-            sites = None
+        sites = expand_sites_from_cif(structure['cif_text'])
+        if not sites:
+            try:
+                parsed = parse_cif(structure['cif_text'])
+                sites = parsed.get('sites')
+            except Exception:
+                sites = None
     # sites=None is fine — generate_reflections will use multiplicity-only
 
     try:

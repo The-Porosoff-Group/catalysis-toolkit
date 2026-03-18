@@ -49,12 +49,14 @@ try:
         compute_fit_statistics, cell_volume, molar_mass_from_formula,
         tch_fwhm_eta, size_from_Y, scherrer_size,
         generate_reflections, parse_cif, caglioti_fwhm,
+        expand_sites_from_cif,
     )
 except ImportError:
     from crystallography import (
         compute_fit_statistics, cell_volume, molar_mass_from_formula,
         tch_fwhm_eta, size_from_Y, scherrer_size,
         generate_reflections, parse_cif, caglioti_fwhm,
+        expand_sites_from_cif,
     )
 
 
@@ -94,6 +96,74 @@ _SG_HM = {
 }
 
 
+def _get_expanded_sites(cif_text, spacegroup_number=None):
+    """Get symmetry-expanded unit-cell sites for structure factor computation.
+
+    Uses the shared expand_sites_from_cif (pymatgen) first, then falls back
+    to raw parse_cif (may be asymmetric unit only).
+    """
+    if not cif_text:
+        return None
+    sites = expand_sites_from_cif(cif_text)
+    if sites:
+        return sites
+    # Fallback: raw parse_cif (may be asymmetric unit only)
+    try:
+        parsed = parse_cif(cif_text)
+        return parsed.get('sites') or None
+    except Exception:
+        return None
+
+
+def _reduce_to_asymmetric_unit(cif_text):
+    """Reduce a full-unit-cell CIF to asymmetric unit for GSAS-II.
+
+    GSAS-II applies symmetry operations itself, so it expects only the
+    asymmetric unit in the CIF.  If we give it the full unit cell plus
+    the space group, it over-expands and generates wrong reflections.
+
+    Uses pymatgen's symmetrized structure to get the unique sites.
+    Falls back to the raw sites if pymatgen is unavailable.
+    """
+    if not cif_text:
+        return []
+
+    try:
+        from pymatgen.io.cif import CifParser
+        from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+        try:
+            parser = CifParser.from_str(cif_text, occupancy_tolerance=100.0)
+        except (AttributeError, TypeError):
+            import tempfile as _tf, os as _os
+            _fd, _tmp = _tf.mkstemp(suffix='.cif')
+            with _os.fdopen(_fd, 'w') as _f:
+                _f.write(cif_text)
+            parser = CifParser(_tmp, occupancy_tolerance=100.0)
+            _os.unlink(_tmp)
+        structs = parser.parse_structures(primitive=False)
+        if structs:
+            sga = SpacegroupAnalyzer(structs[0], symprec=0.1)
+            sym_struct = sga.get_symmetrized_structure()
+            sites = []
+            for equiv_sites in sym_struct.equivalent_sites:
+                site = equiv_sites[0]  # take first of each equivalent group
+                frac = site.frac_coords % 1.0
+                el = str(site.specie)
+                sites.append((el, float(frac[0]), float(frac[1]),
+                              float(frac[2]), 1.0))
+            if sites:
+                return sites
+    except Exception:
+        pass
+
+    # Fallback: raw parse_cif
+    try:
+        parsed = parse_cif(cif_text)
+        return parsed.get('sites') or []
+    except Exception:
+        return []
+
+
 def _build_conventional_cif(ph):
     """
     Build a synthetic CIF string using the phase dict's (conventional) cell
@@ -104,11 +174,6 @@ def _build_conventional_cif(ph):
     Materials Project data).  The space group is written explicitly so that
     GSAS-II applies the correct cell-parameter constraints.
     """
-    try:
-        from .crystallography import parse_cif
-    except ImportError:
-        from crystallography import parse_cif
-
     a   = ph.get('a', 4.0)
     b   = ph.get('b', a)
     c   = ph.get('c', a)
@@ -124,15 +189,12 @@ def _build_conventional_cif(ph):
     if not hm:
         hm = _SG_HM.get(sg, 'P 1')
 
-    # Get atom sites from the original CIF text
-    sites = []
+    # Get atom sites reduced to the asymmetric unit.
+    # GSAS-II applies space-group symmetry itself, so we must NOT give
+    # it the full unit cell — that would cause double-counting and wrong
+    # reflections (e.g. ghost peaks at ~25° for A15-W).
     cif_text = ph.get('cif_text', '')
-    if cif_text:
-        try:
-            parsed = parse_cif(cif_text)
-            sites = parsed.get('sites', [])
-        except Exception:
-            pass
+    sites = _reduce_to_asymmetric_unit(cif_text) if cif_text else []
 
     lines = [
         'data_phase',
@@ -179,21 +241,18 @@ def _build_conventional_cif(ph):
 # PER-PHASE PATTERN FROM GSAS-II REFLECTIONS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _compute_phase_display_pattern(tt_arr, refs, U_deg, V_deg, W_deg,
-                                    X_deg, Y_deg, scale, y_calc, y_bg):
-    """Build a per-phase display pattern using our own reflection list.
+def _compute_raw_phase_profile(tt_arr, refs, U_deg, V_deg, W_deg,
+                                X_deg, Y_deg):
+    """Compute a raw (unscaled) profile shape for one phase.
 
-    Uses the same tight-window profile approach as the in-house Rietveld,
-    avoiding dependence on GSAS-II's internal data structures.
+    Returns an array of the same length as *tt_arr* whose values are
+    proportional to the diffracted intensity at each 2θ point.  The
+    absolute scale is arbitrary — what matters is the *relative* shape
+    compared to other phases so that the proportional decomposition
+    can correctly partition the total pattern.
 
     refs : list of [two_theta, d, (h,k,l), intensity_weight] from
-           generate_reflections (with structure factor filtering).
-    U/V/W_deg : Caglioti parameters in degrees² (already converted from
-                GSAS-II centidegrees²).
-    scale : GSAS-II refined phase scale factor.
-    y_calc, y_bg : total calculated pattern and background from GSAS-II.
-
-    Returns np.ndarray of same length as tt_arr.
+           generate_reflections (with structure-factor filtering).
     """
     n = len(tt_arr)
     pattern = np.zeros(n, dtype=np.float64)
@@ -227,14 +286,6 @@ def _compute_phase_display_pattern(tt_arr, refs, U_deg, V_deg, W_deg,
         # Normalise
         area = np.trapz(prof, tt_arr[msk]) if np.trapz(prof, tt_arr[msk]) > 0 else 1.0
         pattern[msk] += weight * prof / area
-
-    # Scale by GSAS-II phase scale factor
-    pattern *= scale
-
-    # Clamp: phase contribution should not exceed total pattern minus background
-    total_above_bg = np.maximum(y_calc - y_bg, 0.0)
-    pattern = np.minimum(pattern, total_above_bg)
-    pattern = np.maximum(pattern, 0.0)
 
     return pattern
 
@@ -668,6 +719,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # ── Per-phase results ────────────────────────────────────────────
         phase_patterns = []
         phase_results = []
+        raw_phase_profiles = []   # for proportional decomposition
 
         # ── Weight fractions via Hill & Howard (1987) ────────────────────
         # W_α = S_α · Z_α · M_α · V_α  /  Σ(S_i · Z_i · M_i · V_i)
@@ -752,20 +804,19 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             # space group, cell parameters, and atom sites from CIF.
             sys_ = (ph.get('system') or 'triclinic').lower()
             sg = ph.get('spacegroup_number', 1)
-            sites = None
-            cif_text = ph.get('cif_text', '')
-            if cif_text:
-                try:
-                    parsed = parse_cif(cif_text)
-                    sites = parsed.get('sites') or None
-                except Exception:
-                    pass
+            # Get symmetry-expanded sites for correct structure factors
+            sites = _get_expanded_sites(ph.get('cif_text', ''), sg)
 
             phase_refs = generate_reflections(
                 a, b, c, alpha, beta, gamma, sys_, sg,
                 wavelength, tt_min, tt_max, hkl_max=12,
                 sites=sites)
             tick_positions = [round(r[0], 3) for r in phase_refs]
+
+            # Raw profile shape for proportional decomposition (computed later)
+            raw_prof = _compute_raw_phase_profile(
+                tt_out, phase_refs, U_deg, V_deg, W_deg, X_deg, Y_deg)
+            raw_phase_profiles.append(raw_prof)
 
             # B_iso (average over atoms)
             b_iso_avg = 0.5
@@ -777,13 +828,6 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                         b_iso_avg = 8 * math.pi**2 * np.mean(uisos)
             except Exception:
                 pass
-
-            # Compute per-phase display pattern using our own reflections
-            # with tight-window profiles (same method as in-house Rietveld).
-            phase_pat = _compute_phase_display_pattern(
-                tt_out, phase_refs, U_deg, V_deg, W_deg, X_deg, Y_deg,
-                scale_val, y_calc_out, y_bg_out)
-            phase_patterns.append(phase_pat.tolist())
 
             # Build a display name that always includes the space group symbol
             # so that phases with the same formula are clearly distinguishable.
@@ -821,6 +865,23 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 'tick_positions':      tick_positions,
                 'seeded_by':           'gsas2',
             })
+
+        # ── Proportional decomposition ──────────────────────────────────
+        # Each phase's display pattern is its share of (y_calc − y_bg),
+        # apportioned by the ratio of its raw profile to the sum of all
+        # raw profiles.  This guarantees the phase patterns sum exactly
+        # to the total calculated pattern and avoids any scale-factor
+        # mismatch between GSAS-II and our intensity weights.
+        total_above_bg = np.maximum(y_calc_out - y_bg_out, 0.0)
+        if raw_phase_profiles:
+            raw_sum = np.sum(raw_phase_profiles, axis=0)
+            raw_sum = np.maximum(raw_sum, 1e-30)  # avoid division by zero
+            for raw in raw_phase_profiles:
+                frac = raw / raw_sum
+                phase_patterns.append((frac * total_above_bg).tolist())
+        else:
+            # Single-phase fallback
+            phase_patterns.append(total_above_bg.tolist())
 
         result = {
             'tt':             tt_out.tolist(),
