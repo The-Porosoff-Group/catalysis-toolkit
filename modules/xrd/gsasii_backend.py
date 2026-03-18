@@ -76,6 +76,93 @@ def import_error():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SPACE GROUP TABLE  (number → H-M symbol for CIF generation)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SG_HM = {
+    # Common catalyst phases — add entries as needed
+    1: 'P 1', 2: 'P -1', 12: 'C 2/m', 14: 'P 21/c', 15: 'C 2/c',
+    62: 'P n m a', 63: 'C m c m', 139: 'I 4/m m m', 141: 'I 41/a m d',
+    148: 'R -3', 166: 'R -3 m', 167: 'R -3 c',
+    173: 'P 63', 176: 'P 63/m', 186: 'P 63 m c', 187: 'P -6 m 2',
+    191: 'P 6/m m m', 194: 'P 63/m m c',
+    196: 'F 2 3', 202: 'F m -3', 216: 'F -4 3 m', 225: 'F m -3 m',
+    227: 'F d -3 m', 229: 'I m -3 m', 223: 'P m -3 n', 221: 'P m -3 m',
+    230: 'I a -3 d',
+}
+
+
+def _build_conventional_cif(ph):
+    """
+    Build a synthetic CIF string using the phase dict's (conventional) cell
+    parameters and atom sites.
+
+    This ensures GSAS-II always sees a CIF consistent with the conventional
+    cell, even when the original CIF used a primitive setting (common with
+    Materials Project data).  The space group is written explicitly so that
+    GSAS-II applies the correct cell-parameter constraints.
+    """
+    try:
+        from .crystallography import parse_cif
+    except ImportError:
+        from crystallography import parse_cif
+
+    a   = ph.get('a', 4.0)
+    b   = ph.get('b', a)
+    c   = ph.get('c', a)
+    al  = ph.get('alpha', 90.0)
+    be  = ph.get('beta', 90.0)
+    ga  = ph.get('gamma', 90.0)
+    sg  = ph.get('spacegroup_number', 1)
+    formula = ph.get('formula', '')
+    Z   = ph.get('Z', '')
+
+    # H-M symbol — try phase dict first, then lookup table
+    hm = ph.get('spacegroup', '') or ph.get('spacegroup_name', '')
+    if not hm:
+        hm = _SG_HM.get(sg, 'P 1')
+
+    # Get atom sites from the original CIF text
+    sites = []
+    cif_text = ph.get('cif_text', '')
+    if cif_text:
+        try:
+            parsed = parse_cif(cif_text)
+            sites = parsed.get('sites', [])
+        except Exception:
+            pass
+
+    lines = [
+        'data_phase',
+        f"_chemical_formula_sum '{formula}'" if formula else '',
+        f"_cell_formula_units_Z {Z}" if Z else '',
+        f'_cell_length_a {a:.5f}',
+        f'_cell_length_b {b:.5f}',
+        f'_cell_length_c {c:.5f}',
+        f'_cell_angle_alpha {al:.3f}',
+        f'_cell_angle_beta  {be:.3f}',
+        f'_cell_angle_gamma {ga:.3f}',
+        f'_symmetry_Int_Tables_number {sg}',
+        f"_symmetry_space_group_name_H-M '{hm}'",
+    ]
+
+    if sites:
+        lines += [
+            '',
+            'loop_',
+            '_atom_site_type_symbol',
+            '_atom_site_fract_x',
+            '_atom_site_fract_y',
+            '_atom_site_fract_z',
+            '_atom_site_occupancy',
+        ]
+        for el, x, y, z, occ in sites:
+            lines.append(f'{el}  {x:.6f}  {y:.6f}  {z:.6f}  {occ:.4f}')
+
+    return '\n'.join(ln for ln in lines if ln is not None) + '\n'
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -239,7 +326,12 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
 
     cif_paths = []
     for i, ph in enumerate(phases):
-        cif_path = _write_temp_cif(ph['cif_text'], ph.get('name', 'phase'),
+        # Build a synthetic CIF from the phase dict's (conventional) cell
+        # parameters.  This guarantees GSAS-II sees the correct space group
+        # and cell geometry even when the original CIF used a primitive
+        # setting (common with Materials Project data).
+        cif_for_gsas = _build_conventional_cif(ph)
+        cif_path = _write_temp_cif(cif_for_gsas, ph.get('name', 'phase'),
                                    work_dir=work_dir, index=i)
         cif_paths.append(cif_path)
 
