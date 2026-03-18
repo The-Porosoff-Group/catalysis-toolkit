@@ -283,7 +283,7 @@ def validate_phases(phases, fetch_missing=True):
             try:
                 full = fetch_cif(str(ph['cod_id']))
                 for key in ['a','b','c','alpha','beta','gamma',
-                            'spacegroup_number','system','formula']:
+                            'spacegroup_number','system','formula','Z']:
                     if ph.get(key) is None and full.get(key) is not None:
                         ph[key] = full[key]
                 # Also keep the CIF text for pymatgen

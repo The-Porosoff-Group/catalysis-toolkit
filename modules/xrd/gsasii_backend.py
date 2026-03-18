@@ -369,7 +369,27 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # ── Stage 3: Cell parameters (one phase at a time) ───────────────
         # Refining all cells at once with many atoms can cause arccos
         # errors when cell angles go unphysical. Do it per phase.
-        for idx, phase_obj in enumerate(gsas_phases):
+        # For cubic phases, lock angles to 90° to prevent arccos errors.
+        for idx, (phase_obj, ph_input) in enumerate(zip(gsas_phases, phases)):
+            sys_ = (ph_input.get('system') or 'triclinic').lower()
+            # For high-symmetry systems, clamp angles before refining
+            # to prevent them from drifting to unphysical values.
+            if sys_ in ('cubic', 'tetragonal', 'orthorhombic'):
+                try:
+                    _cell = phase_obj.data['General']['Cell']
+                    _cell[4] = 90.0  # alpha
+                    _cell[5] = 90.0  # beta
+                    _cell[6] = 90.0  # gamma
+                except Exception:
+                    pass
+            elif sys_ in ('hexagonal', 'trigonal'):
+                try:
+                    _cell = phase_obj.data['General']['Cell']
+                    _cell[4] = 90.0   # alpha
+                    _cell[5] = 90.0   # beta
+                    _cell[6] = 120.0  # gamma
+                except Exception:
+                    pass
             phase_obj.set_refinements({'Cell': True})
             ok = _safe_refine(f'cell (phase {idx})', [{
                 'set': {},
@@ -447,28 +467,46 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         phase_patterns = []
         phase_results = []
 
-        # Get weight fractions from GSAS-II
-        wt_fracs = {}
+        # ── Weight fractions via Hill & Howard (1987) ────────────────────
+        # W_α = S_α · Z_α · M_α · V_α  /  Σ(S_i · Z_i · M_i · V_i)
+        # If Z or M are unavailable, fall back to raw scale normalisation.
+        raw_scales = {}
         try:
-            # GSAS-II stores weight fractions in the histogram phase data
             for phase_obj in gsas_phases:
                 hapData = list(phase_obj.data['Histograms'].values())[0]
                 scale_entry = hapData.get('Scale', [1.0])
-                # Scale can be [value, refine_flag] or just a float
                 scale_val = scale_entry[0] if isinstance(scale_entry, (list, tuple)) else float(scale_entry)
-                wt_fracs[phase_obj.name] = scale_val
+                raw_scales[phase_obj.name] = scale_val
         except Exception as e:
-            warnings.warn(f"GSAS-II: could not read weight fractions: {e}")
+            warnings.warn(f"GSAS-II: could not read scale factors: {e}")
 
-        # If all scale factors are identical (common with failed refinement),
-        # try using GSAS-II's computed weight fractions directly
-        scale_vals = list(wt_fracs.values())
+        zmv_values = {}
+        use_zmv = True
+        for ph_input, phase_obj in zip(phases, gsas_phases):
+            S = raw_scales.get(phase_obj.name, 1.0)
+            _cell = phase_obj.data['General']['Cell']
+            V_ph = cell_volume(float(_cell[1]), float(_cell[2]), float(_cell[3]),
+                               float(_cell[4]), float(_cell[5]), float(_cell[6]))
+            Z = ph_input.get('Z')
+            M = molar_mass_from_formula(ph_input.get('formula', ''))
+            if Z and M and V_ph > 0:
+                zmv_values[phase_obj.name] = float(S) * float(Z) * float(M) * V_ph
+            else:
+                use_zmv = False
+                break
+
+        if not use_zmv:
+            warnings.warn("GSAS-II: Z or molar mass unavailable for one or more "
+                         "phases — falling back to raw scale factor weighting.")
+            zmv_values = dict(raw_scales)
+
+        total_zmv = sum(zmv_values.values()) or 1e-10
+
+        # Warn if all scale factors are identical (common with failed refinement)
+        scale_vals = list(raw_scales.values())
         if len(scale_vals) >= 2 and len(set(round(v, 6) for v in scale_vals)) == 1:
             warnings.warn("GSAS-II: all phase scale factors are identical — "
                          "refinement may not have converged properly.")
-
-        # Normalise scale factors to weight fractions
-        total_scale = sum(wt_fracs.values()) or 1.0
 
         for i, (ph, phase_obj) in enumerate(zip(phases, gsas_phases)):
             # Cell parameters — read directly from GSAS-II data structure
@@ -492,13 +530,15 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 40.0, inst['U'], inst['V'], inst['W'],
                 inst['X'], inst['Y'])
 
-            # Weight fraction
-            scale_val = wt_fracs.get(phase_obj.name, 1.0)
-            wt_pct = (scale_val / total_scale) * 100 if total_scale > 0 else 0
+            # Weight fraction (Hill & Howard or raw-scale fallback)
+            scale_val = raw_scales.get(phase_obj.name, 1.0)
+            zmv_val = zmv_values.get(phase_obj.name, scale_val)
+            wt_pct = (zmv_val / total_zmv) * 100 if total_zmv > 0 else 0
 
             # Tick positions (reflection list)
             # GSAS-II stores reflections in several possible locations
             # depending on the version and how the phase was added.
+            # Standard reflection array: [h,k,l,mult,d,2theta,sig,gam,Fobs²,Fcalc²,...]
             tick_positions = []
             try:
                 hapData = list(phase_obj.data['Histograms'].values())[0]
@@ -513,11 +553,20 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                         # rlist may be a dict with 'RefList' key or a direct list
                         if isinstance(rlist, dict):
                             rlist = rlist.get('RefList', [])
-                        if isinstance(rlist, (list, np.ndarray)):
+                        if isinstance(rlist, (list, np.ndarray)) and len(rlist) > 0:
+                            # Determine 2theta column index by checking if
+                            # index 5 contains plausible 2theta values (0-180°).
+                            # Fall back to index 4 if not.
+                            tt_col = 5
+                            try:
+                                test_val = float(rlist[0][5])
+                                if not (0 < test_val < 180):
+                                    tt_col = 4
+                            except (IndexError, TypeError, ValueError):
+                                tt_col = 4
                             for ref in rlist:
-                                # 2theta is at index 5 in standard GSAS-II reflection arrays
                                 try:
-                                    tt_ref = float(ref[5])
+                                    tt_ref = float(ref[tt_col])
                                     if tt_min <= tt_ref <= tt_max:
                                         tick_positions.append(round(tt_ref, 3))
                                 except (IndexError, TypeError, ValueError):
@@ -529,14 +578,25 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                             f"'{ph.get('name', '?')}': {e}")
 
             # Fallback: compute tick positions from cell parameters + space group
+            # Always pass sites so structure-factor-extinct peaks are excluded.
             if not tick_positions:
                 try:
-                    from .crystallography import generate_reflections
+                    from .crystallography import generate_reflections, parse_cif
                     sys_ = (ph.get('system') or 'triclinic').lower()
                     sg = ph.get('spacegroup_number', 1)
+                    # Try to get atom sites from the CIF for accurate F² filtering
+                    sites = None
+                    cif_text = ph.get('cif_text', '')
+                    if cif_text:
+                        try:
+                            parsed = parse_cif(cif_text)
+                            sites = parsed.get('sites') or None
+                        except Exception:
+                            pass
                     fallback_refs = generate_reflections(
                         a, b, c, alpha, beta, gamma, sys_, sg,
-                        wavelength, tt_min, tt_max, hkl_max=12)
+                        wavelength, tt_min, tt_max, hkl_max=12,
+                        sites=sites)
                     tick_positions = [round(r[0], 3) for r in fallback_refs]
                 except Exception:
                     pass
