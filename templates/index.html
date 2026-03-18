@@ -951,7 +951,7 @@ function showResults(data) {
   const dlRow = document.getElementById('download-row');
   dlRow.innerHTML = `
     <button class="btn-sm green" onclick="openFolder('${escPath(data.output_dir)}')">📁 Open Output Folder</button>
-    <button class="btn-sm" onclick="downloadFile('${escPath(data.summary_path)}')">⬇ Summary CSV</button>
+    <button class="btn-sm" onclick="downloadFile('${escPath(data.summary_path)}')">⬇ Summary Excel</button>
     <button class="btn-sm" onclick="downloadFile('${escPath(data.flows_path)}')">⬇ Flow Data CSV</button>
   `;
 
@@ -1722,6 +1722,7 @@ async function runXRD(method) {
   }
   document.getElementById('btn-xrd').disabled = false;
   document.getElementById('btn-xrd-rietveld').disabled = false;
+  if (document.getElementById('btn-xrd-gsas2')) document.getElementById('btn-xrd-gsas2').disabled = false;
 }
 
 function showXRDResults(data) {
@@ -1796,7 +1797,7 @@ function showXRDResults(data) {
   // Downloads
   document.getElementById('xrd-download-row').innerHTML = `
     <button class="btn-sm green" onclick="openFolder('${escPath(data.output_dir)}')">📁 Open Folder</button>
-    <button class="btn-sm" onclick="downloadFile('${escPath(data.summary_path)}')">⬇ Summary CSV</button>`;
+    <button class="btn-sm" onclick="downloadFile('${escPath(data.summary_path)}')">⬇ Summary Excel</button>`;
 
   panel.scrollIntoView({behavior:'smooth', block:'start'});
 }

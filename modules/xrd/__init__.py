@@ -329,6 +329,160 @@ def validate_phases(phases, fetch_missing=True):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SUMMARY EXPORT
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _write_summary_xlsx(result, metadata, method_label, output_dir):
+    """Write an Excel workbook with two sheets:
+      Sheet 1 ('Summary')   – transposed: parameters as rows, phases as columns
+      Sheet 2 ('Plot Data') – X/Y arrays + per-phase peak positions with [hkl]
+    """
+    import pandas as pd
+
+    phases = result['phase_results']
+    stats  = result['statistics']
+
+    # ── Sheet 1: Transposed summary ──────────────────────────────────────
+    # Define the parameters we want to show (order matters)
+    param_keys = [
+        ('sample',             'Sample'),
+        ('method',             'Method'),
+        ('name',               'Phase name'),
+        ('cod_id',             'COD / MP ID'),
+        ('formula',            'Formula'),
+        ('spacegroup',         'Space group'),
+        ('spacegroup_number',  'Space group #'),
+        ('system',             'Crystal system'),
+        ('a',                  'a (Å)'),
+        ('b',                  'b (Å)'),
+        ('c',                  'c (Å)'),
+        ('alpha',              'α (°)'),
+        ('beta',               'β (°)'),
+        ('gamma',              'γ (°)'),
+        ('weight_fraction_%',  'Weight fraction (%)'),
+        ('crystallite_size_nm','Crystallite size (nm)'),
+        ('scale',              'Scale factor'),
+        ('U',                  'U (Caglioti)'),
+        ('V',                  'V (Caglioti)'),
+        ('W',                  'W (Caglioti)'),
+        ('X',                  'X (Lorentzian)'),
+        ('Y',                  'Y (Lorentzian)'),
+        ('eta_at_strongest',   'η at strongest'),
+        ('fwhm_deg',           'FWHM (°)'),
+        ('n_reflections',      'N reflections'),
+        ('seeded_by',          'Seeded by'),
+    ]
+    # Add statistics
+    stat_keys = [
+        ('Rwp',  'Rwp (%)'),
+        ('Rp',   'Rp (%)'),
+        ('chi2', 'χ²'),
+        ('GoF',  'GoF'),
+    ]
+
+    rows_data = []
+    for key, label in param_keys:
+        row = {'Parameter': label}
+        for i, ph in enumerate(phases):
+            col_name = ph.get('name', f'Phase {i+1}')
+            if key == 'sample':
+                row[col_name] = metadata.get('sample_id', '')
+            elif key == 'method':
+                row[col_name] = method_label
+            else:
+                row[col_name] = ph.get(key, '')
+        rows_data.append(row)
+
+    # Add zero shift (shared)
+    zs_row = {'Parameter': 'Zero shift (°)'}
+    for i, ph in enumerate(phases):
+        zs_row[ph.get('name', f'Phase {i+1}')] = result['zero_shift']
+    rows_data.append(zs_row)
+
+    for key, label in stat_keys:
+        row = {'Parameter': label}
+        for i, ph in enumerate(phases):
+            row[ph.get('name', f'Phase {i+1}')] = stats.get(key, '')
+        rows_data.append(row)
+
+    df_summary = pd.DataFrame(rows_data)
+
+    # ── Sheet 2: Plot data + peak positions ──────────────────────────────
+    tt = result.get('tt', [])
+    plot_dict = {
+        '2theta':     tt,
+        'Y_obs':      result.get('y_obs', []),
+        'Y_calc':     result.get('y_calc', []),
+        'Background': result.get('y_background', []),
+        'Residual':   result.get('residuals', []),
+    }
+    # Per-phase component curves
+    phase_patterns = result.get('phase_patterns', [])
+    for i, ph in enumerate(phases):
+        col = ph.get('name', f'Phase {i+1}')
+        if i < len(phase_patterns):
+            plot_dict[col] = phase_patterns[i]
+
+    df_plot = pd.DataFrame(plot_dict)
+
+    # Per-phase reflection positions with Miller indices
+    # Generate hkl data from cell parameters
+    from .crystallography import generate_reflections, parse_cif
+
+    wavelength = result.get('wavelength', 1.54056)
+    tt_min = min(tt) if tt else 5.0
+    tt_max = max(tt) if tt else 90.0
+
+    # Find max rows needed for reflection columns
+    phase_ref_data = []
+    for ph in phases:
+        refs = []
+        try:
+            sys_ = (ph.get('system') or 'triclinic').lower()
+            sg   = ph.get('spacegroup_number', 1)
+            sites = None
+            cif_text = ph.get('cif_text', '')
+            if cif_text:
+                try:
+                    parsed = parse_cif(cif_text)
+                    sites = parsed.get('sites') or None
+                except Exception:
+                    pass
+            ref_list = generate_reflections(
+                ph.get('a', 1), ph.get('b', 1), ph.get('c', 1),
+                ph.get('alpha', 90), ph.get('beta', 90), ph.get('gamma', 90),
+                sys_, sg, wavelength, tt_min, tt_max, hkl_max=12,
+                sites=sites)
+            for r in ref_list:
+                h, k, l = r[2]
+                refs.append((round(r[0], 3), f'[{h}{k}{l}]'))
+        except Exception:
+            pass
+        phase_ref_data.append(refs)
+
+    # Append reflection columns to plot dataframe (separate column block per phase)
+    max_refs = max((len(r) for r in phase_ref_data), default=0)
+    for i, ph in enumerate(phases):
+        pname = ph.get('name', f'Phase {i+1}')
+        tt_col = f'{pname} peak 2θ'
+        hkl_col = f'{pname} [hkl]'
+        refs = phase_ref_data[i] if i < len(phase_ref_data) else []
+        # Pad to dataframe length
+        tt_vals  = [r[0] for r in refs] + [None] * (len(df_plot) - len(refs))
+        hkl_vals = [r[1] for r in refs] + [None] * (len(df_plot) - len(refs))
+        df_plot[tt_col]  = tt_vals[:len(df_plot)]
+        df_plot[hkl_col] = hkl_vals[:len(df_plot)]
+
+    # ── Write xlsx ───────────────────────────────────────────────────────
+    xlsx_path = os.path.join(output_dir, 'xrd_summary.xlsx')
+    with pd.ExcelWriter(xlsx_path, engine='openpyxl') as writer:
+        df_summary.to_excel(writer, sheet_name='Summary', index=False)
+        df_plot.to_excel(writer, sheet_name='Plot Data', index=False)
+
+    return xlsx_path
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MAIN ENTRY POINT
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -425,18 +579,9 @@ def run(filepath, output_dir, metadata, params):
         'method':           method_label,
     }, plot_path)
 
-    # Summary CSV
+    # Summary Excel (two sheets: transposed summary + plot data with peaks)
     import pandas as pd
-    rows = []
-    for ph in result['phase_results']:
-        row = {'sample': metadata.get('sample_id', ''), 'method': method_label, **ph}
-        row.update(result['statistics'])
-        row['zero_shift']    = result['zero_shift']
-        row['pymatgen_used'] = result.get('pymatgen_used', False)
-        rows.append(row)
-    summary = pd.DataFrame(rows)
-    summary_path = os.path.join(output_dir, 'xrd_summary.csv')
-    summary.to_csv(summary_path, index=False)
+    summary_path = _write_summary_xlsx(result, metadata, method_label, output_dir)
 
     return {
         'plot_path':    plot_path,

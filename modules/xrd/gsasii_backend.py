@@ -696,13 +696,35 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                                     tt_col = 4
                             except (IndexError, TypeError, ValueError):
                                 tt_col = 4
+                            # GSAS-II reflection format:
+                            #   [h,k,l,mult,d,2theta,sig,gam,Fobs²,Fcalc²,phase,...]
+                            # Fcalc² is at index 8 or 9; find it by checking
+                            # which index has non-negative floats after 2theta.
+                            fcalc_col = None
+                            for fc_try in (8, 9):
+                                try:
+                                    v = float(rlist[0][fc_try])
+                                    if v >= 0:
+                                        fcalc_col = fc_try
+                                        break
+                                except (IndexError, TypeError, ValueError):
+                                    continue
+                            # Collect all reflections with Fcalc² values
+                            raw_ticks = []
                             for ref in rlist:
                                 try:
                                     tt_ref = float(ref[tt_col])
                                     if tt_min <= tt_ref <= tt_max:
-                                        tick_positions.append(round(tt_ref, 3))
+                                        fc2 = float(ref[fcalc_col]) if fcalc_col is not None else 1.0
+                                        raw_ticks.append((round(tt_ref, 3), fc2))
                                 except (IndexError, TypeError, ValueError):
                                     continue
+                            # Filter out ghost reflections (Fcalc² < 0.1% of max)
+                            if raw_ticks:
+                                max_fc2 = max(t[1] for t in raw_ticks)
+                                threshold = max_fc2 * 1e-3 if max_fc2 > 0 else 0
+                                tick_positions = [t[0] for t in raw_ticks
+                                                  if t[1] > threshold]
                             if tick_positions:
                                 break  # found reflections, stop searching
             except Exception as e:
