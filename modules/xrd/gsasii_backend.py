@@ -720,6 +720,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         phase_patterns = []
         phase_results = []
         raw_phase_profiles = []   # for proportional decomposition
+        phase_scale_vals = []     # GSAS-II scale factors for weighting
 
         # ── Weight fractions via Hill & Howard (1987) ────────────────────
         # W_α = S_α · Z_α · M_α · V_α  /  Σ(S_i · Z_i · M_i · V_i)
@@ -813,10 +814,15 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 sites=sites)
             tick_positions = [round(r[0], 3) for r in phase_refs]
 
-            # Raw profile shape for proportional decomposition (computed later)
+            # Raw profile shape for proportional decomposition (computed later).
+            # Must be weighted by the GSAS-II scale factor so that the
+            # decomposition reflects the refined phase fractions, not just
+            # the relative |F|² magnitudes (which differ hugely between
+            # 8-atom A15 and 2-atom BCC, for example).
             raw_prof = _compute_raw_phase_profile(
                 tt_out, phase_refs, U_deg, V_deg, W_deg, X_deg, Y_deg)
             raw_phase_profiles.append(raw_prof)
+            phase_scale_vals.append(scale_val)
 
             # B_iso (average over atoms)
             b_iso_avg = 0.5
@@ -868,16 +874,19 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
 
         # ── Proportional decomposition ──────────────────────────────────
         # Each phase's display pattern is its share of (y_calc − y_bg),
-        # apportioned by the ratio of its raw profile to the sum of all
-        # raw profiles.  This guarantees the phase patterns sum exactly
-        # to the total calculated pattern and avoids any scale-factor
-        # mismatch between GSAS-II and our intensity weights.
+        # apportioned by the ratio of  S_p × raw_p  to the total.
+        # S_p is the GSAS-II refined scale factor for phase p.
+        # raw_p already contains mult × |F|² × profile.
+        # Without the S_p weighting, phases with more atoms per cell
+        # (higher |F|²) would dominate the decomposition regardless of
+        # the actual refined phase fractions.
         total_above_bg = np.maximum(y_calc_out - y_bg_out, 0.0)
         if raw_phase_profiles:
-            raw_sum = np.sum(raw_phase_profiles, axis=0)
-            raw_sum = np.maximum(raw_sum, 1e-30)  # avoid division by zero
-            for raw in raw_phase_profiles:
-                frac = raw / raw_sum
+            weighted = [s * raw for s, raw in zip(phase_scale_vals, raw_phase_profiles)]
+            w_sum = np.sum(weighted, axis=0)
+            w_sum = np.maximum(w_sum, 1e-30)  # avoid division by zero
+            for wp in weighted:
+                frac = wp / w_sum
                 phase_patterns.append((frac * total_above_bg).tolist())
         else:
             # Single-phase fallback
