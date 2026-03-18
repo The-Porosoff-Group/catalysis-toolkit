@@ -158,7 +158,7 @@ if errorlevel 1 (
     echo  Installing Python dependencies...
     echo  ^(First run: pymatgen is ~500 MB - please be patient^)
     echo.
-    call pip install flask pyyaml numpy pandas scipy matplotlib requests pymatgen pycifrw xmltodict
+    call pip install flask pyyaml numpy pandas scipy matplotlib requests pymatgen pycifrw xmltodict openpyxl
     if errorlevel 1 (
         echo.
         echo  [DEBUG] ERROR: Dependency installation failed.
@@ -234,7 +234,7 @@ if errorlevel 1 (
     echo  [DEBUG] Installing dependencies into .venv\ ...
     echo  ^(First run: pymatgen is ~500 MB - please be patient^)
     echo.
-    call pip install flask pyyaml numpy pandas scipy matplotlib requests pymatgen pycifrw xmltodict
+    call pip install flask pyyaml numpy pandas scipy matplotlib requests pymatgen pycifrw xmltodict openpyxl
     if errorlevel 1 (
         echo.
         echo  [DEBUG] ERROR: Dependency installation failed.

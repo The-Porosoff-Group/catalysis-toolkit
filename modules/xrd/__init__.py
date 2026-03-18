@@ -473,13 +473,21 @@ def _write_summary_xlsx(result, metadata, method_label, output_dir):
         df_plot[tt_col]  = tt_vals[:len(df_plot)]
         df_plot[hkl_col] = hkl_vals[:len(df_plot)]
 
-    # ── Write xlsx ───────────────────────────────────────────────────────
-    xlsx_path = os.path.join(output_dir, 'xrd_summary.xlsx')
-    with pd.ExcelWriter(xlsx_path, engine='openpyxl') as writer:
-        df_summary.to_excel(writer, sheet_name='Summary', index=False)
-        df_plot.to_excel(writer, sheet_name='Plot Data', index=False)
-
-    return xlsx_path
+    # ── Write xlsx (fall back to CSV if openpyxl not installed) ─────────
+    try:
+        import openpyxl  # noqa: F401 – just check availability
+        xlsx_path = os.path.join(output_dir, 'xrd_summary.xlsx')
+        with pd.ExcelWriter(xlsx_path, engine='openpyxl') as writer:
+            df_summary.to_excel(writer, sheet_name='Summary', index=False)
+            df_plot.to_excel(writer, sheet_name='Plot Data', index=False)
+        return xlsx_path
+    except ImportError:
+        # openpyxl not available — write two CSV files instead
+        summary_csv = os.path.join(output_dir, 'xrd_summary.csv')
+        df_summary.to_csv(summary_csv, index=False)
+        plot_csv = os.path.join(output_dir, 'xrd_plot_data.csv')
+        df_plot.to_csv(plot_csv, index=False)
+        return summary_csv
 
 
 # ─────────────────────────────────────────────────────────────────────────────
