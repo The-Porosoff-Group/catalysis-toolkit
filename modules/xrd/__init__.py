@@ -476,11 +476,17 @@ def _write_summary_xlsx(result, metadata, method_label, output_dir):
                 sys_, sg, wavelength, tt_min, tt_max, hkl_max=12,
                 sites=sites)
             if filtered_ticks:
-                # Only include reflections whose 2θ matches a filtered tick
+                # Only include reflections whose 2θ is near a filtered tick.
+                # Use tolerance (0.01°) instead of exact match to avoid
+                # rounding mismatches between GSAS-II refined cell params
+                # and the rounded values stored in phase_results.
+                sorted_ticks = sorted(filtered_ticks)
                 for r in ref_list:
-                    if round(r[0], 3) in filtered_ticks:
+                    tt_r = round(r[0], 3)
+                    matched = any(abs(tt_r - t) < 0.01 for t in sorted_ticks)
+                    if matched:
                         h, k, l = r[2]
-                        refs.append((round(r[0], 3), f'[{h}{k}{l}]'))
+                        refs.append((tt_r, f'[{h}{k}{l}]'))
             else:
                 # No filtered ticks available — use all from generate_reflections
                 for r in ref_list:

@@ -238,6 +238,63 @@ def _build_conventional_cif(ph):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# NON-NEGATIVE LEAST SQUARES (NNLS)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _nnls(A, b):
+    """Solve  min‖Ax − b‖²  subject to  x ≥ 0.
+
+    Uses scipy.optimize.nnls if available, otherwise falls back to the
+    Lawson-Hanson active-set algorithm (pure numpy).
+    """
+    try:
+        from scipy.optimize import nnls as _scipy_nnls
+        x, _ = _scipy_nnls(A, b)
+        return x
+    except ImportError:
+        pass
+    # ── Fallback: Lawson-Hanson active-set NNLS ──────────────────────
+    m, n = A.shape
+    P = set()               # passive set (variables free to be > 0)
+    Z = set(range(n))       # zero set (variables fixed at 0)
+    x = np.zeros(n)
+    max_outer = 3 * n
+    for _ in range(max_outer):
+        w = A.T @ (b - A @ x)  # negative gradient
+        if not Z or max(w[j] for j in Z) <= 1e-10:
+            break
+        # Move variable with largest positive gradient into passive set
+        t = max(Z, key=lambda j: w[j])
+        P.add(t); Z.discard(t)
+        # Inner loop: solve unconstrained on P, handle negatives
+        for __ in range(max_outer):
+            cols = sorted(P)
+            s = np.zeros(n)
+            s[cols] = np.linalg.lstsq(A[:, cols], b, rcond=None)[0]
+            if all(s[j] >= 0 for j in cols):
+                x = s
+                break
+            # Find the tightest step that hits zero
+            alpha = 1.0
+            j_remove = None
+            for j in cols:
+                if s[j] < 0 and x[j] > x[j] - s[j]:
+                    a = x[j] / (x[j] - s[j])
+                    if a < alpha:
+                        alpha = a
+                        j_remove = j
+            if j_remove is None:
+                x = s
+                break
+            x = x + alpha * (s - x)
+            x[j_remove] = 0.0
+            Z.add(j_remove); P.discard(j_remove)
+        else:
+            x = np.maximum(x, 0.0)  # safety clamp
+    return x
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PER-PHASE PATTERN FROM GSAS-II REFLECTIONS
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -720,6 +777,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         phase_patterns = []
         phase_results = []
         raw_phase_profiles = []   # for proportional decomposition
+        phase_refs_list = []      # reflection lists per phase
 
         # ── Weight fractions via Hill & Howard (1987) ────────────────────
         # W_α = S_α · Z_α · M_α · V_α  /  Σ(S_i · Z_i · M_i · V_i)
@@ -824,6 +882,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             raw_prof = _compute_raw_phase_profile(
                 tt_out, phase_refs, U_deg, V_deg, W_deg, X_deg, Y_deg)
             raw_phase_profiles.append(raw_prof)
+            phase_refs_list.append(phase_refs)
 
             # B_iso (average over atoms)
             b_iso_avg = 0.5
@@ -873,53 +932,89 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 'seeded_by':           'gsas2',
             })
 
-        # ── Proportional decomposition via NNLS ─────────────────────────
-        # GSAS-II's scale factors (and hence ZMV weight fractions) can be
-        # unreliable when the histogram scale is singular (SVD on :0:Scale).
-        # Instead of trusting those numbers, we fit our own scale factors
-        # by solving:
-        #     min‖ S₁·raw₁ + S₂·raw₂ + … − (y_calc − y_bg) ‖²
-        #          subject to  S_p ≥ 0
-        # This uses the correct y_calc (from GSAS-II's excellent fit) and
-        # the correct profile shapes (from our structure factors), giving
-        # the mathematically optimal decomposition.
+        # ── Try to dump GSAS-II reflection lists for diagnostics ────────
+        try:
+            refl_lists = histogram.data.get('Reflection Lists', {})
+            for ph_name, refl_data in refl_lists.items():
+                ref_arr = refl_data.get('RefList')
+                if ref_arr is not None and len(ref_arr) > 0:
+                    print(f"  GSAS-II RefList for '{ph_name}': "
+                          f"shape={ref_arr.shape}, "
+                          f"first row[:6]={ref_arr[0][:6]}", flush=True)
+        except Exception as e:
+            print(f"  (Could not read GSAS-II Reflection Lists: {e})", flush=True)
+
+        # ── Proportional decomposition via unique-peak scale fitting ────
+        # GSAS-II's scale factors can be unreliable (SVD singularity).
+        # Instead, we determine each phase's scale by looking at peaks
+        # that are UNIQUE to that phase (no other phase has a reflection
+        # within ±min_sep degrees).  At those peaks, all of y_calc−y_bg
+        # belongs to that phase, so:
+        #     scale_p = median( y_obs_at_peak / raw_profile_at_peak )
+        # This is physically grounded and avoids NNLS instabilities.
         total_above_bg = np.maximum(y_calc_out - y_bg_out, 0.0)
         if raw_phase_profiles:
-            # Build matrix A = [raw_1 | raw_2 | …] and solve A @ x ≈ b
-            A = np.column_stack(raw_phase_profiles)
-            b = total_above_bg
+            n_ph = len(raw_phase_profiles)
+            # Collect all reflection 2θ positions per phase
+            all_peak_pos = []
+            for refs in phase_refs_list:
+                all_peak_pos.append([r[0] for r in refs])
 
-            # Non-negative least squares (manual: lstsq + clamp negatives,
-            # then re-solve with only positive components)
-            x, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
-            x = np.maximum(x, 0.0)  # enforce non-negativity
+            # Fit scale from unique peaks
+            MIN_SEP = 1.5  # degrees — peaks closer than this are "shared"
+            fitted_scales = np.zeros(n_ph)
+            for i in range(n_ph):
+                ratios = []
+                for pos in all_peak_pos[i]:
+                    if pos < tt_min or pos > tt_max:
+                        continue
+                    # Check if this peak is unique (no other phase nearby)
+                    is_unique = True
+                    for j in range(n_ph):
+                        if j == i:
+                            continue
+                        for other_pos in all_peak_pos[j]:
+                            if abs(pos - other_pos) < MIN_SEP:
+                                is_unique = False
+                                break
+                        if not is_unique:
+                            break
+                    if is_unique:
+                        idx_peak = np.argmin(np.abs(tt_out - pos))
+                        raw_val = raw_phase_profiles[i][idx_peak]
+                        obs_val = total_above_bg[idx_peak]
+                        if raw_val > 1e-6 and obs_val > 0:
+                            ratios.append(obs_val / raw_val)
+                if ratios:
+                    fitted_scales[i] = np.median(ratios)
+                    ph_name = phase_results[i]['name'] if i < len(phase_results) else f'Phase {i}'
+                    print(f"  Phase {i} ({ph_name}): unique-peak scale={fitted_scales[i]:.6e} "
+                          f"(from {len(ratios)} unique peaks)", flush=True)
 
-            for idx in range(len(raw_phase_profiles)):
-                ph_name = phase_results[idx]['name'] if idx < len(phase_results) else f'Phase {idx}'
-                print(f"  Phase {idx} ({ph_name}): NNLS scale={x[idx]:.6e}, "
-                      f"raw_max={np.max(raw_phase_profiles[idx]):.4e}", flush=True)
+            # If any phase has no unique peaks, fall back to NNLS for that phase
+            missing = [i for i in range(n_ph) if fitted_scales[i] <= 0]
+            if missing:
+                print(f"  Phases {missing} have no unique peaks — using NNLS fallback", flush=True)
+                A = np.column_stack(raw_phase_profiles)
+                x = _nnls(A, total_above_bg)
+                for i in missing:
+                    fitted_scales[i] = x[i]
 
-            # Weighted profiles
-            weighted = [x[i] * raw_phase_profiles[i] for i in range(len(raw_phase_profiles))]
+            # Weighted profiles for decomposition
+            weighted = [fitted_scales[i] * raw_phase_profiles[i] for i in range(n_ph)]
             w_sum = np.sum(weighted, axis=0)
             w_sum = np.maximum(w_sum, 1e-30)
 
-            # Compute weight fractions from NNLS-fitted scales
-            # Using Hill & Howard: wt_p ∝ S_p × Z_p × M_p × V_p
-            # where S_p is now our NNLS-fitted scale (calibrated to our F²)
-            nnls_wt_fracs = []
+            # Compute weight fractions and phase patterns
             total_integ = sum(np.sum(wp) for wp in weighted) or 1e-30
             for i_wp, wp in enumerate(weighted):
                 frac = wp / w_sum
                 integ_frac = np.sum(wp) / total_integ * 100
-                nnls_wt_fracs.append(integ_frac)
                 print(f"  Phase {i_wp}: integrated fraction = {integ_frac:.1f}%", flush=True)
                 phase_patterns.append((frac * total_above_bg).tolist())
-
-            # Update phase_results with NNLS-derived weight fractions
-            for idx, wf in enumerate(nnls_wt_fracs):
-                if idx < len(phase_results):
-                    phase_results[idx]['weight_fraction_%'] = round(wf, 1)
+                # Update weight fractions in phase_results
+                if i_wp < len(phase_results):
+                    phase_results[i_wp]['weight_fraction_%'] = round(integ_frac, 1)
         else:
             # Single-phase fallback
             phase_patterns.append(total_above_bg.tolist())
