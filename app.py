@@ -538,9 +538,24 @@ def process_xrd():
             'summary_path':  result['summary_path'],
             'output_dir':    out_dir,
         })
+    except (SystemExit, KeyboardInterrupt):
+        # GSAS-II sometimes calls sys.exit() on fatal errors — catch it
+        # so the Flask server stays alive.
+        import traceback
+        tb = traceback.format_exc()
+        print(f"\n  !! XRD refinement crashed (SystemExit):\n{tb}", flush=True)
+        return jsonify({
+            'error': 'The refinement engine crashed unexpectedly. '
+                     'Check the terminal for details. '
+                     'If using GSAS-II, it may not be fully installed — '
+                     'try Le Bail or Rietveld instead.',
+            'trace': tb,
+        }), 500
     except Exception as e:
         import traceback
-        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+        tb = traceback.format_exc()
+        print(f"\n  !! XRD refinement error:\n{tb}", flush=True)
+        return jsonify({'error': str(e), 'trace': tb}), 500
 
 # ── Launch ────────────────────────────────────────────────────────────────────
 
@@ -583,9 +598,17 @@ def xrd_preview():
 
 
 if __name__ == '__main__':
+    # Check GSAS-II status for startup banner
+    try:
+        from modules.xrd.gsasii_backend import is_available as _gsas_avail
+        _gsas_status = 'ready' if _gsas_avail() else 'not installed'
+    except Exception:
+        _gsas_status = 'not installed'
+
     print("\n" + "━"*50)
     print("  Catalysis Data Toolkit")
     print(f"  pymatgen:          {'ready' if _pymatgen_ready else 'not installed'}")
+    print(f"  GSAS-II:           {_gsas_status}")
     print(f"  Materials Project: {'configured' if MP_API_KEY else 'no API key'}")
     print(f"  CIF cache:         {_cache.stats()['entries']} entries "
           f"({_cache.stats()['size_mb']} MB)")
@@ -597,5 +620,5 @@ if __name__ == '__main__':
     if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
         Timer(1.2, open_browser).start()
 
-    app.run(debug=True, port=5000, use_reloader=True)
+    app.run(debug=True, port=5000, use_reloader=True, threaded=True)
 

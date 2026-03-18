@@ -57,8 +57,17 @@ except ImportError:
 
 
 def is_available():
-    """Return True if GSASIIscriptable is importable."""
-    return _GSASII_AVAILABLE
+    """Return True if GSASIIscriptable is importable and functional."""
+    if not _GSASII_AVAILABLE:
+        return False
+    # Quick functional check: verify G2Project is callable
+    # (catches partial installs where Fortran extensions are missing)
+    try:
+        if not hasattr(G2sc, 'G2Project'):
+            return False
+    except Exception:
+        return False
+    return True
 
 
 def import_error():
@@ -234,7 +243,17 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
 
     try:
         # ── Build GSAS-II project ────────────────────────────────────────
-        gpx = G2sc.G2Project(newgpx=gpx_path)
+        try:
+            gpx = G2sc.G2Project(newgpx=gpx_path)
+        except Exception as e:
+            raise RuntimeError(
+                f"GSAS-II failed to create a project. This usually means GSAS-II's "
+                f"compiled Fortran extensions are not installed (requires a Fortran "
+                f"compiler during installation).\n\n"
+                f"Try using the built-in Rietveld refinement instead, or install "
+                f"GSAS-II via: conda install gsas2pkg -c briantoby\n\n"
+                f"Original error: {e}"
+            ) from e
 
         # Add histogram (powder data)
         histogram = gpx.add_powder_histogram(
@@ -380,9 +399,19 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             # GSAS-II stores weight fractions in the histogram phase data
             for phase_obj in gsas_phases:
                 hapData = list(phase_obj.data['Histograms'].values())[0]
-                wt_fracs[phase_obj.name] = hapData.get('Scale', [1.0])[0]
-        except Exception:
-            pass
+                scale_entry = hapData.get('Scale', [1.0])
+                # Scale can be [value, refine_flag] or just a float
+                scale_val = scale_entry[0] if isinstance(scale_entry, (list, tuple)) else float(scale_entry)
+                wt_fracs[phase_obj.name] = scale_val
+        except Exception as e:
+            warnings.warn(f"GSAS-II: could not read weight fractions: {e}")
+
+        # If all scale factors are identical (common with failed refinement),
+        # try using GSAS-II's computed weight fractions directly
+        scale_vals = list(wt_fracs.values())
+        if len(scale_vals) >= 2 and len(set(round(v, 6) for v in scale_vals)) == 1:
+            warnings.warn("GSAS-II: all phase scale factors are identical — "
+                         "refinement may not have converged properly.")
 
         # Normalise scale factors to weight fractions
         total_scale = sum(wt_fracs.values()) or 1.0
@@ -414,18 +443,49 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             wt_pct = (scale_val / total_scale) * 100 if total_scale > 0 else 0
 
             # Tick positions (reflection list)
+            # GSAS-II stores reflections in several possible locations
+            # depending on the version and how the phase was added.
             tick_positions = []
             try:
-                refList = list(phase_obj.data['Histograms'].values())[0].get(
-                    'Reflection Lists', {})
-                if refList:
-                    first_key = list(refList.keys())[0]
-                    for ref in refList[first_key].get('RefList', []):
-                        tt_ref = ref[5]  # 2theta position
-                        if tt_min <= tt_ref <= tt_max:
-                            tick_positions.append(round(tt_ref, 3))
-            except Exception:
-                pass
+                hapData = list(phase_obj.data['Histograms'].values())[0]
+                # Try 'Reflection Lists' first (newer GSAS-II)
+                refDict = hapData.get('Reflection Lists', {})
+                if not refDict:
+                    # Fallback: older GSAS-II stores it directly
+                    refDict = hapData.get('RefList', {})
+                if isinstance(refDict, dict) and refDict:
+                    for key in refDict:
+                        rlist = refDict[key]
+                        # rlist may be a dict with 'RefList' key or a direct list
+                        if isinstance(rlist, dict):
+                            rlist = rlist.get('RefList', [])
+                        if isinstance(rlist, (list, np.ndarray)):
+                            for ref in rlist:
+                                # 2theta is at index 5 in standard GSAS-II reflection arrays
+                                try:
+                                    tt_ref = float(ref[5])
+                                    if tt_min <= tt_ref <= tt_max:
+                                        tick_positions.append(round(tt_ref, 3))
+                                except (IndexError, TypeError, ValueError):
+                                    continue
+                            if tick_positions:
+                                break  # found reflections, stop searching
+            except Exception as e:
+                warnings.warn(f"GSAS-II: could not extract tick positions for "
+                            f"'{ph.get('name', '?')}': {e}")
+
+            # Fallback: compute tick positions from cell parameters + space group
+            if not tick_positions:
+                try:
+                    from .crystallography import generate_reflections
+                    sys_ = (ph.get('system') or 'triclinic').lower()
+                    sg = ph.get('spacegroup_number', 1)
+                    fallback_refs = generate_reflections(
+                        a, b, c, alpha, beta, gamma, sys_, sg,
+                        wavelength, tt_min, tt_max, hkl_max=12)
+                    tick_positions = [round(r[0], 3) for r in fallback_refs]
+                except Exception:
+                    pass
 
             # B_iso (average over atoms)
             b_iso_avg = 0.5

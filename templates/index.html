@@ -1686,7 +1686,12 @@ async function runXRD(method) {
     });
     fd.append('phases', JSON.stringify(phases_stripped));
 
-    const resp = await fetch('/api/process_xrd', {method:'POST', body:fd});
+    // 5-minute timeout — refinements can be slow, especially without MKL numpy
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 300000);
+
+    const resp = await fetch('/api/process_xrd', {method:'POST', body:fd, signal: controller.signal});
+    clearTimeout(timeout);
     const data = await resp.json();
     clearInterval(timer);
     document.getElementById('xrd-progress-wrap').classList.remove('visible');
@@ -1702,7 +1707,18 @@ async function runXRD(method) {
   } catch(e) {
     clearInterval(timer);
     document.getElementById('xrd-progress-wrap').classList.remove('visible');
-    showXrdError('Unexpected error: ' + e.message);
+    if (e.name === 'AbortError') {
+      showXrdError('Refinement timed out after 5 minutes.\n\n'
+        + 'Try reducing the 2θ range, using fewer phases, or using Le Bail instead of Rietveld.\n'
+        + 'If running via "python app.py", use run.bat instead — it sets up an optimised environment.');
+    } else if (e.message === 'Failed to fetch') {
+      showXrdError('Connection to server lost during refinement.\n\n'
+        + 'The server may have crashed or restarted. Check the terminal/command prompt for error details.\n\n'
+        + 'If you ran "python app.py" directly, try using run.bat instead — it ensures all dependencies '
+        + 'are correctly installed in an isolated environment.');
+    } else {
+      showXrdError('Unexpected error: ' + e.message);
+    }
   }
   document.getElementById('btn-xrd').disabled = false;
   document.getElementById('btn-xrd-rietveld').disabled = false;
