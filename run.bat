@@ -25,7 +25,7 @@ if not exist "%CONDA_ENV%\python.exe" (
         echo  Creating conda environment...
         echo  ^(First-time setup - this takes a few minutes^)
         echo.
-        call conda create -p "%CONDA_ENV%" python=3.11 -y -q
+        call conda create -p "%CONDA_ENV%" python=3.13 -y -q
         if errorlevel 1 (
             echo  ERROR: Failed to create conda environment.
             echo  Falling back to venv...
