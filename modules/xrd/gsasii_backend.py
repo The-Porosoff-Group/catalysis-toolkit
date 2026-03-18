@@ -72,7 +72,7 @@ def import_error():
 
 def _write_xye(path, tt, y_obs, sigma):
     """Write a .xye file (2theta  intensity  sigma) for GSAS-II import."""
-    with open(path, 'w') as f:
+    with open(path, 'w', encoding='utf-8', newline='\n') as f:
         for i in range(len(tt)):
             f.write(f"{tt[i]:.6f}  {y_obs[i]:.4f}  {sigma[i]:.4f}\n")
 
@@ -95,7 +95,7 @@ def _write_instprm(work_dir, wavelength):
         'SH/L:0.002',
         'Azimuth:0.0',
     ]
-    with open(path, 'w') as f:
+    with open(path, 'w', encoding='utf-8', newline='\n') as f:
         f.write('\n'.join(lines) + '\n')
     return path
 
@@ -111,12 +111,12 @@ def _write_temp_cif(cif_text, phase_name='phase', work_dir=None):
         safe = "".join(c if c.isalnum() or c in ('_', '-') else '_'
                        for c in phase_name)
         path = os.path.join(work_dir, f'gsas_{safe}.cif')
-        with open(path, 'w') as f:
+        with open(path, 'w', encoding='utf-8', newline='\n') as f:
             f.write(cif_text)
         return path
     # Fallback: system temp
     fd, path = tempfile.mkstemp(suffix='.cif', prefix=f'gsas_{phase_name}_')
-    with os.fdopen(fd, 'w') as f:
+    with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as f:
         f.write(cif_text)
     return path
 
@@ -256,11 +256,25 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # Add phases from CIF files
         gsas_phases = []
         for i, (ph, cif_path) in enumerate(zip(phases, cif_paths)):
-            phase_obj = gpx.add_phase(
-                cif_path,
-                phasename=ph.get('name', f'Phase_{i+1}'),
-                histograms=[histogram],
-            )
+            try:
+                phase_obj = gpx.add_phase(
+                    cif_path,
+                    phasename=ph.get('name', f'Phase_{i+1}'),
+                    histograms=[histogram],
+                )
+            except Exception as e:
+                # Log CIF details for debugging
+                cif_size = os.path.getsize(cif_path) if os.path.exists(cif_path) else -1
+                cif_head = ''
+                if os.path.exists(cif_path):
+                    with open(cif_path, 'r', encoding='utf-8') as _f:
+                        cif_head = _f.read(500)
+                raise RuntimeError(
+                    f"GSAS-II could not read CIF for phase '{ph.get('name', '?')}' "
+                    f"(file: {cif_path}, size: {cif_size} bytes).\n"
+                    f"CIF preview:\n{cif_head}\n\n"
+                    f"Original error: {e}"
+                ) from e
             gsas_phases.append(phase_obj)
 
         if progress_callback:
