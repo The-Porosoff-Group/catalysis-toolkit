@@ -380,29 +380,44 @@ def _write_summary_xlsx(result, metadata, method_label, output_dir):
         ('GoF',  'GoF'),
     ]
 
+    # Deduplicate phase column names (e.g., two phases both named "W")
+    col_names = []
+    seen_names = {}
+    for i, ph in enumerate(phases):
+        base = ph.get('name', f'Phase {i+1}')
+        if base in seen_names:
+            seen_names[base] += 1
+            col_names.append(f"{base} ({ph.get('spacegroup', seen_names[base])})")
+        else:
+            seen_names[base] = 1
+            col_names.append(base)
+    # If all ended up the same, append index
+    if len(set(col_names)) < len(col_names):
+        col_names = [f"{ph.get('name', f'Phase {i+1}')} #{i+1}"
+                     for i, ph in enumerate(phases)]
+
     rows_data = []
     for key, label in param_keys:
         row = {'Parameter': label}
         for i, ph in enumerate(phases):
-            col_name = ph.get('name', f'Phase {i+1}')
             if key == 'sample':
-                row[col_name] = metadata.get('sample_id', '')
+                row[col_names[i]] = metadata.get('sample_id', '')
             elif key == 'method':
-                row[col_name] = method_label
+                row[col_names[i]] = method_label
             else:
-                row[col_name] = ph.get(key, '')
+                row[col_names[i]] = ph.get(key, '')
         rows_data.append(row)
 
     # Add zero shift (shared)
     zs_row = {'Parameter': 'Zero shift (°)'}
     for i, ph in enumerate(phases):
-        zs_row[ph.get('name', f'Phase {i+1}')] = result['zero_shift']
+        zs_row[col_names[i]] = result['zero_shift']
     rows_data.append(zs_row)
 
     for key, label in stat_keys:
         row = {'Parameter': label}
         for i, ph in enumerate(phases):
-            row[ph.get('name', f'Phase {i+1}')] = stats.get(key, '')
+            row[col_names[i]] = stats.get(key, '')
         rows_data.append(row)
 
     df_summary = pd.DataFrame(rows_data)

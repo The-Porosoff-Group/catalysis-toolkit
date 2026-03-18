@@ -714,14 +714,22 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             prof = _extract_profile_params(phase_obj)
             cryst_A = prof.get('crystallite_size_A')
 
+            # GSAS-II stores profile params in centidegrees² (sig) and
+            # centidegrees (gam).  Convert to degrees² / degrees for
+            # Caglioti/TCH compatibility with our functions.
+            U_deg = inst['U'] / 100.0   # centideg² → deg²
+            V_deg = inst['V'] / 100.0
+            W_deg = inst['W'] / 100.0
+            X_deg = inst['X'] / 1.0     # X is already in degrees (or dimensionless)
+            Y_deg = inst['Y'] / 1.0
+
             # If GSAS-II size extraction failed, estimate from Y
-            if cryst_A is None and inst['Y'] > 0.01:
-                cryst_A = size_from_Y(inst['Y'], wavelength)
+            if cryst_A is None and Y_deg > 0.01:
+                cryst_A = size_from_Y(Y_deg, wavelength)
 
             # FWHM and eta at a representative angle (40°)
             fwhm_rep, eta_rep = tch_fwhm_eta(
-                40.0, inst['U'], inst['V'], inst['W'],
-                inst['X'], inst['Y'])
+                40.0, U_deg, V_deg, W_deg, X_deg, Y_deg)
 
             # Weight fraction (Hill & Howard or raw-scale fallback)
             scale_val = raw_scales.get(phase_obj.name, 1.0)
@@ -729,64 +737,87 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             wt_pct = (zmv_val / total_zmv) * 100 if total_zmv > 0 else 0
 
             # Tick positions & per-reflection data (for pattern synthesis)
-            # GSAS-II stores reflections in several possible locations
-            # depending on the version and how the phase was added.
+            # GSAS-II stores reflections on the *histogram* object, keyed
+            # by phase name:  histogram.data['Reflection Lists'][phase_name]
+            # Each entry is a dict with 'RefList' → array of reflections.
             # Standard reflection array: [h,k,l,mult,d,2theta,sig,gam,Fobs²,Fcalc²,...]
             tick_positions = []
             phase_ref_info = []   # [(tt, mult, fc2, sig_ref, gam_ref), ...] for pattern
             try:
-                hapData = list(phase_obj.data['Histograms'].values())[0]
-                refDict = hapData.get('Reflection Lists', {})
-                if not refDict:
-                    refDict = hapData.get('RefList', {})
-                if isinstance(refDict, dict) and refDict:
-                    for key in refDict:
-                        rlist = refDict[key]
-                        if isinstance(rlist, dict):
-                            rlist = rlist.get('RefList', [])
-                        if isinstance(rlist, (list, np.ndarray)) and len(rlist) > 0:
-                            # 2theta column: index 5 (or 4)
-                            tt_col = 5
-                            try:
-                                test_val = float(rlist[0][5])
-                                if not (0 < test_val < 180):
-                                    tt_col = 4
-                            except (IndexError, TypeError, ValueError):
-                                tt_col = 4
-                            # mult at index 3, sig at index 6, gam at index 7
-                            mult_col, sig_col, gam_col = 3, 6, 7
-                            # Fcalc² at index 8 or 9
-                            fcalc_col = None
-                            for fc_try in (8, 9):
-                                try:
-                                    v = float(rlist[0][fc_try])
-                                    if v >= 0:
-                                        fcalc_col = fc_try
-                                        break
-                                except (IndexError, TypeError, ValueError):
-                                    continue
-                            raw_refs = []
-                            for ref in rlist:
-                                try:
-                                    tt_ref = float(ref[tt_col])
-                                    if tt_min <= tt_ref <= tt_max:
-                                        fc2 = float(ref[fcalc_col]) if fcalc_col is not None else 1.0
-                                        mult = float(ref[mult_col]) if len(ref) > mult_col else 1.0
-                                        sig_r = float(ref[sig_col]) if len(ref) > sig_col else 0.0
-                                        gam_r = float(ref[gam_col]) if len(ref) > gam_col else 0.0
-                                        raw_refs.append((round(tt_ref, 3), mult, fc2, sig_r, gam_r))
-                                except (IndexError, TypeError, ValueError):
-                                    continue
-                            # Filter out ghost reflections (Fcalc² < 0.1% of max)
-                            if raw_refs:
-                                max_fc2 = max(r[2] for r in raw_refs)
-                                threshold = max_fc2 * 1e-3 if max_fc2 > 0 else 0
-                                for r in raw_refs:
-                                    if r[2] > threshold:
-                                        tick_positions.append(r[0])
-                                        phase_ref_info.append(r)
-                            if tick_positions:
+                # Primary: get reflections from histogram keyed by phase name
+                hist_ref_lists = histogram.data.get('Reflection Lists', {})
+                rlist = None
+                # Try the phase name used in GSAS-II (may differ from input)
+                for try_name in [phase_obj.name,
+                                 ph.get('name', ''),
+                                 f"Phase_{i+1}"]:
+                    entry = hist_ref_lists.get(try_name)
+                    if entry is not None:
+                        if isinstance(entry, dict):
+                            rlist = entry.get('RefList', [])
+                        elif isinstance(entry, (list, np.ndarray)):
+                            rlist = entry
+                        if rlist is not None and len(rlist) > 0:
+                            break
+                        rlist = None
+
+                # Fallback: try phase_obj's own hapData
+                if rlist is None or len(rlist) == 0:
+                    hapData = list(phase_obj.data['Histograms'].values())[0]
+                    refDict = hapData.get('Reflection Lists', {})
+                    if not refDict:
+                        refDict = hapData.get('RefList', {})
+                    if isinstance(refDict, dict) and refDict:
+                        for key in refDict:
+                            entry = refDict[key]
+                            if isinstance(entry, dict):
+                                rlist = entry.get('RefList', [])
+                            elif isinstance(entry, (list, np.ndarray)):
+                                rlist = entry
+                            if rlist is not None and len(rlist) > 0:
                                 break
+
+                if rlist is not None and isinstance(rlist, (list, np.ndarray)) and len(rlist) > 0:
+                    # 2theta column: index 5 (or 4)
+                    tt_col = 5
+                    try:
+                        test_val = float(rlist[0][5])
+                        if not (0 < test_val < 180):
+                            tt_col = 4
+                    except (IndexError, TypeError, ValueError):
+                        tt_col = 4
+                    # mult at index 3, sig at index 6, gam at index 7
+                    mult_col, sig_col, gam_col = 3, 6, 7
+                    # Fcalc² at index 8 or 9
+                    fcalc_col = None
+                    for fc_try in (8, 9):
+                        try:
+                            v = float(rlist[0][fc_try])
+                            if v >= 0:
+                                fcalc_col = fc_try
+                                break
+                        except (IndexError, TypeError, ValueError):
+                            continue
+                    raw_refs = []
+                    for ref in rlist:
+                        try:
+                            tt_ref = float(ref[tt_col])
+                            if tt_min <= tt_ref <= tt_max:
+                                fc2 = float(ref[fcalc_col]) if fcalc_col is not None else 1.0
+                                mult = float(ref[mult_col]) if len(ref) > mult_col else 1.0
+                                sig_r = float(ref[sig_col]) if len(ref) > sig_col else 0.0
+                                gam_r = float(ref[gam_col]) if len(ref) > gam_col else 0.0
+                                raw_refs.append((round(tt_ref, 3), mult, fc2, sig_r, gam_r))
+                        except (IndexError, TypeError, ValueError):
+                            continue
+                    # Filter out ghost reflections (Fcalc² < 0.1% of max)
+                    if raw_refs:
+                        max_fc2 = max(r[2] for r in raw_refs)
+                        threshold = max_fc2 * 1e-3 if max_fc2 > 0 else 0
+                        for r in raw_refs:
+                            if r[2] > threshold:
+                                tick_positions.append(r[0])
+                                phase_ref_info.append(r)
             except Exception as e:
                 warnings.warn(f"GSAS-II: could not extract tick positions for "
                             f"'{ph.get('name', '?')}': {e}")
@@ -848,9 +879,9 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 'spacegroup':        ph.get('spacegroup', ''),
                 'scale':             round(scale_val, 5),
                 'B_iso':             round(b_iso_avg, 4),
-                'U': round(inst['U'], 5), 'V': round(inst['V'], 5),
-                'W': round(inst['W'], 5),
-                'X': round(inst['X'], 5), 'Y': round(inst['Y'], 5),
+                'U': round(U_deg, 5), 'V': round(V_deg, 5),
+                'W': round(W_deg, 5),
+                'X': round(X_deg, 5), 'Y': round(Y_deg, 5),
                 'eta_at_strongest':  round(eta_rep, 3),
                 'fwhm_deg':          round(fwhm_rep, 4),
                 'crystallite_size_A':  round(cryst_A, 1) if cryst_A else None,
