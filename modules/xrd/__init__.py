@@ -431,17 +431,19 @@ def _write_summary_xlsx(result, metadata, method_label, output_dir):
     df_plot = pd.DataFrame(plot_dict)
 
     # Per-phase reflection positions with Miller indices
-    # Generate hkl data from cell parameters
+    # Use the already-filtered tick_positions from the refinement result,
+    # and cross-reference with generate_reflections for hkl labels.
     from .crystallography import generate_reflections, parse_cif
 
     wavelength = result.get('wavelength', 1.54056)
     tt_min = min(tt) if tt else 5.0
     tt_max = max(tt) if tt else 90.0
 
-    # Find max rows needed for reflection columns
     phase_ref_data = []
     for ph in phases:
         refs = []
+        # Get the filtered tick positions from the refinement result
+        filtered_ticks = set(ph.get('tick_positions', []))
         try:
             sys_ = (ph.get('system') or 'triclinic').lower()
             sg   = ph.get('spacegroup_number', 1)
@@ -458,9 +460,17 @@ def _write_summary_xlsx(result, metadata, method_label, output_dir):
                 ph.get('alpha', 90), ph.get('beta', 90), ph.get('gamma', 90),
                 sys_, sg, wavelength, tt_min, tt_max, hkl_max=12,
                 sites=sites)
-            for r in ref_list:
-                h, k, l = r[2]
-                refs.append((round(r[0], 3), f'[{h}{k}{l}]'))
+            if filtered_ticks:
+                # Only include reflections whose 2θ matches a filtered tick
+                for r in ref_list:
+                    if round(r[0], 3) in filtered_ticks:
+                        h, k, l = r[2]
+                        refs.append((round(r[0], 3), f'[{h}{k}{l}]'))
+            else:
+                # No filtered ticks available — use all from generate_reflections
+                for r in ref_list:
+                    h, k, l = r[2]
+                    refs.append((round(r[0], 3), f'[{h}{k}{l}]'))
         except Exception:
             pass
         phase_ref_data.append(refs)

@@ -233,6 +233,28 @@ def _full_cell(free_vals, free_names, phase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _filter_tick_positions(refs, I_hkl, threshold_frac=1e-3):
+    """Filter tick positions, keeping only reflections with significant intensity.
+
+    Removes ghost peaks whose refined I_hkl is < 0.1% of the strongest peak.
+    Works for both Le Bail refs (list of tuples) and Rietveld refs (list of dicts).
+    """
+    if len(refs) == 0:
+        return []
+    max_I = max(I_hkl) if len(I_hkl) > 0 else 0
+    threshold = max_I * threshold_frac if max_I > 0 else 0
+    ticks = []
+    for k, ref in enumerate(refs):
+        if k < len(I_hkl) and I_hkl[k] > threshold:
+            tt_val = ref['two_theta'] if isinstance(ref, dict) else ref[0]
+            ticks.append(round(tt_val, 3))
+    return ticks
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MAIN REFINEMENT
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -708,7 +730,7 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
             'crystallite_size_nm': round(cryst_A/10, 2) if cryst_A else None,
             'weight_fraction_%':   round(wt_frac, 1),
             'n_reflections':       len(st['refs']),
-            'tick_positions':      [round(r[0], 3) for r in st['refs']],
+            'tick_positions':      _filter_tick_positions(st['refs'], st['I_hkl']),
             'seeded_by':           st.get('seeded', 'unknown'),
         })
 
@@ -1172,7 +1194,7 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
             'crystallite_size_nm': round(cryst_A/10, 2) if cryst_A else None,
             'weight_fraction_%':   round(wt_frac, 1),
             'n_reflections':       len(st['refs']),
-            'tick_positions':      [round(r['two_theta'], 3) for r in st['refs']],
+            'tick_positions':      _filter_tick_positions(st['refs'], I_hkl),
             'seeded_by':           'rietveld',
         })
 
