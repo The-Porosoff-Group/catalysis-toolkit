@@ -236,6 +236,25 @@ def _full_cell(free_vals, free_names, phase):
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _mask_phase_pattern(pat, tt_arr, refs, zero, U, V, W, X, Y):
+    """Zero out phase pattern intensity far from any reflection position.
+
+    For each reflection, keep intensity within 5× FWHM of its center.
+    This suppresses Lorentzian tail artifacts that create phantom humps
+    in regions with no actual diffraction peaks.
+    """
+    mask = np.zeros_like(pat, dtype=bool)
+    for ref in refs:
+        tt_p = ref['two_theta'] if isinstance(ref, dict) else ref[0]
+        if X != 0.0 or Y != 0.0:
+            fwhm, _ = tch_fwhm_eta(tt_p, U, V, W, X, Y)
+        else:
+            fwhm = max(caglioti_fwhm(tt_p, U, V, W), 0.005)
+        window = 5.0 * max(fwhm, 0.1)
+        mask |= (np.abs(tt_arr - zero - tt_p) < window)
+    return np.where(mask, pat, 0.0)
+
+
 def _filter_tick_positions(refs, I_hkl, threshold_frac=1e-3):
     """Filter tick positions, keeping only reflections with significant intensity.
 
@@ -684,6 +703,12 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
                                st.get('eta', 0.5), zero,
                                st['X'], st['Y'])
         pat_ph = st['S'] * sum(st['I_hkl'][k]*profs[k] for k in range(len(st['refs'])))
+
+        # Zero out phase pattern far from any reflection to suppress
+        # Lorentzian tail artifacts (phantom humps between peaks).
+        pat_ph = _mask_phase_pattern(pat_ph, tt_r, st['refs'], zero,
+                                     st['U'], st['V'], st['W'],
+                                     st['X'], st['Y'])
         phase_patterns.append(pat_ph.tolist())
 
         ph = st['ph']
@@ -1147,6 +1172,12 @@ def run_rietveld(tt, y_obs, sigma, phases, wavelength,
                                st.get('eta', 0.5), zero,
                                st['X'], st['Y'])
         pat_ph = st['S'] * sum(I_hkl[k] * profs[k] for k in range(len(st['refs'])))
+
+        # Zero out phase pattern far from any reflection to suppress
+        # Lorentzian tail artifacts (phantom humps between peaks).
+        pat_ph = _mask_phase_pattern(pat_ph, tt_r, st['refs'], zero,
+                                     st['U'], st['V'], st['W'],
+                                     st['X'], st['Y'])
         phase_patterns.append(pat_ph.tolist())
 
         ph = st['ph']
