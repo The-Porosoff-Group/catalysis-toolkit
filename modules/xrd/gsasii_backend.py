@@ -1019,18 +1019,21 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 for i in missing:
                     fitted_scales[i] = x[i]
 
-            # Scale each phase's profile and render independently.
-            # Using scale × raw_profile directly (not frac × total) ensures
-            # each phase shows its OWN peak positions, not a proportional
-            # copy of the total pattern.
-            weighted = [fitted_scales[i] * raw_phase_profiles[i] for i in range(n_ph)]
+            # Build scaled profiles that preserve each phase's own peak
+            # shapes but are bounded so they sum to total_above_bg.
+            raw_scaled = [fitted_scales[i] * raw_phase_profiles[i] for i in range(n_ph)]
+            total_raw = sum(raw_scaled)
+            # Pointwise normalisation: fraction_i(2θ) × total_above_bg(2θ)
+            # This keeps each phase's distinct peak positions while ensuring
+            # the stacked fills never exceed the observed–background envelope.
+            denom = np.maximum(total_raw, 1e-30)
+            weighted = [(rs / denom) * total_above_bg for rs in raw_scaled]
 
             # Compute weight fractions from integrated intensities
             total_integ = sum(np.sum(wp) for wp in weighted) or 1e-30
             for i_wp, wp in enumerate(weighted):
                 integ_frac = np.sum(wp) / total_integ * 100
                 print(f"  Phase {i_wp}: integrated fraction = {integ_frac:.1f}%", flush=True)
-                # Direct phase contribution — stacks correctly in the plot
                 phase_patterns.append(wp.tolist())
                 # Update weight fractions in phase_results
                 if i_wp < len(phase_results):
