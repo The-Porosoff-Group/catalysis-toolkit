@@ -867,11 +867,12 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             # GSAS-II stores profile params in centidegrees² (sig) and
             # centidegrees (gam).  Convert to degrees² / degrees for
             # Caglioti/TCH compatibility with our functions.
-            U_deg = inst['U'] / 100.0   # centideg² → deg²
-            V_deg = inst['V'] / 100.0
-            W_deg = inst['W'] / 100.0
-            X_deg = inst['X'] / 1.0     # X is already in degrees (or dimensionless)
-            Y_deg = inst['Y'] / 1.0
+            # 1 deg = 100 centideg  →  1 deg² = 10 000 centideg²
+            U_deg = inst['U'] / 10000.0   # centideg² → deg²
+            V_deg = inst['V'] / 10000.0
+            W_deg = inst['W'] / 10000.0
+            X_deg = inst['X'] / 100.0     # centideg → deg
+            Y_deg = inst['Y'] / 100.0
 
             # If GSAS-II size extraction failed, estimate from Y
             if cryst_A is None and Y_deg > 0.01:
@@ -953,124 +954,128 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 'seeded_by':           'gsas2',
             })
 
-        # ── Per-phase patterns via GSAS-II isolation ─────────────────────
-        # Instead of reconstructing profiles with our own pseudo-Voigt
-        # code (which can't perfectly match GSAS-II's profile functions),
-        # we ask GSAS-II itself to compute each phase's contribution by
+        # ── Per-phase patterns ─────────────────────────────────────────
+        # Primary method: reconstruct per-phase profiles from GSAS-II's
+        # refined Fc² (structure factor squared) values and the refined
+        # instrument profile parameters.  This is reliable across all
+        # GSAS-II versions.
+        #
+        # Fallback: ask GSAS-II to compute each phase's contribution by
         # temporarily zeroing every OTHER phase's scale and recomputing
-        # with 0 refinement cycles (evaluate-only).  This gives exact
-        # per-phase envelopes using GSAS-II's own Fc², corrections, and
-        # profile convolution — no custom algorithms needed.
+        # with 0 refinement cycles.  This can fail depending on the
+        # GSAS-II version.
+        #
+        # Last resort: equal split (unreliable weight fractions).
         if len(gsas_phases) > 1:
-            # Save original HAP scale entries [value, refine_flag]
-            orig_hap_scales = []
-            for phase_obj in gsas_phases:
-                hapData = list(phase_obj.data['Histograms'].values())[0]
-                orig_hap_scales.append(list(hapData['Scale']))
+            total_above_bg = np.maximum(y_calc_out - y_bg_out, 0.0)
+            fc2_ok = False
 
-            try:
-                for i in range(len(gsas_phases)):
-                    # Activate only phase i; zero all others
+            # ── Primary: Fc²-based reconstruction ─────────────────────
+            if gsas_refs and len(gsas_refs) >= len(gsas_phases):
+                try:
+                    # Convert GSAS-II centideg²/centideg to deg²/deg
+                    U_d = inst['U'] / 10000.0   # centideg² → deg²
+                    V_d = inst['V'] / 10000.0
+                    W_d = inst['W'] / 10000.0
+                    X_d = inst['X'] / 100.0     # centideg → deg
+                    Y_d = inst['Y'] / 100.0
+
+                    raw_profiles = []
+                    for phase_obj in gsas_phases:
+                        refs = gsas_refs.get(phase_obj.name, [])
+                        if not refs:
+                            raise ValueError(
+                                f"No Fc² reflections for '{phase_obj.name}'")
+                        raw_profiles.append(
+                            _compute_raw_phase_profile(
+                                tt_out, refs, U_d, V_d, W_d, X_d, Y_d))
+
+                    # Weight each profile by its refined scale factor
+                    scaled = []
+                    for phase_obj, prof in zip(gsas_phases, raw_profiles):
+                        s = raw_scales.get(phase_obj.name, 1.0)
+                        scaled.append(prof * s)
+
+                    # Normalise so the sum matches the GSAS-II total
+                    # above background (preserves relative proportions)
+                    sum_all = sum(scaled)
+                    denom = np.sum(sum_all)
+                    if denom > 0:
+                        norm = np.sum(total_above_bg) / denom
+                        for sp in scaled:
+                            phase_patterns.append(
+                                np.maximum(sp * norm, 0.0).tolist())
+                        fc2_ok = True
+                        print("  Fc²-based phase decomposition succeeded.",
+                              flush=True)
+                    else:
+                        raise ValueError(
+                            "Sum of scaled profiles is zero")
+                except Exception as e_fc2:
+                    print(f"  Fc²-based decomposition failed: {e_fc2}",
+                          flush=True)
+                    phase_patterns = []
+
+            # ── Fallback: GSAS-II isolation ────────────────────────────
+            if not fc2_ok:
+                print("  Attempting GSAS-II phase isolation...", flush=True)
+                orig_hap_scales = []
+                for phase_obj in gsas_phases:
+                    hapData = list(phase_obj.data['Histograms'].values())[0]
+                    orig_hap_scales.append(list(hapData['Scale']))
+
+                try:
+                    phase_patterns = []
+                    for i in range(len(gsas_phases)):
+                        # Activate only phase i; zero all others
+                        for j, phase_obj in enumerate(gsas_phases):
+                            hapData = list(phase_obj.data['Histograms'].values())[0]
+                            if j == i:
+                                hapData['Scale'] = [orig_hap_scales[j][0], False]
+                            else:
+                                hapData['Scale'] = [0.0, False]
+
+                        # Persist zeroed scales to disk so that do_refinements
+                        # (which re-reads the GPX file) picks them up.
+                        gpx.save()
+
+                        # Recompute pattern (0 cycles = evaluate only)
+                        gpx.do_refinements([{'set': {}, 'cycles': 0}])
+
+                        y_calc_iso = np.array(histogram.getdata('ycalc'))
+                        y_bg_iso = np.array(histogram.getdata('background'))
+                        phase_pat = np.maximum(
+                            y_calc_iso[rmask] - y_bg_iso[rmask], 0.0)
+                        phase_patterns.append(phase_pat.tolist())
+
+                        ph_name = (phase_results[i]['name']
+                                   if i < len(phase_results) else f'Phase {i}')
+                        print(f"  Phase {i} ({ph_name}): "
+                              f"max={np.max(phase_pat):.1f}, "
+                              f"integrated={np.sum(phase_pat):.1f}", flush=True)
+                except Exception as e_iso:
+                    print(f"  Phase isolation failed: {e_iso}", flush=True)
+                    phase_patterns = []
+                finally:
+                    # Always restore original scales
                     for j, phase_obj in enumerate(gsas_phases):
                         hapData = list(phase_obj.data['Histograms'].values())[0]
-                        if j == i:
-                            hapData['Scale'] = [orig_hap_scales[j][0], False]
-                        else:
-                            hapData['Scale'] = [0.0, False]
-
-                    # Persist zeroed scales to disk so that do_refinements
-                    # (which re-reads the GPX file) picks them up.
+                        hapData['Scale'] = orig_hap_scales[j]
                     gpx.save()
 
-                    # Recompute pattern (0 cycles = evaluate only)
-                    gpx.do_refinements([{'set': {}, 'cycles': 0}])
+                if phase_patterns:
+                    fc2_ok = True
 
-                    y_calc_iso = np.array(histogram.getdata('ycalc'))
-                    y_bg_iso = np.array(histogram.getdata('background'))
-                    phase_pat = np.maximum(
-                        y_calc_iso[rmask] - y_bg_iso[rmask], 0.0)
-                    phase_patterns.append(phase_pat.tolist())
-
-                    ph_name = (phase_results[i]['name']
-                               if i < len(phase_results) else f'Phase {i}')
-                    print(f"  Phase {i} ({ph_name}): "
-                          f"max={np.max(phase_pat):.1f}, "
-                          f"integrated={np.sum(phase_pat):.1f}", flush=True)
-            except Exception as e:
-                print(f"  Phase isolation failed: {e}", flush=True)
-                print("  Attempting Fc\u00b2-based phase decomposition...",
-                      flush=True)
-
-                # ── Fallback 1: reconstruct per-phase profiles from
-                # GSAS-II's refined Fc\u00b2 values (already in gsas_refs)
-                # and the refined instrument profile parameters.
+            # ── Last resort: equal split ───────────────────────────────
+            if not fc2_ok:
+                warnings.warn(
+                    "GSAS-II phase decomposition: both Fc²-reconstruction "
+                    "and isolation failed. Falling back to equal split — "
+                    "weight fractions will be UNRELIABLE.")
                 phase_patterns = []
-                fc2_ok = False
-
-                if gsas_refs and len(gsas_refs) >= len(gsas_phases):
-                    try:
-                        U_d = inst['U'] / 100.0   # centideg\u00b2 \u2192 deg\u00b2
-                        V_d = inst['V'] / 100.0
-                        W_d = inst['W'] / 100.0
-                        X_d = inst['X'] / 1.0
-                        Y_d = inst['Y'] / 1.0
-
-                        raw_profiles = []
-                        for phase_obj in gsas_phases:
-                            refs = gsas_refs.get(phase_obj.name, [])
-                            if not refs:
-                                raise ValueError(
-                                    f"No Fc\u00b2 reflections for '{phase_obj.name}'")
-                            raw_profiles.append(
-                                _compute_raw_phase_profile(
-                                    tt_out, refs, U_d, V_d, W_d, X_d, Y_d))
-
-                        # Weight each profile by its refined scale factor
-                        scaled = []
-                        for phase_obj, prof in zip(gsas_phases, raw_profiles):
-                            s = raw_scales.get(phase_obj.name, 1.0)
-                            scaled.append(prof * s)
-
-                        # Normalise so the sum matches the GSAS-II total
-                        # above background (preserves relative proportions)
-                        total_above_bg = np.maximum(
-                            y_calc_out - y_bg_out, 0.0)
-                        sum_all = sum(scaled)
-                        denom = np.sum(sum_all)
-                        if denom > 0:
-                            norm = np.sum(total_above_bg) / denom
-                            for sp in scaled:
-                                phase_patterns.append(
-                                    np.maximum(sp * norm, 0.0).tolist())
-                            fc2_ok = True
-                            print("  Fc\u00b2-based decomposition succeeded.",
-                                  flush=True)
-                        else:
-                            raise ValueError(
-                                "Sum of scaled profiles is zero")
-                    except Exception as e2:
-                        print(f"  Fc\u00b2-based fallback also failed: {e2}",
-                              flush=True)
-                        phase_patterns = []
-
-                # ── Fallback 2 (last resort): equal split
-                if not fc2_ok:
-                    warnings.warn(
-                        "GSAS-II phase decomposition: both isolation and "
-                        "Fc\u00b2-reconstruction failed. Falling back to equal "
-                        "split \u2014 weight fractions will be UNRELIABLE.")
-                    total_above_bg = np.maximum(
-                        y_calc_out - y_bg_out, 0.0)
-                    phase_patterns = []
-                    for _ in gsas_phases:
-                        share = (total_above_bg / len(gsas_phases)).tolist()
-                        phase_patterns.append(share)
-            finally:
-                # Always restore original scales
-                for j, phase_obj in enumerate(gsas_phases):
-                    hapData = list(phase_obj.data['Histograms'].values())[0]
-                    hapData['Scale'] = orig_hap_scales[j]
-                gpx.save()
+                for _ in gsas_phases:
+                    share = (total_above_bg / len(gsas_phases)).tolist()
+                    phase_patterns.append(share)
 
             # Update weight fractions from isolated patterns
             total_integ = sum(
