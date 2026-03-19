@@ -960,93 +960,32 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 'seeded_by':           'gsas2',
             })
 
-        # ── Phase decomposition via unique-peak scale fitting ───────────
-        # GSAS-II's scale factors can be unreliable when peaks overlap
-        # (SVD singularity seen in the log).  Instead, we determine each
-        # phase's absolute scale by looking at peaks UNIQUE to that phase
-        # (no other phase has a reflection within ±MIN_SEP degrees).
-        # At those points all signal belongs to that phase:
-        #     scale_p = median( y_obs_at_peak / raw_profile_at_peak )
-        # We then render each phase's pattern INDEPENDENTLY as
-        #     phase_pattern_p = scale_p × raw_profile_p
-        # This gives physically distinct envelopes (correct peak positions
-        # per phase) rather than just proportional slices of the total.
+        # ── Phase decomposition via NNLS ────────────────────────────────
+        # Decompose the GSAS-II total calculated signal (y_calc - y_bg)
+        # into per-phase contributions by solving a non-negative least
+        # squares problem:
+        #
+        #   min ‖ A·c − total_above_bg ‖²   subject to  c ≥ 0
+        #
+        # where column A[:,i] is the raw (unscaled) profile shape for
+        # phase i, computed from its own reflection list and profile
+        # parameters.  The solution c[i] × raw_profile[i] gives each
+        # phase's distinct peak envelope directly from its crystallography
+        # — no pointwise normalisation is applied, so phases with
+        # different reflection positions get genuinely different shapes.
         total_above_bg = np.maximum(y_calc_out - y_bg_out, 0.0)
         if raw_phase_profiles:
             n_ph = len(raw_phase_profiles)
-            # Collect all reflection 2θ positions per phase
-            all_peak_pos = []
-            for refs in phase_refs_list:
-                all_peak_pos.append([r[0] for r in refs])
 
-            # Fit scale from unique peaks
-            MIN_SEP = 1.5  # degrees — peaks closer than this are "shared"
-            fitted_scales = np.zeros(n_ph)
-            for i in range(n_ph):
-                ratios = []
-                for pos in all_peak_pos[i]:
-                    if pos < tt_min or pos > tt_max:
-                        continue
-                    # Check if this peak is unique (no other phase nearby)
-                    is_unique = True
-                    for j in range(n_ph):
-                        if j == i:
-                            continue
-                        for other_pos in all_peak_pos[j]:
-                            if abs(pos - other_pos) < MIN_SEP:
-                                is_unique = False
-                                break
-                        if not is_unique:
-                            break
-                    if is_unique:
-                        idx_peak = np.argmin(np.abs(tt_out - pos))
-                        raw_val = raw_phase_profiles[i][idx_peak]
-                        obs_val = total_above_bg[idx_peak]
-                        if raw_val > 1e-6 and obs_val > 0:
-                            ratios.append(obs_val / raw_val)
-                if ratios:
-                    fitted_scales[i] = np.median(ratios)
-                    ph_name = phase_results[i]['name'] if i < len(phase_results) else f'Phase {i}'
-                    print(f"  Phase {i} ({ph_name}): unique-peak scale={fitted_scales[i]:.6e} "
-                          f"(from {len(ratios)} unique peaks)", flush=True)
+            # NNLS: find the per-phase scale that best reproduces the
+            # total diffraction signal above background.
+            A = np.column_stack(raw_phase_profiles)
+            nnls_scales = _nnls(A, total_above_bg)
+            for i, sc in enumerate(nnls_scales):
+                ph_name = phase_results[i]['name'] if i < len(phase_results) else f'Phase {i}'
+                print(f"  Phase {i} ({ph_name}): NNLS scale={sc:.6e}", flush=True)
 
-            # If any phase has no unique peaks, fall back to NNLS for that phase
-            missing = [i for i in range(n_ph) if fitted_scales[i] <= 0]
-            if missing:
-                print(f"  Phases {missing} have no unique peaks — using NNLS fallback", flush=True)
-                A = np.column_stack(raw_phase_profiles)
-                x = _nnls(A, total_above_bg)
-                for i in missing:
-                    fitted_scales[i] = x[i]
-
-            # Build scaled profiles that preserve each phase's own peak
-            # shapes.  Each raw_scaled[i] has the correct peak positions
-            # and relative intensities from that phase's own reflections;
-            # the fitted_scales make the absolute magnitude match the
-            # observed data at that phase's unique peaks.
-            raw_scaled = [fitted_scales[i] * raw_phase_profiles[i] for i in range(n_ph)]
-            total_raw = sum(raw_scaled)
-
-            # Global rescale so sum(phase_patterns) == total_above_bg in
-            # total integrated intensity, but WITHOUT pointwise
-            # normalisation (which destroys per-phase peak shapes when
-            # phases share peak positions).
-            total_raw_sum = np.sum(total_raw) or 1e-30
-            total_obs_sum = np.sum(total_above_bg) or 1e-30
-            global_scale = total_obs_sum / total_raw_sum
-            weighted = [global_scale * rs for rs in raw_scaled]
-
-            # Soft clip: where the stacked sum exceeds total_above_bg,
-            # scale all phases down proportionally at that point to avoid
-            # the fills extending beyond the observed envelope.
-            stacked = sum(weighted)
-            excess = np.maximum(stacked - total_above_bg, 0.0)
-            clip_factor = np.where(
-                stacked > 1e-30,
-                np.maximum(1.0 - excess / stacked, 0.0),
-                1.0,
-            )
-            weighted = [w * clip_factor for w in weighted]
+            weighted = [nnls_scales[i] * raw_phase_profiles[i] for i in range(n_ph)]
 
             # Compute weight fractions from integrated intensities
             total_integ = sum(np.sum(wp) for wp in weighted) or 1e-30
