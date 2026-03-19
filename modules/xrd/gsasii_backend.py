@@ -776,8 +776,8 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # ── Per-phase results ────────────────────────────────────────────
         phase_patterns = []
         phase_results = []
-        raw_phase_profiles = []   # for proportional decomposition
-        phase_refs_list = []      # reflection lists per phase
+        # (raw_phase_profiles removed — we now extract per-phase patterns
+        # directly from GSAS-II instead of reconstructing them ourselves)
 
         # ── Weight fractions via Hill & Howard (1987) ────────────────────
         # W_α = S_α · Z_α · M_α · V_α  /  Σ(S_i · Z_i · M_i · V_i)
@@ -902,15 +902,8 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 sites=sites)
             tick_positions = [round(r[0], 3) for r in phase_refs]
 
-            # Raw profile shape for scale-fitting and decomposition.
-            # Prefer GSAS-II's refined Fc² values (from RefList) over our
-            # generate_reflections output — the Rietveld code has the correct
-            # structure factors and systematic extinctions baked in.
-            refs_for_profile = gsas_refs.get(phase_obj.name, phase_refs)
-            raw_prof = _compute_raw_phase_profile(
-                tt_out, refs_for_profile, U_deg, V_deg, W_deg, X_deg, Y_deg)
-            raw_phase_profiles.append(raw_prof)
-            phase_refs_list.append(phase_refs)
+            # (Per-phase patterns are extracted below via GSAS-II isolation,
+            # not reconstructed from reflection lists.)
 
             # B_iso (average over atoms)
             b_iso_avg = 0.5
@@ -960,44 +953,73 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 'seeded_by':           'gsas2',
             })
 
-        # ── Phase decomposition via NNLS ────────────────────────────────
-        # Decompose the GSAS-II total calculated signal (y_calc - y_bg)
-        # into per-phase contributions by solving a non-negative least
-        # squares problem:
-        #
-        #   min ‖ A·c − total_above_bg ‖²   subject to  c ≥ 0
-        #
-        # where column A[:,i] is the raw (unscaled) profile shape for
-        # phase i, computed from its own reflection list and profile
-        # parameters.  The solution c[i] × raw_profile[i] gives each
-        # phase's distinct peak envelope directly from its crystallography
-        # — no pointwise normalisation is applied, so phases with
-        # different reflection positions get genuinely different shapes.
-        total_above_bg = np.maximum(y_calc_out - y_bg_out, 0.0)
-        if raw_phase_profiles:
-            n_ph = len(raw_phase_profiles)
+        # ── Per-phase patterns via GSAS-II isolation ─────────────────────
+        # Instead of reconstructing profiles with our own pseudo-Voigt
+        # code (which can't perfectly match GSAS-II's profile functions),
+        # we ask GSAS-II itself to compute each phase's contribution by
+        # temporarily zeroing every OTHER phase's scale and recomputing
+        # with 0 refinement cycles (evaluate-only).  This gives exact
+        # per-phase envelopes using GSAS-II's own Fc², corrections, and
+        # profile convolution — no custom algorithms needed.
+        if len(gsas_phases) > 1:
+            # Save original HAP scale entries [value, refine_flag]
+            orig_hap_scales = []
+            for phase_obj in gsas_phases:
+                hapData = list(phase_obj.data['Histograms'].values())[0]
+                orig_hap_scales.append(list(hapData['Scale']))
 
-            # NNLS: find the per-phase scale that best reproduces the
-            # total diffraction signal above background.
-            A = np.column_stack(raw_phase_profiles)
-            nnls_scales = _nnls(A, total_above_bg)
-            for i, sc in enumerate(nnls_scales):
-                ph_name = phase_results[i]['name'] if i < len(phase_results) else f'Phase {i}'
-                print(f"  Phase {i} ({ph_name}): NNLS scale={sc:.6e}", flush=True)
+            try:
+                for i in range(len(gsas_phases)):
+                    # Activate only phase i; zero all others
+                    for j, phase_obj in enumerate(gsas_phases):
+                        hapData = list(phase_obj.data['Histograms'].values())[0]
+                        if j == i:
+                            hapData['Scale'] = [orig_hap_scales[j][0], False]
+                        else:
+                            hapData['Scale'] = [0.0, False]
 
-            weighted = [nnls_scales[i] * raw_phase_profiles[i] for i in range(n_ph)]
+                    # Recompute pattern (0 cycles = evaluate only)
+                    gpx.do_refinements([{'set': {}, 'cycles': 0}])
 
-            # Compute weight fractions from integrated intensities
-            total_integ = sum(np.sum(wp) for wp in weighted) or 1e-30
-            for i_wp, wp in enumerate(weighted):
-                integ_frac = np.sum(wp) / total_integ * 100
-                print(f"  Phase {i_wp}: integrated fraction = {integ_frac:.1f}%", flush=True)
-                phase_patterns.append(wp.tolist())
-                # Update weight fractions in phase_results
+                    y_calc_iso = np.array(histogram.getdata('ycalc'))
+                    y_bg_iso = np.array(histogram.getdata('background'))
+                    phase_pat = np.maximum(
+                        y_calc_iso[rmask] - y_bg_iso[rmask], 0.0)
+                    phase_patterns.append(phase_pat.tolist())
+
+                    ph_name = (phase_results[i]['name']
+                               if i < len(phase_results) else f'Phase {i}')
+                    print(f"  Phase {i} ({ph_name}): "
+                          f"max={np.max(phase_pat):.1f}, "
+                          f"integrated={np.sum(phase_pat):.1f}", flush=True)
+            except Exception as e:
+                print(f"  Phase isolation failed: {e}", flush=True)
+                # Fallback: equal split of total_above_bg
+                total_above_bg = np.maximum(y_calc_out - y_bg_out, 0.0)
+                phase_patterns = []
+                for _ in gsas_phases:
+                    share = (total_above_bg / len(gsas_phases)).tolist()
+                    phase_patterns.append(share)
+            finally:
+                # Always restore original scales
+                for j, phase_obj in enumerate(gsas_phases):
+                    hapData = list(phase_obj.data['Histograms'].values())[0]
+                    hapData['Scale'] = orig_hap_scales[j]
+                gpx.save()
+
+            # Update weight fractions from isolated patterns
+            total_integ = sum(
+                np.sum(np.array(pp)) for pp in phase_patterns) or 1e-30
+            for i_wp, pp in enumerate(phase_patterns):
+                integ_frac = np.sum(np.array(pp)) / total_integ * 100
+                print(f"  Phase {i_wp}: "
+                      f"integrated fraction = {integ_frac:.1f}%", flush=True)
                 if i_wp < len(phase_results):
-                    phase_results[i_wp]['weight_fraction_%'] = round(integ_frac, 1)
+                    phase_results[i_wp]['weight_fraction_%'] = round(
+                        integ_frac, 1)
         else:
-            # Single-phase fallback
+            # Single phase — entire signal above background
+            total_above_bg = np.maximum(y_calc_out - y_bg_out, 0.0)
             phase_patterns.append(total_above_bg.tolist())
 
         result = {
