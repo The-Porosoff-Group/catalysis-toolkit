@@ -1020,14 +1020,33 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                     fitted_scales[i] = x[i]
 
             # Build scaled profiles that preserve each phase's own peak
-            # shapes but are bounded so they sum to total_above_bg.
+            # shapes.  Each raw_scaled[i] has the correct peak positions
+            # and relative intensities from that phase's own reflections;
+            # the fitted_scales make the absolute magnitude match the
+            # observed data at that phase's unique peaks.
             raw_scaled = [fitted_scales[i] * raw_phase_profiles[i] for i in range(n_ph)]
             total_raw = sum(raw_scaled)
-            # Pointwise normalisation: fraction_i(2θ) × total_above_bg(2θ)
-            # This keeps each phase's distinct peak positions while ensuring
-            # the stacked fills never exceed the observed–background envelope.
-            denom = np.maximum(total_raw, 1e-30)
-            weighted = [(rs / denom) * total_above_bg for rs in raw_scaled]
+
+            # Global rescale so sum(phase_patterns) == total_above_bg in
+            # total integrated intensity, but WITHOUT pointwise
+            # normalisation (which destroys per-phase peak shapes when
+            # phases share peak positions).
+            total_raw_sum = np.sum(total_raw) or 1e-30
+            total_obs_sum = np.sum(total_above_bg) or 1e-30
+            global_scale = total_obs_sum / total_raw_sum
+            weighted = [global_scale * rs for rs in raw_scaled]
+
+            # Soft clip: where the stacked sum exceeds total_above_bg,
+            # scale all phases down proportionally at that point to avoid
+            # the fills extending beyond the observed envelope.
+            stacked = sum(weighted)
+            excess = np.maximum(stacked - total_above_bg, 0.0)
+            clip_factor = np.where(
+                stacked > 1e-30,
+                np.maximum(1.0 - excess / stacked, 0.0),
+                1.0,
+            )
+            weighted = [w * clip_factor for w in weighted]
 
             # Compute weight fractions from integrated intensities
             total_integ = sum(np.sum(wp) for wp in weighted) or 1e-30
