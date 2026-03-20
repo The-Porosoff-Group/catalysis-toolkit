@@ -809,20 +809,21 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         y_calc_out = y_calc_full[rmask]
         y_bg_out = y_bg_full[rmask]
 
-        # ── Background floor correction ────────────────────────────────
-        # The Chebyshev polynomial can dip below the actual data baseline
-        # (trading intensity with peak tails).  In peak-free regions
-        # y_obs ≈ true background, so a rolling minimum of y_obs gives
-        # a physical lower bound.  Raising y_bg where it dips below this
-        # floor prevents phase fills from bulging into non-peak regions.
+        # ── Background dip correction ──────────────────────────────────
+        # The Chebyshev polynomial can create local dips where the
+        # optimizer trades intensity with peak tails.  Fix: compare
+        # y_bg against a wide Gaussian smooth of itself; dips in the
+        # Chebyshev curve will be below their own smoothed value and
+        # get corrected.  Both operands are smooth so the result is
+        # smooth — no jagged artefacts from data noise or peak bases.
         _step = float(tt_out[1] - tt_out[0]) if len(tt_out) > 1 else 0.02
-        _win = max(5, int(5.0 / _step))       # ~5° window
-        _half = _win // 2
-        _n = len(y_obs_out)
-        _floor = np.array([
-            np.min(y_obs_out[max(0, i - _half):min(_n, i + _half + 1)])
-            for i in range(_n)])
-        y_bg_out = np.maximum(y_bg_out, _floor)
+        _sig  = max(3, int(10.0 / _step))          # 10° Gaussian sigma
+        _k    = min(3 * _sig, len(y_bg_out) // 2)
+        _kx   = np.arange(-_k, _k + 1, dtype=float)
+        _kern = np.exp(-0.5 * (_kx / _sig) ** 2)
+        _kern /= _kern.sum()
+        _smooth_bg = np.convolve(y_bg_out, _kern, mode='same')
+        y_bg_out = np.maximum(y_bg_out, _smooth_bg)
 
         diff_out = y_obs_out - y_calc_out
 
