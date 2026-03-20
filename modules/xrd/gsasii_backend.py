@@ -1054,6 +1054,15 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                     # to relative profile contributions.  This guarantees
                     # sum(phase_patterns) == total_above_bg at every point,
                     # so the stacked fills exactly match the I_calc line.
+
+                    # First, suppress negligible Lorentzian tail leakage.
+                    # Without this, a phase's distant tails can "claim" a
+                    # small fraction of another phase's strong peak,
+                    # producing visible jagged artifacts in the plot.
+                    for sp in scaled:
+                        sp_max = np.max(sp) if np.max(sp) > 0 else 1.0
+                        sp[sp < sp_max * 0.005] = 0.0
+
                     sum_raw = np.zeros_like(tt_out, dtype=np.float64)
                     for sp in scaled:
                         sum_raw += sp
