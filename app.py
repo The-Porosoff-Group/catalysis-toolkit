@@ -502,6 +502,15 @@ def process_xrd():
             if text:
                 ph['cif_text'] = text
 
+        # Optional instrument parameter file for GSAS-II
+        instprm_file_path = None
+        if 'instprm_file' in request.files:
+            instprm_f = request.files['instprm_file']
+            if instprm_f.filename:
+                safe_instprm = re.sub(r'[^\w\-.]', '_', instprm_f.filename)
+                instprm_file_path = os.path.join(UPLOAD_DIR, safe_instprm)
+                instprm_f.save(instprm_file_path)
+
         output_base = form.get('output_dir', '').strip()
         if not output_base or not os.path.isdir(output_base):
             output_base = os.path.join(BASE_DIR, 'results')
@@ -519,9 +528,10 @@ def process_xrd():
                 'wavelength_label': wl_label,
                 'tt_min':           tt_min,
                 'tt_max':           tt_max,
-                'n_bg_coeffs':      6,
+                'n_bg_coeffs':      int(form.get('n_bg_coeffs', 6)),
                 'max_outer':        MAX_OUTER,
                 'method':           form.get('method', 'lebail'),
+                'instprm_file':     instprm_file_path,
             }
         )
 

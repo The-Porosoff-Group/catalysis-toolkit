@@ -96,6 +96,21 @@ _SG_HM = {
 }
 
 
+# ── Default instrument / refinement parameters ────────────────────────────
+# These are used when the user does not provide their own .instprm file.
+# U, V, W, X, Y are initial guesses — GSAS-II refines them during fitting.
+# Polariz. and SH/L are NOT refined and directly affect calculated
+# intensities; users with known instrument profiles should override them.
+DEFAULT_POLARIZ = 0.99    # Monochromator polarization (0.99 for graphite)
+DEFAULT_SH_L = 0.002      # Finger-Cox-Jephcoat asymmetry parameter
+DEFAULT_U = 2.0            # Caglioti U initial guess (centideg²) — refined
+DEFAULT_V = -2.0           # Caglioti V initial guess (centideg²) — refined
+DEFAULT_W = 5.0            # Caglioti W initial guess (centideg²) — refined
+DEFAULT_X = 0.0            # Lorentzian X initial guess (centideg) — refined
+DEFAULT_Y = 0.0            # Lorentzian Y initial guess (centideg) — refined
+DEFAULT_B_ISO = 0.5        # Fallback B_iso (Å²) when GSAS-II extraction fails
+
+
 def _get_expanded_sites(cif_text, spacegroup_number=None):
     """Get symmetry-expanded unit-cell sites for structure factor computation.
 
@@ -329,8 +344,11 @@ def _compute_raw_phase_profile(tt_arr, refs, U_deg, V_deg, W_deg,
 
         sigma_g = fwhm / (2.0 * math.sqrt(2.0 * math.log(2.0)))
         gamma_l = fwhm / 2.0
-        # Tight window (3× FWHM) to prevent cross-phase bleed
-        window = 3.0 * fwhm
+        # Window for profile evaluation.  With pointwise proportional
+        # decomposition the absolute scale doesn't matter, but a wider
+        # window captures more Lorentzian tail for accurate inter-phase
+        # allocation at overlapping regions.
+        window = 6.0 * fwhm
 
         msk = np.abs(tt_arr - tt_pos) < window
         if not msk.any():
@@ -358,22 +376,29 @@ def _write_xye(path, tt, y_obs, sigma):
             f.write(f"{tt[i]:.6f}  {y_obs[i]:.4f}  {sigma[i]:.4f}\n")
 
 
-def _write_instprm(work_dir, wavelength):
-    """Write a minimal GSAS-II .instprm file. Returns path."""
+def _write_instprm(work_dir, wavelength, polariz=None, sh_l=None):
+    """Write a minimal GSAS-II .instprm file. Returns path.
+
+    Uses module-level DEFAULT_* constants unless overridden.
+    U, V, W, X, Y are initial guesses that GSAS-II will refine.
+    Polariz. and SH/L are NOT refined — they should match the instrument.
+    """
     path = os.path.join(work_dir, 'instrument.instprm')
+    pol = polariz if polariz is not None else DEFAULT_POLARIZ
+    shl = sh_l if sh_l is not None else DEFAULT_SH_L
     lines = [
         '#GSAS-II instrument parameter file; do not add/delete items!',
         'Type:PXC',
         f'Lam:{wavelength:.6f}',
         'Zero:0.0',
-        'Polariz.:0.99',
-        'U:2.0',
-        'V:-2.0',
-        'W:5.0',
-        'X:0.0',
-        'Y:0.0',
+        f'Polariz.:{pol}',
+        f'U:{DEFAULT_U}',
+        f'V:{DEFAULT_V}',
+        f'W:{DEFAULT_W}',
+        f'X:{DEFAULT_X}',
+        f'Y:{DEFAULT_Y}',
         'Z:0.0',
-        'SH/L:0.002',
+        f'SH/L:{shl}',
         'Azimuth:0.0',
     ]
     with open(path, 'w', encoding='utf-8', newline='\n') as f:
@@ -454,7 +479,8 @@ def _extract_instrument_params(histogram):
 
 def run_gsas2(tt, y_obs, sigma, phases, wavelength,
               tt_min=None, tt_max=None, n_bg_coeffs=6,
-              max_cycles=10, progress_callback=None):
+              max_cycles=10, progress_callback=None,
+              instprm_file=None, polariz=None, sh_l=None):
     """
     Run GSAS-II Rietveld refinement via GSASIIscriptable.
 
@@ -466,6 +492,10 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
     tt_min/max : float — fitting range
     n_bg_coeffs : int — number of background coefficients
     max_cycles : int — max refinement cycles
+    instprm_file : str, optional — path to user-provided .instprm file;
+        if given, this is used INSTEAD of the auto-generated defaults
+    polariz : float, optional — monochromator polarization (default 0.99)
+    sh_l : float, optional — Finger-Cox-Jephcoat asymmetry (default 0.002)
 
     Returns dict compatible with Le Bail / Rietveld output (same keys).
     """
@@ -506,7 +536,16 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
     work_dir = tempfile.mkdtemp(prefix='gsas2_', dir=_app_tmp)
     gpx_path = os.path.join(work_dir, 'refine.gpx')
     data_path = os.path.join(work_dir, 'data.xye')
-    instprm_path = _write_instprm(work_dir, wavelength)
+    # Use user-provided .instprm if available; otherwise generate defaults
+    if instprm_file and os.path.isfile(instprm_file):
+        import shutil
+        instprm_path = os.path.join(work_dir, 'instrument.instprm')
+        shutil.copy2(instprm_file, instprm_path)
+        print(f"Using user-provided instrument parameters: {instprm_file}",
+              flush=True)
+    else:
+        instprm_path = _write_instprm(work_dir, wavelength,
+                                       polariz=polariz, sh_l=sh_l)
     _write_xye(data_path, tt_r, y_r, sig_r)
 
     cif_paths = []
@@ -903,8 +942,8 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             tick_positions = [round(r[0], 3) for r in phase_refs]
             all_phase_refs.append(phase_refs)
 
-            # B_iso (average over atoms)
-            b_iso_avg = 0.5
+            # B_iso (average over atoms; falls back to DEFAULT_B_ISO)
+            b_iso_avg = DEFAULT_B_ISO
             try:
                 atoms = list(phase_obj.atoms())
                 if atoms:
@@ -985,13 +1024,24 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                     Y_d = inst['Y'] / 100.0
 
                     raw_profiles = []
-                    for i_ph, refs in enumerate(all_phase_refs):
-                        if not refs:
+                    for i_ph, (phase_obj_r, fallback_refs) in enumerate(
+                            zip(gsas_phases, all_phase_refs)):
+                        # Prefer GSAS-II's refined Fc² (more accurate than
+                        # our independently computed structure factors)
+                        refs_to_use = gsas_refs.get(
+                            phase_obj_r.name, fallback_refs) or fallback_refs
+                        if not refs_to_use:
                             raise ValueError(
                                 f"No reflections for phase {i_ph}")
+                        source = ("GSAS-II RefList"
+                                  if phase_obj_r.name in gsas_refs
+                                  else "generate_reflections")
+                        print(f"  Phase {i_ph}: using {source} "
+                              f"({len(refs_to_use)} reflections)",
+                              flush=True)
                         raw_profiles.append(
                             _compute_raw_phase_profile(
-                                tt_out, refs, U_d, V_d, W_d, X_d, Y_d))
+                                tt_out, refs_to_use, U_d, V_d, W_d, X_d, Y_d))
 
                     # Weight each profile by its refined scale factor
                     scaled = []
@@ -999,21 +1049,24 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                         s = raw_scales.get(phase_obj.name, 1.0)
                         scaled.append(prof * s)
 
-                    # Normalise so the sum matches the GSAS-II total
-                    # above background (preserves relative proportions)
-                    sum_all = sum(scaled)
-                    denom = np.sum(sum_all)
-                    if denom > 0:
-                        norm = np.sum(total_above_bg) / denom
-                        for sp in scaled:
-                            phase_patterns.append(
-                                np.maximum(sp * norm, 0.0).tolist())
-                        fc2_ok = True
-                        print("  Per-phase profile decomposition succeeded.",
-                              flush=True)
-                    else:
-                        raise ValueError(
-                            "Sum of scaled profiles is zero")
+                    # Pointwise proportional decomposition:
+                    # At each 2θ point, partition (y_calc - y_bg) according
+                    # to relative profile contributions.  This guarantees
+                    # sum(phase_patterns) == total_above_bg at every point,
+                    # so the stacked fills exactly match the I_calc line.
+                    sum_raw = np.zeros_like(tt_out, dtype=np.float64)
+                    for sp in scaled:
+                        sum_raw += sp
+                    peak_max = np.max(sum_raw) if np.max(sum_raw) > 0 else 1.0
+                    threshold = peak_max * 1e-10
+                    for sp in scaled:
+                        ratio = np.where(sum_raw > threshold,
+                                         sp / sum_raw, 0.0)
+                        phase_patterns.append(
+                            np.maximum(ratio * total_above_bg, 0.0).tolist())
+                    fc2_ok = True
+                    print("  Per-phase profile decomposition succeeded "
+                          "(pointwise).", flush=True)
                 except Exception as e_fc2:
                     print(f"  Fc²-based decomposition failed: {e_fc2}",
                           flush=True)

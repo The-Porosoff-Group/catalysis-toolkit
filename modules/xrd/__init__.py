@@ -595,6 +595,9 @@ def run(filepath, output_dir, metadata, params):
             tt, intensity, sigma, phases, wavelength,
             tt_min=tt_min, tt_max=tt_max,
             n_bg_coeffs=n_bg, max_cycles=max_outer * 3,
+            instprm_file=params.get('instprm_file'),
+            polariz=params.get('polariz'),
+            sh_l=params.get('sh_l'),
         )
     elif method == 'rietveld':
         # Check that all phases have atom sites (CIF text)
