@@ -811,23 +811,25 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
 
         # ── Background dip correction ──────────────────────────────────
         # The Chebyshev polynomial can create local dips where the
-        # optimizer trades intensity with peak tails.  Fix: compare
-        # y_bg against a wide Gaussian smooth of itself; dips in the
-        # Chebyshev curve will be below their own smoothed value and
-        # get corrected.  Both operands are smooth so the result is
-        # smooth — no jagged artefacts from data noise or peak bases.
-        _step = float(tt_out[1] - tt_out[0]) if len(tt_out) > 1 else 0.02
-        _sig  = max(3, int(10.0 / _step))          # 10° Gaussian sigma
-        _k    = min(3 * _sig, len(y_bg_out) // 2)
-        _kx   = np.arange(-_k, _k + 1, dtype=float)
-        _kern = np.exp(-0.5 * (_kx / _sig) ** 2)
-        _kern /= _kern.sum()
-        # Pad with edge values so the convolution doesn't see zeros
-        # beyond the array — eliminates the ~30° corruption zone that
-        # caused the visible baseline discontinuity.
-        _padded = np.pad(y_bg_out, _k, mode='edge')
-        _smooth_bg = np.convolve(_padded, _kern, mode='valid')
-        y_bg_out = np.maximum(y_bg_out, _smooth_bg)
+        # optimizer trades intensity with peak tails.  Fix: smooth
+        # and raise dips.  We detrend first (remove a low-order poly)
+        # so the Gaussian doesn't blur steep slopes at low 2θ into
+        # the 30-50° region.
+        if len(y_bg_out) >= 3:
+            _trend_coeffs = np.polyfit(tt_out, y_bg_out, 2)
+            _trend = np.polyval(_trend_coeffs, tt_out)
+            _resid = y_bg_out - _trend
+
+            _step = float(tt_out[1] - tt_out[0]) if len(tt_out) > 1 else 0.02
+            _sig  = max(3, int(10.0 / _step))          # 10° Gaussian sigma
+            _k    = min(3 * _sig, len(_resid) // 2)
+            if _k >= 1:
+                _kx   = np.arange(-_k, _k + 1, dtype=float)
+                _kern = np.exp(-0.5 * (_kx / _sig) ** 2)
+                _kern /= _kern.sum()
+                _padded = np.pad(_resid, _k, mode='edge')
+                _smooth_resid = np.convolve(_padded, _kern, mode='valid')
+                y_bg_out = _trend + np.maximum(_resid, _smooth_resid)
 
         diff_out = y_obs_out - y_calc_out
 
