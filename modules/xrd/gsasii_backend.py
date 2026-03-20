@@ -808,6 +808,22 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         y_obs_out = y_obs_full[rmask]
         y_calc_out = y_calc_full[rmask]
         y_bg_out = y_bg_full[rmask]
+
+        # ── Background floor correction ────────────────────────────────
+        # The Chebyshev polynomial can dip below the actual data baseline
+        # (trading intensity with peak tails).  In peak-free regions
+        # y_obs ≈ true background, so a rolling minimum of y_obs gives
+        # a physical lower bound.  Raising y_bg where it dips below this
+        # floor prevents phase fills from bulging into non-peak regions.
+        _step = float(tt_out[1] - tt_out[0]) if len(tt_out) > 1 else 0.02
+        _win = max(5, int(5.0 / _step))       # ~5° window
+        _half = _win // 2
+        _n = len(y_obs_out)
+        _floor = np.array([
+            np.min(y_obs_out[max(0, i - _half):min(_n, i + _half + 1)])
+            for i in range(_n)])
+        y_bg_out = np.maximum(y_bg_out, _floor)
+
         diff_out = y_obs_out - y_calc_out
 
         # Weights for statistics
