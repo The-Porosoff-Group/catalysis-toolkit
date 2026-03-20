@@ -808,6 +808,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         y_obs_out = y_obs_full[rmask]
         y_calc_out = y_calc_full[rmask]
         y_bg_out = y_bg_full[rmask]
+        _y_bg_gsas = y_bg_out.copy()   # preserve for unbiased phase isolation
 
         # ── Background dip correction ──────────────────────────────────
         # The Chebyshev polynomial can create local dips where the
@@ -1144,10 +1145,11 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                     histogram = gpx.histograms()[0]
 
                     y_calc_iso = np.array(histogram.getdata('ycalc'))
-                    # Use original background (captured before isolation
-                    # modifications) to avoid any background drift.
+                    # Use GSAS-II's original background (before our dip
+                    # correction) so the correction delta doesn't bias
+                    # phase ratios toward the dominant phase.
                     phase_pat = np.maximum(
-                        y_calc_iso[rmask] - y_bg_out, 0.0)
+                        y_calc_iso[rmask] - _y_bg_gsas, 0.0)
                     phase_patterns.append(phase_pat.tolist())
 
                     ph_name = (phase_results[i]['name']
