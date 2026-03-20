@@ -1041,13 +1041,19 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                     # (which re-reads the GPX file) picks them up.
                     gpx.save()
 
-                    # Recompute pattern (0 cycles = evaluate only)
-                    gpx.do_refinements([{'set': {}, 'cycles': 0}])
+                    # Recompute pattern — use cycles=1 with all params
+                    # fixed to ensure GSAS-II evaluates the forward model.
+                    gpx.do_refinements([{'set': {}, 'cycles': 1}])
+
+                    # Re-fetch histogram — do_refinements reloads the
+                    # project from disk, so the old reference may be stale.
+                    histogram = gpx.histograms()[0]
 
                     y_calc_iso = np.array(histogram.getdata('ycalc'))
-                    y_bg_iso = np.array(histogram.getdata('background'))
+                    # Use original background (captured before isolation
+                    # modifications) to avoid any background drift.
                     phase_pat = np.maximum(
-                        y_calc_iso[rmask] - y_bg_iso[rmask], 0.0)
+                        y_calc_iso[rmask] - y_bg_out, 0.0)
                     phase_patterns.append(phase_pat.tolist())
 
                     ph_name = (phase_results[i]['name']
@@ -1056,12 +1062,22 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                           f"max={np.max(phase_pat):.1f}, "
                           f"integrated={np.sum(phase_pat):.1f}", flush=True)
 
-                # Proportional normalization: ensure stacked fills sum
-                # exactly to total_above_bg at every point so that the
-                # fills match the I_calc line perfectly.
+                # Diagnostic: check whether isolation produced distinct
+                # patterns (if all are identical, isolation didn't work).
                 sum_iso = np.zeros_like(tt_out, dtype=np.float64)
                 for pp in phase_patterns:
                     sum_iso += np.array(pp)
+                max_diff = float(np.max(np.abs(
+                    sum_iso - total_above_bg)))
+                sum_total = float(np.sum(total_above_bg))
+                sum_iso_total = float(np.sum(sum_iso))
+                print(f"  Diagnostic: sum(iso)={sum_iso_total:.1f}, "
+                      f"sum(above_bg)={sum_total:.1f}, "
+                      f"max_pointwise_diff={max_diff:.2f}", flush=True)
+
+                # Proportional normalization: ensure stacked fills sum
+                # exactly to total_above_bg at every point so that the
+                # fills match the I_calc line perfectly.
                 for i_pp, pp in enumerate(phase_patterns):
                     pp_arr = np.array(pp)
                     ratio = np.zeros_like(sum_iso)
@@ -1071,17 +1087,17 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                         ratio * total_above_bg, 0.0).tolist()
 
                 decomp_ok = True
-                print("  Phase isolation succeeded — applied "
-                      "proportional normalization.", flush=True)
+                print("  Phase isolation succeeded.", flush=True)
             except Exception as e_iso:
                 print(f"  Phase isolation failed: {e_iso}", flush=True)
                 phase_patterns = []
             finally:
-                # Always restore original scales
+                # Always restore original scales and re-fetch histogram
                 for j, phase_obj in enumerate(gsas_phases):
                     hapData = list(phase_obj.data['Histograms'].values())[0]
                     hapData['Scale'] = orig_hap_scales[j]
                 gpx.save()
+                histogram = gpx.histograms()[0]
 
             # ── Fallback: profile reconstruction from reflections ────
             if not decomp_ok:
