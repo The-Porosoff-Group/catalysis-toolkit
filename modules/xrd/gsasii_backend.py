@@ -314,7 +314,7 @@ def _nnls(A, b):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _compute_raw_phase_profile(tt_arr, refs, U_deg, V_deg, W_deg,
-                                X_deg, Y_deg):
+                                X_deg, Y_deg, gaussian_only=False):
     """Compute a raw (unscaled) profile shape for one phase.
 
     Returns an array of the same length as *tt_arr* whose values are
@@ -322,6 +322,15 @@ def _compute_raw_phase_profile(tt_arr, refs, U_deg, V_deg, W_deg,
     absolute scale is arbitrary — what matters is the *relative* shape
     compared to other phases so that the proportional decomposition
     can correctly partition the total pattern.
+
+    Parameters
+    ----------
+    gaussian_only : bool
+        If True, use pure Gaussian profiles (eta=0) with a tighter
+        window (3×FWHM).  This eliminates the long Lorentzian tails
+        that cause cross-phase leakage artifacts in the proportional
+        decomposition, while preserving accurate peak localisation
+        for genuinely overlapping reflections.
 
     refs : list of [two_theta, d, (h,k,l), intensity_weight] from
            generate_reflections (with structure-factor filtering).
@@ -342,13 +351,14 @@ def _compute_raw_phase_profile(tt_arr, refs, U_deg, V_deg, W_deg,
             fwhm = max(caglioti_fwhm(tt_pos, U_deg, V_deg, W_deg), 0.005)
             eta = 0.5
 
+        if gaussian_only:
+            eta = 0.0
+
         sigma_g = fwhm / (2.0 * math.sqrt(2.0 * math.log(2.0)))
         gamma_l = fwhm / 2.0
-        # Window for profile evaluation.  With pointwise proportional
-        # decomposition the absolute scale doesn't matter, but a wider
-        # window captures more Lorentzian tail for accurate inter-phase
-        # allocation at overlapping regions.
-        window = 6.0 * fwhm
+        # Gaussian-only: 3×FWHM is sufficient (G ≈ 10⁻¹¹ at edge).
+        # Pseudo-Voigt: 6×FWHM captures Lorentzian tails.
+        window = 3.0 * fwhm if gaussian_only else 6.0 * fwhm
 
         msk = np.abs(tt_arr - tt_pos) < window
         if not msk.any():
@@ -356,8 +366,11 @@ def _compute_raw_phase_profile(tt_arr, refs, U_deg, V_deg, W_deg,
 
         dx = tt_arr[msk] - tt_pos
         G = np.exp(-0.5 * (dx / sigma_g) ** 2)
-        L = 1.0 / (1.0 + (dx / gamma_l) ** 2)
-        prof = eta * L + (1.0 - eta) * G
+        if eta > 0:
+            L = 1.0 / (1.0 + (dx / gamma_l) ** 2)
+            prof = eta * L + (1.0 - eta) * G
+        else:
+            prof = G
         # Normalise
         area = np.trapz(prof, tt_arr[msk]) if np.trapz(prof, tt_arr[msk]) > 0 else 1.0
         pattern[msk] += weight * prof / area
@@ -1023,6 +1036,11 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                     X_d = inst['X'] / 100.0     # centideg → deg
                     Y_d = inst['Y'] / 100.0
 
+                    # Use Gaussian-only profiles for decomposition to
+                    # eliminate Lorentzian tail leakage between phases.
+                    print("  Using Gaussian-only profiles for decomposition "
+                          "(no Lorentzian tails)", flush=True)
+
                     raw_profiles = []
                     for i_ph, (phase_obj_r, fallback_refs) in enumerate(
                             zip(gsas_phases, all_phase_refs)):
@@ -1041,36 +1059,35 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                               flush=True)
                         raw_profiles.append(
                             _compute_raw_phase_profile(
-                                tt_out, refs_to_use, U_d, V_d, W_d, X_d, Y_d))
+                                tt_out, refs_to_use, U_d, V_d, W_d, X_d, Y_d,
+                                gaussian_only=True))
 
                     # Weight each profile by its refined scale factor
                     scaled = []
-                    for phase_obj, prof in zip(gsas_phases, raw_profiles):
+                    for i_ph, (phase_obj, prof) in enumerate(
+                            zip(gsas_phases, raw_profiles)):
                         s = raw_scales.get(phase_obj.name, 1.0)
-                        scaled.append(prof * s)
+                        sp = prof * s
+                        nz = int(np.count_nonzero(sp))
+                        print(f"  Phase {i_ph}: max raw profile = "
+                              f"{np.max(sp):.4f}, non-zero points = {nz}",
+                              flush=True)
+                        scaled.append(sp)
 
                     # Pointwise proportional decomposition:
                     # At each 2θ point, partition (y_calc - y_bg) according
                     # to relative profile contributions.  This guarantees
                     # sum(phase_patterns) == total_above_bg at every point,
                     # so the stacked fills exactly match the I_calc line.
-
-                    # First, suppress negligible Lorentzian tail leakage.
-                    # Without this, a phase's distant tails can "claim" a
-                    # small fraction of another phase's strong peak,
-                    # producing visible jagged artifacts in the plot.
-                    for sp in scaled:
-                        sp_max = np.max(sp) if np.max(sp) > 0 else 1.0
-                        sp[sp < sp_max * 0.005] = 0.0
-
                     sum_raw = np.zeros_like(tt_out, dtype=np.float64)
                     for sp in scaled:
                         sum_raw += sp
                     peak_max = np.max(sum_raw) if np.max(sum_raw) > 0 else 1.0
                     threshold = peak_max * 1e-10
                     for sp in scaled:
-                        ratio = np.where(sum_raw > threshold,
-                                         sp / sum_raw, 0.0)
+                        ratio = np.zeros_like(sum_raw)
+                        np.divide(sp, sum_raw, out=ratio,
+                                  where=sum_raw > threshold)
                         phase_patterns.append(
                             np.maximum(ratio * total_above_bg, 0.0).tolist())
                     fc2_ok = True
