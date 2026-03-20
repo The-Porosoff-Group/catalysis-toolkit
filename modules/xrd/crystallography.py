@@ -232,6 +232,45 @@ def atomic_scattering_factor(element, s):
               + a3*math.exp(-b3*s2) + a4*math.exp(-b4*s2))
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# MOLAR MASS FROM CHEMICAL FORMULA
+# ─────────────────────────────────────────────────────────────────────────────
+
+_ATOMIC_MASS = {
+    'H':1.008,'He':4.003,'Li':6.941,'Be':9.012,'B':10.81,'C':12.01,'N':14.01,
+    'O':16.00,'F':19.00,'Ne':20.18,'Na':22.99,'Mg':24.31,'Al':26.98,'Si':28.09,
+    'P':30.97,'S':32.07,'Cl':35.45,'Ar':39.95,'K':39.10,'Ca':40.08,'Sc':44.96,
+    'Ti':47.87,'V':50.94,'Cr':52.00,'Mn':54.94,'Fe':55.85,'Co':58.93,'Ni':58.69,
+    'Cu':63.55,'Zn':65.38,'Ga':69.72,'Ge':72.63,'As':74.92,'Se':78.97,'Br':79.90,
+    'Rb':85.47,'Sr':87.62,'Y':88.91,'Zr':91.22,'Nb':92.91,'Mo':95.95,'Ru':101.1,
+    'Rh':102.9,'Pd':106.4,'Ag':107.9,'Cd':112.4,'In':114.8,'Sn':118.7,'Sb':121.8,
+    'Te':127.6,'I':126.9,'Cs':132.9,'Ba':137.3,'La':138.9,'Ce':140.1,'Pr':140.9,
+    'Nd':144.2,'Sm':150.4,'Eu':152.0,'Gd':157.3,'Tb':158.9,'Dy':162.5,'Ho':164.9,
+    'Er':167.3,'Tm':168.9,'Yb':173.0,'Lu':175.0,'Hf':178.5,'Ta':180.9,'W':183.8,
+    'Re':186.2,'Os':190.2,'Ir':192.2,'Pt':195.1,'Au':197.0,'Hg':200.6,'Tl':204.4,
+    'Pb':207.2,'Bi':209.0,'Th':232.0,'U':238.0,
+}
+
+
+def molar_mass_from_formula(formula):
+    """
+    Parse a chemical formula string and return molar mass in g/mol.
+    Handles CIF-style formulas like 'Mo2 C1', 'Fe3 O4', 'Si O2'.
+    Returns None if formula cannot be parsed.
+    """
+    if not formula:
+        return None
+    total = 0.0
+    # Match element symbol + optional count (integer or decimal)
+    for el, count in re.findall(r'([A-Z][a-z]?)\s*(\d*\.?\d*)', formula):
+        mass = _ATOMIC_MASS.get(el)
+        if mass is None:
+            return None
+        n = float(count) if count else 1.0
+        total += mass * n
+    return total if total > 0 else None
+
+
 def structure_factor_sq(h, k, l, sites, sin_theta_over_lambda):
     """
     Compute |F(hkl)|² from a list of atom sites.
@@ -450,7 +489,7 @@ def compute_rietveld_intensities(refs, sites, B_iso_map=None):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PEAK SHAPE: PSEUDO-VOIGT + CAGLIOTI
+# PEAK SHAPE: THOMPSON-COX-HASTINGS PSEUDO-VOIGT
 # ─────────────────────────────────────────────────────────────────────────────
 
 def caglioti_fwhm(two_theta_deg, U, V, W):
@@ -464,6 +503,52 @@ def caglioti_fwhm(two_theta_deg, U, V, W):
     if fwhm2 <= 0:
         return 0.01
     return math.sqrt(fwhm2)
+
+
+def tch_fwhm_eta(two_theta_deg, U, V, W, X, Y):
+    """
+    Thompson-Cox-Hastings pseudo-Voigt profile parameters.
+
+    Gaussian FWHM:  H_G² = U·tan²θ + V·tanθ + W
+    Lorentzian FWHM: H_L = X·tanθ + Y/cosθ
+
+    Where:
+      U = Gaussian micro-strain broadening
+      V, W = instrumental Gaussian parameters
+      X = Lorentzian micro-strain broadening
+      Y = Lorentzian size broadening (Scherrer term: Y = Kλ/L in degrees)
+
+    Returns (total_FWHM, eta) using the TCH mixing approximation.
+    """
+    theta = math.radians(two_theta_deg / 2)
+    tan_t = math.tan(theta)
+    cos_t = math.cos(theta)
+
+    # Gaussian component
+    hg2 = U * tan_t**2 + V * tan_t + W
+    H_G = math.sqrt(max(hg2, 1e-8))
+
+    # Lorentzian component
+    H_L = max(X * tan_t + Y / max(cos_t, 1e-8), 1e-6)
+
+    # TCH approximation for total FWHM  (Thompson, Cox & Hastings 1987)
+    hg5 = H_G**5
+    hl5 = H_L**5
+    H5 = (hg5
+           + 2.69269 * H_G**4 * H_L
+           + 2.42843 * H_G**3 * H_L**2
+           + 4.47163 * H_G**2 * H_L**3
+           + 0.07842 * H_G    * H_L**4
+           + hl5)
+    H = H5 ** 0.2  # fifth root
+
+    # Mixing parameter η  (fraction Lorentzian)
+    q = H_L / max(H, 1e-8)
+    eta = max(0.0, min(1.0,
+              1.36603 * q - 0.47719 * q**2 + 0.11116 * q**3))
+
+    return max(H, 0.005), eta
+
 
 def pseudo_voigt(x, x0, fwhm, eta):
     """
@@ -480,24 +565,35 @@ def pseudo_voigt(x, x0, fwhm, eta):
     return eta * lor + (1 - eta) * gauss
 
 def compute_phase_pattern(two_theta_array, reflections, scale,
-                           U, V, W, eta, two_theta_zero=0.0):
+                           U, V, W, eta=None, two_theta_zero=0.0,
+                           X=0.0, Y=0.0):
     """
     Compute the simulated intensity pattern for one phase.
+
+    Profile model:
+      If X or Y are non-zero, uses TCH pseudo-Voigt where eta is computed
+      per-peak from the Gaussian (U,V,W) and Lorentzian (X,Y) widths.
+      Otherwise falls back to fixed-eta Caglioti pseudo-Voigt.
+
     reflections: output of generate_reflections()
     Returns array of intensities same shape as two_theta_array.
     """
+    use_tch = (X != 0.0 or Y != 0.0)
     pattern = np.zeros_like(two_theta_array)
     tt_shifted = two_theta_array - two_theta_zero
 
     for tt_peak, d, hkl, mult in reflections:
-        fwhm = caglioti_fwhm(tt_peak, U, V, W)
-        fwhm = max(fwhm, 0.005)
+        if use_tch:
+            fwhm, eta_pk = tch_fwhm_eta(tt_peak, U, V, W, X, Y)
+        else:
+            fwhm = max(caglioti_fwhm(tt_peak, U, V, W), 0.005)
+            eta_pk = eta if eta is not None else 0.5
         # Only compute within ±20*fwhm of peak centre (efficiency)
         window = 20 * fwhm
         mask = np.abs(tt_shifted - tt_peak) < window
         if not mask.any():
             continue
-        profile = pseudo_voigt(tt_shifted[mask], tt_peak, fwhm, eta)
+        profile = pseudo_voigt(tt_shifted[mask], tt_peak, fwhm, eta_pk)
         # Lorentz-polarisation factor
         theta_r = math.radians(tt_peak / 2)
         cos2t    = math.cos(math.radians(tt_peak))
@@ -549,6 +645,66 @@ def scherrer_size(fwhm_deg, two_theta_deg, wavelength, K=0.94):
     return K * wavelength / (beta_rad * math.cos(theta_rad))
 
 
+def size_from_Y(Y_deg, wavelength, K=0.94):
+    """
+    Extract crystallite size directly from the TCH Lorentzian size parameter Y.
+
+    In the TCH model, Y/cosθ is the Lorentzian size contribution to FWHM,
+    which is exactly the Scherrer term:  Y = Kλ / (L · π/180)
+    Solving: L = Kλ / (Y · π/180)
+
+    Returns crystallite size L in Å, or None if Y ≤ 0.
+    """
+    if Y_deg <= 0:
+        return None
+    return K * wavelength / math.radians(Y_deg)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SYMMETRY EXPANSION
+# ─────────────────────────────────────────────────────────────────────────────
+
+def expand_sites_from_cif(cif_text):
+    """Expand CIF asymmetric-unit sites to the full unit cell using pymatgen.
+
+    CIF files from COD and many databases list only the *asymmetric unit*.
+    Computing |F(hkl)|² from those sites alone gives incorrect structure
+    factors (e.g. F(110)≠0 for A15-W when it should be 0).
+
+    Returns a list of (element, x, y, z, occupancy) tuples covering the
+    full conventional unit cell, or *None* if expansion fails.
+    """
+    if not cif_text:
+        return None
+    try:
+        from pymatgen.io.cif import CifParser
+        try:
+            parser = CifParser.from_str(cif_text, occupancy_tolerance=100.0)
+        except (AttributeError, TypeError):
+            import tempfile as _tf, os as _os
+            _fd, _tmp = _tf.mkstemp(suffix='.cif')
+            with _os.fdopen(_fd, 'w') as _f:
+                _f.write(cif_text)
+            parser = CifParser(_tmp, occupancy_tolerance=100.0)
+            _os.unlink(_tmp)
+        structs = parser.parse_structures(primitive=False)
+        if structs:
+            sites = []
+            for site in structs[0]:
+                frac = site.frac_coords % 1.0
+                el = str(site.specie)
+                occ = 1.0
+                if hasattr(site, 'properties') and 'occupancy' in site.properties:
+                    occ = float(site.properties['occupancy'])
+                sites.append((el, float(frac[0]), float(frac[1]),
+                              float(frac[2]), occ))
+            if sites:
+                return sites
+    except Exception:
+        pass
+    return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CIF PARSER
 # ─────────────────────────────────────────────────────────────────────────────
@@ -573,6 +729,7 @@ def parse_cif(cif_text):
         'formula': '',
         'cod_id': '',
         'sites': [],
+        'Z': None,
     }
 
     def parse_val(s):
@@ -617,6 +774,9 @@ def parse_cif(cif_text):
             parts = line.split(None, 1)
             if len(parts) > 1:
                 result['formula'] = parts[1].strip().strip("'\"")
+        elif line.startswith('_cell_formula_units_Z'):
+            v = parse_val(line.split()[-1])
+            if v: result['Z'] = int(v)
 
     # ── Pass 2: parse atom_site loop ─────────────────────────────────────
     sites = _parse_atom_site_loop(lines, parse_val)

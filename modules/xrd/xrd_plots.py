@@ -89,14 +89,19 @@ def make_xrd_plot(result, metadata, output_path):
     ax_main.plot(tt, y_bg, color=MUT, linewidth=0.8,
                  linestyle='--', alpha=0.7, label='Background', zorder=2)
 
-    # Per-phase patterns on main panel (shaded fills)
+    # Per-phase patterns on main panel (stacked shaded fills)
+    # Stack phases on top of each other so they don't overlap —
+    # each phase's fill starts where the previous one ended.
+    cumulative = np.array(y_bg, dtype=float)
     for i, (ph, pat) in enumerate(zip(phases, result['phase_patterns'])):
         color = PHASE_COLORS[i % len(PHASE_COLORS)]
         pat_arr = np.array(pat)
-        ax_main.fill_between(tt, y_bg, y_bg + pat_arr,
-                              color=color, alpha=0.18, zorder=1)
-        ax_main.plot(tt, y_bg + pat_arr, color=color,
+        new_top = cumulative + pat_arr
+        ax_main.fill_between(tt, cumulative, new_top,
+                              color=color, alpha=0.25, zorder=1)
+        ax_main.plot(tt, new_top, color=color,
                      linewidth=0.7, alpha=0.6, zorder=2)
+        cumulative = new_top
 
     # Stats annotation
     stats_str = (f"$R_{{wp}}$ = {stats['Rwp']}%   "
@@ -129,10 +134,10 @@ def make_xrd_plot(result, metadata, output_path):
     ]
     for i, ph in enumerate(phases):
         c  = PHASE_COLORS[i % len(PHASE_COLORS)]
-        sg = ph.get('spacegroup', '') or f"#{ph.get('spacegroup_number','')}"
         wt = ph.get('weight_fraction_%', '')
         wt_str = f"  {wt} wt%" if wt != '' else ''
-        label  = f"{ph['name']}  {sg}{wt_str}"
+        # ph['name'] already includes the space group for disambiguation
+        label  = f"{ph['name']}{wt_str}"
         handles.append(Line2D([0],[0], color=c, lw=2, label=label))
     ax_main.legend(handles=handles, fontsize=7, ncol=min(len(handles), 4),
                    facecolor='#1c2128', edgecolor=GRID, labelcolor=TEXT,
@@ -153,11 +158,10 @@ def make_xrd_plot(result, metadata, output_path):
         for tt_tick in ticks:
             ax_ticks.axvline(tt_tick, ymin=y_pos-0.08, ymax=y_pos+0.08,
                               color=color, linewidth=1.0, alpha=0.8)
-        # Phase label: name + space group + wt%
-        sg   = ph.get('spacegroup', '') or f"#{ph.get('spacegroup_number','')}"
+        # Phase label: name (already includes SG) + wt%
         wt   = ph.get('weight_fraction_%', '')
         wt_str = f"  {wt} wt%" if wt != '' else ''
-        label  = f"{ph['name']}  {sg}{wt_str}"
+        label  = f"{ph['name']}{wt_str}"
         ax_ticks.text(0.005, y_pos, label,
                       transform=ax_ticks.transAxes,
                       ha='left', va='center', fontsize=7,

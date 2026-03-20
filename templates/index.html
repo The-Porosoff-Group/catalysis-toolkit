@@ -523,17 +523,25 @@
             <div id="xrd-preview-wrap" style="display:none;">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
                 <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;">Data Preview</span>
-                <span style="font-size:10px;color:var(--muted);">Scroll to zoom · drag to pan · double-click to reset</span>
+                <span id="xrd-preview-hint" style="font-size:10px;color:var(--muted);">Scroll to zoom · drag to pan · double-click to reset</span>
               </div>
-              <canvas id="xrd-preview-canvas"
-                      style="width:100%;height:280px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;cursor:crosshair;"
-                      onwheel="previewZoom(event)"
-                      onmousedown="previewPanStart(event)"
-                      onmousemove="previewPanMove(event)"
-                      onmouseup="previewPanEnd()"
-                      onmouseleave="previewPanEnd()"
-                      ondblclick="previewResetZoom()">
-              </canvas>
+              <div style="position:relative;">
+                <canvas id="xrd-preview-canvas"
+                        style="width:100%;height:280px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;cursor:crosshair;"
+                        onwheel="previewZoom(event)"
+                        onmousedown="previewPanStart(event)"
+                        onmousemove="previewPanMove(event)"
+                        onmouseup="previewPanEnd()"
+                        onmouseleave="previewPanEnd()"
+                        ondblclick="previewResetZoom()">
+                </canvas>
+                <div id="xrd-preview-overlay"
+                     style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+                            background:var(--surface2);border:1px solid var(--border);border-radius:6px;
+                            font-size:13px;color:var(--muted);pointer-events:none;">
+                  Loading preview…
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -586,6 +594,17 @@
                 <option value="14">14 — supported catalyst (SiO₂, Al₂O₃)</option>
                 <option value="20">20 — heavy amorphous background</option>
               </select>
+            </div>
+            <div class="form-group" id="instprm-group" style="display:none;">
+              <label title="Upload a GSAS-II .instprm file from your instrument calibration. If not provided, default profile parameters will be used as starting guesses (U=2, V=−2, W=5) and refined during fitting.">
+                Instrument Parameters <span style="color:var(--muted);font-weight:400;"> — optional, GSAS-II only</span>
+              </label>
+              <input type="file" id="xrd-instprm-file" accept=".instprm,.prm,.inst"
+                     style="font-size:12px;">
+              <span style="font-size:11px;color:var(--muted);">
+                Upload your GSAS-II .instprm file for accurate profile parameters.
+                Without this, default values are used as initial guesses and refined.
+              </span>
             </div>
           </div>
         </div>
@@ -711,11 +730,15 @@
             <button class="btn-process" id="btn-xrd-rietveld" onclick="runXRD('rietveld')" style="background:linear-gradient(135deg,#238636,#2ea043);">
               <span>🔬</span> Rietveld Refinement
             </button>
+            <button class="btn-process" id="btn-xrd-gsas2" onclick="runXRD('gsas2')" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);display:none;" title="Requires GSAS-II installation">
+              <span>🔬</span> GSAS-II Refinement
+            </button>
             <button class="btn-sm" onclick="resetXRD()" title="Clear everything and start fresh">↺ Reset</button>
           </div>
           <div style="font-size:11px;color:var(--muted);line-height:1.4;">
             <b>Le Bail</b> — free peak intensities, good for phase ID and cell params.<br>
-            <b>Rietveld</b> — structure-constrained intensities (requires CIF with atom positions), better intensity balance.
+            <b>Rietveld</b> — structure-constrained intensities (requires CIF with atom positions), better intensity balance.<br>
+            <b>GSAS-II</b> — full-featured Rietveld via GSAS-II engine (requires separate install).
           </div>
 
           <div class="progress-wrap" id="xrd-progress-wrap">
@@ -939,7 +962,7 @@ function showResults(data) {
   const dlRow = document.getElementById('download-row');
   dlRow.innerHTML = `
     <button class="btn-sm green" onclick="openFolder('${escPath(data.output_dir)}')">📁 Open Output Folder</button>
-    <button class="btn-sm" onclick="downloadFile('${escPath(data.summary_path)}')">⬇ Summary CSV</button>
+    <button class="btn-sm" onclick="downloadFile('${escPath(data.summary_path)}')">⬇ Summary Excel</button>
     <button class="btn-sm" onclick="downloadFile('${escPath(data.flows_path)}')">⬇ Flow Data CSV</button>
   `;
 
@@ -977,22 +1000,44 @@ let _stickPhases  = [];     // [{name, color, sticks:[{two_theta,rel_int,hkl}]}]
 const PHASE_COLORS = ['#f78166','#56d364','#e3b341','#bc8cff','#79c0ff','#ffa657'];
 
 async function loadXrdPreview(file) {
+  const wrap    = document.getElementById('xrd-preview-wrap');
+  const overlay = document.getElementById('xrd-preview-overlay');
+  const hint    = document.getElementById('xrd-preview-hint');
+
+  // Show wrapper immediately with loading state
+  wrap.style.display = 'block';
+  overlay.style.display = 'flex';
+  overlay.textContent   = 'Loading preview…';
+  overlay.style.color   = 'var(--muted)';
+  hint.textContent      = '';
+
   const fd = new FormData();
   fd.append('file', file);
   try {
     const resp = await fetch('/api/xrd/preview', {method:'POST', body:fd});
     const data = await resp.json();
-    if (data.error) return;
+    if (data.error) {
+      console.error('XRD preview error:', data.error);
+      overlay.textContent = 'Preview unavailable: ' + data.error;
+      overlay.style.color = '#f78166';
+      return;
+    }
     _previewData = data;
     _previewView = {
       xMin: data.tt_min, xMax: data.tt_max,
       yMin: 0,           yMax: data.y_max * 1.15,
     };
     _stickPhases = [];
-    document.getElementById('xrd-preview-wrap').style.display = 'block';
+    // Hide overlay and show controls hint
+    overlay.style.display = 'none';
+    hint.textContent      = 'Scroll to zoom · drag to pan · double-click to reset';
     // Delay draw until browser has reflowed (getBoundingClientRect returns 0 otherwise)
     requestAnimationFrame(() => { requestAnimationFrame(() => { drawPreview(); }); });
-  } catch(e) { /* silent — preview is optional */ }
+  } catch(e) {
+    console.error('XRD preview fetch failed:', e);
+    overlay.textContent = 'Could not load preview — check console for details.';
+    overlay.style.color = '#f78166';
+  }
 }
 
 function drawPreview() {
@@ -1090,18 +1135,30 @@ function drawPreview() {
       ctx.globalAlpha = 1.0;
     }
 
-    // Phase label at top-right of tick region
-    if (phase.sticks.length > 0) {
-      const visSticks = phase.sticks.filter(s => s.two_theta >= xMin && s.two_theta <= xMax);
-      if (visSticks.length > 0) {
-        const labelX = xScale(visSticks[visSticks.length-1].two_theta);
-        ctx.fillStyle  = phase.color;
-        ctx.font       = '10px sans-serif';
-        ctx.textAlign  = 'left';
-        ctx.globalAlpha = 0.9;
-        ctx.fillText(phase.name, Math.min(labelX + 4, W - 60), PAD.t + ph * 0.12 + _stickPhases.indexOf(phase) * 14);
-        ctx.globalAlpha = 1.0;
-      }
+  }
+
+  // ── Fixed legend for stick phases (top-right corner) ──────────────
+  if (_stickPhases.length > 0) {
+    const legendX = PAD.l + pw - 6;
+    const legendY0 = PAD.t + 6;
+    const lineH = 14;
+    ctx.textAlign  = 'right';
+    ctx.font       = '10px sans-serif';
+    for (let pi = 0; pi < _stickPhases.length; pi++) {
+      const p = _stickPhases[pi];
+      const ly = legendY0 + pi * lineH;
+      // Small colored line
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth   = 2;
+      ctx.globalAlpha = 0.9;
+      ctx.beginPath();
+      ctx.moveTo(legendX - ctx.measureText(p.name).width - 14, ly);
+      ctx.lineTo(legendX - ctx.measureText(p.name).width - 4, ly);
+      ctx.stroke();
+      // Label
+      ctx.fillStyle   = p.color;
+      ctx.fillText(p.name, legendX, ly + 3);
+      ctx.globalAlpha = 1.0;
     }
   }
 
@@ -1120,8 +1177,12 @@ function addStickPhase(phase) {
   // Color index matches position in xrdPhases array for consistency
   const colorIdx = (xrdPhases.findIndex(p => (p.mp_id||p.cod_id) === phaseId));
   const ci = colorIdx >= 0 ? colorIdx : _stickPhases.length;
+  // Build label: formula + space group (disambiguates same-formula phases)
+  let label = phase.name || phase.formula || phaseId;
+  const sg = phase.spacegroup || '';
+  if (sg && !label.includes(sg)) label += ' ' + sg;
   _stickPhases.push({
-    name:   phase.name || phase.formula || phaseId,
+    name:   label,
     cod_id: phaseId,
     color:  PHASE_COLORS[ci % PHASE_COLORS.length],
     sticks: sticks,
@@ -1304,6 +1365,20 @@ function updateSourceBadge() {
 // Set initial badge state
 document.addEventListener('DOMContentLoaded', () => {
   updateSourceBadge();
+
+  // Check GSAS-II availability and show/hide button
+  fetch('/api/xrd/gsas2_status')
+    .then(r => r.json())
+    .then(data => {
+      if (data.available) {
+        const btn = document.getElementById('btn-xrd-gsas2');
+        if (btn) btn.style.display = '';
+        // Show instrument parameter file upload (GSAS-II only)
+        const instGrp = document.getElementById('instprm-group');
+        if (instGrp) instGrp.style.display = '';
+      }
+    })
+    .catch(() => {});  // silently ignore if endpoint not available
 });
 
 // ── COD Search ─────────────────────────────────────────────────────────────
@@ -1544,6 +1619,7 @@ function renderSelectedPhases() {
     const div = document.createElement('div');
     div.style.cssText = `display:flex;align-items:center;gap:10px;padding:8px 14px;
       background:var(--surface2);border:1px solid ${c};border-radius:6px;`;
+    const zVal = ph.Z || '';
     div.innerHTML = `
       <span style="width:10px;height:10px;border-radius:50%;background:${c};flex-shrink:0;"></span>
       <span style="font-family:var(--mono);font-size:13px;font-weight:700;">${ph.formula||ph.name}</span>
@@ -1552,6 +1628,10 @@ function renderSelectedPhases() {
         a=${parseFloat(ph.a||0).toFixed(3)} c=${parseFloat(ph.c||0).toFixed(3)} Å
       </span>
       ${ph.cif_text ? '<span class="pill green" style="font-size:10px;padding:2px 8px;">CIF ✓</span>' : ''}
+      <label style="font-size:10px;color:var(--muted);display:flex;align-items:center;gap:4px;" title="Formula units per unit cell (Z) — needed for accurate weight fractions via Hill & Howard method">
+        Z=<input type="number" min="1" max="200" value="${zVal}" placeholder="?" style="width:40px;font-size:11px;padding:1px 4px;background:var(--surface);border:1px solid var(--border);color:var(--fg);border-radius:3px;"
+          onchange="xrdPhases[${i}].Z=parseInt(this.value)||null">
+      </label>
       <span style="margin-left:auto;font-size:11px;color:var(--muted);">COD ${ph.cod_id}</span>
       <button class="btn-sm" style="padding:3px 8px;font-size:11px;" onclick="removePhase(${i})">✕</button>`;
     cont.appendChild(div);
@@ -1569,10 +1649,20 @@ async function runXRD(method) {
 
   document.getElementById('btn-xrd').disabled = true;
   document.getElementById('btn-xrd-rietveld').disabled = true;
+  const gsas2Btn = document.getElementById('btn-xrd-gsas2');
+  if (gsas2Btn) gsas2Btn.disabled = true;
   document.getElementById('xrd-progress-wrap').classList.add('visible');
 
-  const methodLabel = method === 'rietveld' ? 'Rietveld' : 'Le Bail';
-  const steps = method === 'rietveld' ? [
+  const methodLabel = {rietveld:'Rietveld', gsas2:'GSAS-II'}[method] || 'Le Bail';
+  const steps = method === 'gsas2' ? [
+    'Parsing data file...',
+    'Validating CIF structures...',
+    'GSAS-II: building project...',
+    'GSAS-II: refining background + scale...',
+    'GSAS-II: refining profile parameters...',
+    'GSAS-II: refining cell + atoms...',
+    'Extracting results and generating plots...',
+  ] : method === 'rietveld' ? [
     'Parsing data file...',
     'Validating phase structures...',
     'Computing structure factors from CIF...',
@@ -1609,13 +1699,23 @@ async function runXRD(method) {
     fd.append('n_bg_coeffs', document.getElementById('xrd-bg-coeffs').value || '10');
     fd.append('output_dir',  document.getElementById('xrd-output-dir').value);
     fd.append('method',      method);
+    // Include instrument parameter file if provided (GSAS-II only)
+    const instprmInput = document.getElementById('xrd-instprm-file');
+    if (instprmInput && instprmInput.files.length > 0) {
+      fd.append('instprm_file', instprmInput.files[0]);
+    }
     // Send phases WITHOUT cif_text (server pulls from cache)
     const phases_stripped = xrdPhases.map(p => {
       const {cif_text, ...rest} = p; return rest;
     });
     fd.append('phases', JSON.stringify(phases_stripped));
 
-    const resp = await fetch('/api/process_xrd', {method:'POST', body:fd});
+    // 5-minute timeout — refinements can be slow, especially without MKL numpy
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 300000);
+
+    const resp = await fetch('/api/process_xrd', {method:'POST', body:fd, signal: controller.signal});
+    clearTimeout(timeout);
     const data = await resp.json();
     clearInterval(timer);
     document.getElementById('xrd-progress-wrap').classList.remove('visible');
@@ -1624,16 +1724,29 @@ async function runXRD(method) {
       showXrdError(data.error + (data.trace ? '\n\n' + data.trace : ''));
       document.getElementById('btn-xrd').disabled = false;
       document.getElementById('btn-xrd-rietveld').disabled = false;
+      if (document.getElementById('btn-xrd-gsas2')) document.getElementById('btn-xrd-gsas2').disabled = false;
       return;
     }
     showXRDResults(data);
   } catch(e) {
     clearInterval(timer);
     document.getElementById('xrd-progress-wrap').classList.remove('visible');
-    showXrdError('Unexpected error: ' + e.message);
+    if (e.name === 'AbortError') {
+      showXrdError('Refinement timed out after 5 minutes.\n\n'
+        + 'Try reducing the 2θ range, using fewer phases, or using Le Bail instead of Rietveld.\n'
+        + 'If running via "python app.py", use run.bat instead — it sets up an optimised environment.');
+    } else if (e.message === 'Failed to fetch') {
+      showXrdError('Connection to server lost during refinement.\n\n'
+        + 'The server may have crashed or restarted. Check the terminal/command prompt for error details.\n\n'
+        + 'If you ran "python app.py" directly, try using run.bat instead — it ensures all dependencies '
+        + 'are correctly installed in an isolated environment.');
+    } else {
+      showXrdError('Unexpected error: ' + e.message);
+    }
   }
   document.getElementById('btn-xrd').disabled = false;
   document.getElementById('btn-xrd-rietveld').disabled = false;
+  if (document.getElementById('btn-xrd-gsas2')) document.getElementById('btn-xrd-gsas2').disabled = false;
 }
 
 function showXRDResults(data) {
@@ -1690,7 +1803,9 @@ function showXRDResults(data) {
           <div><span style="color:var(--muted);">γ = </span>${ph.gamma}°</div>
           <div><span style="color:var(--muted);">Size = </span>${ph.crystallite_size_nm ?? '—'} nm</div>
           <div><span style="color:var(--muted);">FWHM = </span>${ph.fwhm_deg}°</div>
-          <div><span style="color:var(--muted);">η = </span>${ph.eta}</div>
+          <div><span style="color:var(--muted);">η = </span>${ph.eta_at_strongest ?? ph.eta ?? '—'}</div>
+          ${ph.Y != null ? `<div><span style="color:var(--muted);">Y = </span>${ph.Y} (size)</div>` : ''}
+          ${ph.X != null ? `<div><span style="color:var(--muted);">X = </span>${ph.X} (strain)</div>` : ''}
           <div><span style="color:var(--muted);">Wt% ≈ </span>${ph['weight_fraction_%']}%</div>
         </div>
       </div>`;
@@ -1706,7 +1821,7 @@ function showXRDResults(data) {
   // Downloads
   document.getElementById('xrd-download-row').innerHTML = `
     <button class="btn-sm green" onclick="openFolder('${escPath(data.output_dir)}')">📁 Open Folder</button>
-    <button class="btn-sm" onclick="downloadFile('${escPath(data.summary_path)}')">⬇ Summary CSV</button>`;
+    <button class="btn-sm" onclick="downloadFile('${escPath(data.summary_path)}')">⬇ Summary Excel</button>`;
 
   panel.scrollIntoView({behavior:'smooth', block:'start'});
 }
@@ -1718,6 +1833,8 @@ function resetXRD() {
   // Reset preview plot
   _previewData = null; _stickPhases = [];
   document.getElementById('xrd-preview-wrap').style.display = 'none';
+  document.getElementById('xrd-preview-overlay').style.display = 'flex';
+  document.getElementById('xrd-preview-overlay').textContent   = 'Loading preview…';
   const canvas = document.getElementById('xrd-preview-canvas');
   if (canvas) { const ctx = canvas.getContext('2d'); ctx.clearRect(0,0,canvas.width,canvas.height); }
 

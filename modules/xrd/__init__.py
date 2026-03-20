@@ -266,11 +266,13 @@ def validate_phases(phases, fetch_missing=True):
                 parsed = parse_cif(cif_text)
                 # Only fill fields that are missing or None
                 for key in ['a','b','c','alpha','beta','gamma',
-                            'spacegroup_number','system']:
+                            'spacegroup_number','system','Z']:
                     if ph.get(key) is None and parsed.get(key) is not None:
                         ph[key] = parsed[key]
                 if not ph.get('name'):
                     ph['name'] = parsed.get('formula', 'Phase')
+                if not ph.get('formula') and parsed.get('formula'):
+                    ph['formula'] = parsed['formula']
             except Exception:
                 pass
 
@@ -281,7 +283,7 @@ def validate_phases(phases, fetch_missing=True):
             try:
                 full = fetch_cif(str(ph['cod_id']))
                 for key in ['a','b','c','alpha','beta','gamma',
-                            'spacegroup_number','system','formula']:
+                            'spacegroup_number','system','formula','Z']:
                     if ph.get(key) is None and full.get(key) is not None:
                         ph[key] = full[key]
                 # Also keep the CIF text for pymatgen
@@ -327,6 +329,209 @@ def validate_phases(phases, fetch_missing=True):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SUMMARY EXPORT
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _write_summary_xlsx(result, metadata, method_label, output_dir):
+    """Write an Excel workbook with two sheets:
+      Sheet 1 ('Summary')   – transposed: parameters as rows, phases as columns
+      Sheet 2 ('Plot Data') – X/Y arrays + per-phase peak positions with [hkl]
+    """
+    import pandas as pd
+
+    phases = result['phase_results']
+    stats  = result['statistics']
+
+    # ── Sheet 1: Transposed summary ──────────────────────────────────────
+    # Define the parameters we want to show (order matters)
+    param_keys = [
+        ('sample',             'Sample'),
+        ('method',             'Method'),
+        ('name',               'Phase name'),
+        ('cod_id',             'COD / MP ID'),
+        ('formula',            'Formula'),
+        ('spacegroup',         'Space group'),
+        ('spacegroup_number',  'Space group #'),
+        ('system',             'Crystal system'),
+        ('a',                  'a (Å)'),
+        ('b',                  'b (Å)'),
+        ('c',                  'c (Å)'),
+        ('alpha',              'α (°)'),
+        ('beta',               'β (°)'),
+        ('gamma',              'γ (°)'),
+        ('weight_fraction_%',  'Weight fraction (%)'),
+        ('crystallite_size_nm','Crystallite size (nm)'),
+        ('scale',              'Scale factor'),
+        ('U',                  'U (Caglioti)'),
+        ('V',                  'V (Caglioti)'),
+        ('W',                  'W (Caglioti)'),
+        ('X',                  'X (Lorentzian)'),
+        ('Y',                  'Y (Lorentzian)'),
+        ('eta_at_strongest',   'η at strongest'),
+        ('fwhm_deg',           'FWHM (°)'),
+        ('n_reflections',      'N reflections'),
+        ('seeded_by',          'Seeded by'),
+    ]
+    # Add statistics
+    stat_keys = [
+        ('Rwp',  'Rwp (%)'),
+        ('Rp',   'Rp (%)'),
+        ('chi2', 'χ²'),
+        ('GoF',  'GoF'),
+    ]
+
+    # Deduplicate phase column names (e.g., two phases both named "W")
+    col_names = []
+    seen_names = {}
+    for i, ph in enumerate(phases):
+        base = ph.get('name', f'Phase {i+1}')
+        if base in seen_names:
+            seen_names[base] += 1
+            col_names.append(f"{base} ({ph.get('spacegroup', seen_names[base])})")
+        else:
+            seen_names[base] = 1
+            col_names.append(base)
+    # If all ended up the same, append index
+    if len(set(col_names)) < len(col_names):
+        col_names = [f"{ph.get('name', f'Phase {i+1}')} #{i+1}"
+                     for i, ph in enumerate(phases)]
+
+    rows_data = []
+    for key, label in param_keys:
+        row = {'Parameter': label}
+        for i, ph in enumerate(phases):
+            if key == 'sample':
+                row[col_names[i]] = metadata.get('sample_id', '')
+            elif key == 'method':
+                row[col_names[i]] = method_label
+            else:
+                row[col_names[i]] = ph.get(key, '')
+        rows_data.append(row)
+
+    # Add zero shift (shared)
+    zs_row = {'Parameter': 'Zero shift (°)'}
+    for i, ph in enumerate(phases):
+        zs_row[col_names[i]] = result['zero_shift']
+    rows_data.append(zs_row)
+
+    for key, label in stat_keys:
+        row = {'Parameter': label}
+        for i, ph in enumerate(phases):
+            row[col_names[i]] = stats.get(key, '')
+        rows_data.append(row)
+
+    df_summary = pd.DataFrame(rows_data)
+
+    # ── Sheet 2: Plot data + peak positions ──────────────────────────────
+    tt = result.get('tt', [])
+    n_pts = len(tt)
+    plot_dict = {
+        '2theta':     tt,
+        'Y_obs':      result.get('y_obs', [])[:n_pts],
+        'Y_calc':     result.get('y_calc', [])[:n_pts],
+        'Background': result.get('y_background', [])[:n_pts],
+        'Residual':   result.get('residuals', [])[:n_pts],
+    }
+    # Per-phase component curves (trim/pad to match length)
+    phase_patterns = result.get('phase_patterns', [])
+    for i, ph in enumerate(phases):
+        col = ph.get('name', f'Phase {i+1}')
+        if i < len(phase_patterns):
+            pp = list(phase_patterns[i])
+            # Ensure same length as tt
+            if len(pp) < n_pts:
+                pp = pp + [0.0] * (n_pts - len(pp))
+            plot_dict[col] = pp[:n_pts]
+
+    df_plot = pd.DataFrame(plot_dict)
+
+    # Per-phase reflection positions with Miller indices
+    # Use the already-filtered tick_positions from the refinement result,
+    # and cross-reference with generate_reflections for hkl labels.
+    from .crystallography import generate_reflections, parse_cif
+
+    wavelength = result.get('wavelength', 1.54056)
+    tt_min = min(tt) if tt else 5.0
+    tt_max = max(tt) if tt else 90.0
+
+    phase_ref_data = []
+    for ph in phases:
+        refs = []
+        # Get the filtered tick positions from the refinement result
+        filtered_ticks = set(ph.get('tick_positions', []))
+        try:
+            sys_ = (ph.get('system') or 'triclinic').lower()
+            sg   = ph.get('spacegroup_number', 1)
+            sites = None
+            cif_text = ph.get('cif_text', '')
+            if cif_text:
+                try:
+                    parsed = parse_cif(cif_text)
+                    sites = parsed.get('sites') or None
+                except Exception:
+                    pass
+            ref_list = generate_reflections(
+                ph.get('a', 1), ph.get('b', 1), ph.get('c', 1),
+                ph.get('alpha', 90), ph.get('beta', 90), ph.get('gamma', 90),
+                sys_, sg, wavelength, tt_min, tt_max, hkl_max=12,
+                sites=sites)
+            if filtered_ticks:
+                # Only include reflections whose 2θ is near a filtered tick.
+                # Use tolerance (0.01°) instead of exact match to avoid
+                # rounding mismatches between GSAS-II refined cell params
+                # and the rounded values stored in phase_results.
+                sorted_ticks = sorted(filtered_ticks)
+                for r in ref_list:
+                    tt_r = round(r[0], 3)
+                    matched = any(abs(tt_r - t) < 0.01 for t in sorted_ticks)
+                    if matched:
+                        h, k, l = r[2]
+                        refs.append((tt_r, f'[{h}{k}{l}]'))
+            else:
+                # No filtered ticks available — use all from generate_reflections
+                for r in ref_list:
+                    h, k, l = r[2]
+                    refs.append((round(r[0], 3), f'[{h}{k}{l}]'))
+        except Exception:
+            pass
+        phase_ref_data.append(refs)
+
+    # Append reflection columns to plot dataframe (separate column block per phase)
+    max_refs = max((len(r) for r in phase_ref_data), default=0)
+    for i, ph in enumerate(phases):
+        pname = ph.get('name', f'Phase {i+1}')
+        tt_col = f'{pname} peak 2θ'
+        hkl_col = f'{pname} [hkl]'
+        refs = phase_ref_data[i] if i < len(phase_ref_data) else []
+        # Pad to dataframe length
+        tt_vals  = [r[0] for r in refs] + [None] * (len(df_plot) - len(refs))
+        hkl_vals = [r[1] for r in refs] + [None] * (len(df_plot) - len(refs))
+        df_plot[tt_col]  = tt_vals[:len(df_plot)]
+        df_plot[hkl_col] = hkl_vals[:len(df_plot)]
+
+    # ── Write xlsx (fall back to CSV if openpyxl not installed) ─────────
+    try:
+        import openpyxl  # noqa: F401 – just check availability
+        xlsx_path = os.path.join(output_dir, 'xrd_summary.xlsx')
+        with pd.ExcelWriter(xlsx_path, engine='openpyxl') as writer:
+            df_summary.to_excel(writer, sheet_name='Summary', index=False)
+            df_plot.to_excel(writer, sheet_name='Plot Data', index=False)
+        return xlsx_path
+    except ImportError:
+        pass
+    except Exception as exc:
+        import warnings
+        warnings.warn(f"xlsx write failed ({exc}), falling back to CSV")
+
+    # openpyxl not available or write failed — write two CSV files
+    summary_csv = os.path.join(output_dir, 'xrd_summary.csv')
+    df_summary.to_csv(summary_csv, index=False)
+    plot_csv = os.path.join(output_dir, 'xrd_plot_data.csv')
+    df_plot.to_csv(plot_csv, index=False)
+    return summary_csv
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MAIN ENTRY POINT
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -366,7 +571,35 @@ def run(filepath, output_dir, metadata, params):
     method     = params.get('method', 'lebail').lower()
 
     # Run refinement
-    if method == 'rietveld':
+    if method == 'gsas2':
+        from .gsasii_backend import run_gsas2, is_available as gsas2_available
+        if not gsas2_available():
+            from .gsasii_backend import import_error
+            raise RuntimeError(
+                f"GSAS-II is not available: {import_error()}\n"
+                f"Install with: conda install gsas2full -c briantoby")
+        # GSAS-II needs CIF text — pull from cache if stripped
+        from .cif_cache import get_cif
+        for ph in phases:
+            if not ph.get('cif_text'):
+                cid = ph.get('cod_id') or ph.get('mp_id')
+                if cid:
+                    ph['cif_text'] = get_cif(cid)
+        missing = [ph.get('name', '?') for ph in phases
+                   if not ph.get('cif_text')]
+        if missing:
+            raise ValueError(
+                f"GSAS-II requires CIF with atom coordinates for all phases. "
+                f"Missing for: {', '.join(missing)}.")
+        result = run_gsas2(
+            tt, intensity, sigma, phases, wavelength,
+            tt_min=tt_min, tt_max=tt_max,
+            n_bg_coeffs=n_bg, max_cycles=max_outer * 3,
+            instprm_file=params.get('instprm_file'),
+            polariz=params.get('polariz'),
+            sh_l=params.get('sh_l'),
+        )
+    elif method == 'rietveld':
         # Check that all phases have atom sites (CIF text)
         missing = [ph.get('name','?') for ph in phases
                    if not ph.get('sites') and not ph.get('cif_text')]
@@ -388,7 +621,8 @@ def run(filepath, output_dir, metadata, params):
         )
 
     # Plot
-    method_label = 'Rietveld' if method == 'rietveld' else 'Le Bail'
+    method_label = {'rietveld': 'Rietveld', 'gsas2': 'GSAS-II',
+                    }.get(method, 'Le Bail')
     plot_path = os.path.join(output_dir, 'xrd_refinement.png')
     make_xrd_plot(result, {
         'sample_id':       metadata.get('sample_id', 'Sample'),
@@ -397,18 +631,9 @@ def run(filepath, output_dir, metadata, params):
         'method':           method_label,
     }, plot_path)
 
-    # Summary CSV
+    # Summary Excel (two sheets: transposed summary + plot data with peaks)
     import pandas as pd
-    rows = []
-    for ph in result['phase_results']:
-        row = {'sample': metadata.get('sample_id', ''), 'method': method_label, **ph}
-        row.update(result['statistics'])
-        row['zero_shift']    = result['zero_shift']
-        row['pymatgen_used'] = result.get('pymatgen_used', False)
-        rows.append(row)
-    summary = pd.DataFrame(rows)
-    summary_path = os.path.join(output_dir, 'xrd_summary.csv')
-    summary.to_csv(summary_path, index=False)
+    summary_path = _write_summary_xlsx(result, metadata, method_label, output_dir)
 
     return {
         'plot_path':    plot_path,

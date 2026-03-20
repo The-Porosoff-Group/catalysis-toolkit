@@ -8,8 +8,63 @@ import os, sys, re, json, base64, webbrowser
 from datetime import datetime
 from threading import Timer
 
+# ── Dependency check ─────────────────────────────────────────────────────────
+_REQUIRED = {
+    'numpy':      'numpy',
+    'yaml':       'pyyaml',
+    'flask':      'flask',
+    'scipy':      'scipy',
+    'matplotlib': 'matplotlib',
+    'requests':   'requests',
+    'pandas':     'pandas',
+}
+_missing = []
+for _mod, _pkg in _REQUIRED.items():
+    try:
+        __import__(_mod)
+    except ImportError:
+        _missing.append(_pkg)
+
+if _missing:
+    print()
+    print("  ╔══════════════════════════════════════════════════════╗")
+    print("  ║  Missing required packages:                         ║")
+    for _pkg in _missing:
+        print(f"  ║    - {_pkg:<49}║")
+    print("  ║                                                     ║")
+    print("  ║  Option 1 (recommended): Use run.bat instead        ║")
+    print("  ║    It sets up everything automatically.              ║")
+    print("  ║                                                     ║")
+    print("  ║  Option 2: Activate the conda env first, then run:  ║")
+    print("  ║    conda activate .conda_env                        ║")
+    print("  ║    python app.py                                    ║")
+    print("  ║                                                     ║")
+    print("  ║  Option 3: Install manually:                        ║")
+    print(f"  ║    pip install {' '.join(_missing):<39}║")
+    print("  ╚══════════════════════════════════════════════════════╝")
+    print()
+    input("  Press Enter to exit...")
+    sys.exit(1)
+
+import numpy as np
 import yaml
 from flask import Flask, render_template, request, jsonify, send_file
+from flask.json.provider import DefaultJSONProvider
+
+
+class NumpyJSONProvider(DefaultJSONProvider):
+    """JSON provider that serialises numpy scalars and arrays."""
+
+    def default(self, o):
+        if isinstance(o, np.integer):
+            return int(o)
+        if isinstance(o, np.floating):
+            return float(o)
+        if isinstance(o, np.bool_):
+            return bool(o)
+        if isinstance(o, np.ndarray):
+            return o.tolist()
+        return super().default(o)
 
 # ── Path setup ────────────────────────────────────────────────────────────────
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
@@ -83,6 +138,8 @@ if CONFIG['performance'].get('preload_pymatgen', True):
 
 # ── Flask app ─────────────────────────────────────────────────────────────────
 app = Flask(__name__)
+app.json_provider_class = NumpyJSONProvider
+app.json = NumpyJSONProvider(app)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
 MODULES = [
@@ -398,6 +455,19 @@ def validate_mp_key():
     return jsonify({'valid': valid, 'message': msg})
 
 
+@app.route('/api/xrd/gsas2_status', methods=['GET'])
+def gsas2_status():
+    """Check if GSAS-II is available in this Python environment."""
+    try:
+        from modules.xrd.gsasii_backend import is_available, import_error
+        return jsonify({
+            'available': is_available(),
+            'error': import_error(),
+        })
+    except Exception as e:
+        return jsonify({'available': False, 'error': str(e)})
+
+
 @app.route('/api/process_xrd', methods=['POST'])
 def process_xrd():
     try:
@@ -432,6 +502,15 @@ def process_xrd():
             if text:
                 ph['cif_text'] = text
 
+        # Optional instrument parameter file for GSAS-II
+        instprm_file_path = None
+        if 'instprm_file' in request.files:
+            instprm_f = request.files['instprm_file']
+            if instprm_f.filename:
+                safe_instprm = re.sub(r'[^\w\-.]', '_', instprm_f.filename)
+                instprm_file_path = os.path.join(UPLOAD_DIR, safe_instprm)
+                instprm_f.save(instprm_file_path)
+
         output_base = form.get('output_dir', '').strip()
         if not output_base or not os.path.isdir(output_base):
             output_base = os.path.join(BASE_DIR, 'results')
@@ -449,9 +528,10 @@ def process_xrd():
                 'wavelength_label': wl_label,
                 'tt_min':           tt_min,
                 'tt_max':           tt_max,
-                'n_bg_coeffs':      6,
+                'n_bg_coeffs':      int(form.get('n_bg_coeffs', 6)),
                 'max_outer':        MAX_OUTER,
                 'method':           form.get('method', 'lebail'),
+                'instprm_file':     instprm_file_path,
             }
         )
 
@@ -468,9 +548,24 @@ def process_xrd():
             'summary_path':  result['summary_path'],
             'output_dir':    out_dir,
         })
+    except (SystemExit, KeyboardInterrupt):
+        # GSAS-II sometimes calls sys.exit() on fatal errors — catch it
+        # so the Flask server stays alive.
+        import traceback
+        tb = traceback.format_exc()
+        print(f"\n  !! XRD refinement crashed (SystemExit):\n{tb}", flush=True)
+        return jsonify({
+            'error': 'The refinement engine crashed unexpectedly. '
+                     'Check the terminal for details. '
+                     'If using GSAS-II, it may not be fully installed — '
+                     'try Le Bail or Rietveld instead.',
+            'trace': tb,
+        }), 500
     except Exception as e:
         import traceback
-        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+        tb = traceback.format_exc()
+        print(f"\n  !! XRD refinement error:\n{tb}", flush=True)
+        return jsonify({'error': str(e), 'trace': tb}), 500
 
 # ── Launch ────────────────────────────────────────────────────────────────────
 
@@ -491,10 +586,9 @@ def xrd_preview():
         path = os.path.join(UPLOAD_DIR, safe)
         f.save(path)
 
-        import xrd_processor
         data = xrd_processor.parse_xrd_file(path)
-        tt   = data['tt'].tolist()
-        y    = data['intensity'].tolist()
+        tt   = [float(v) for v in data['tt']]
+        y    = [float(v) for v in data['intensity']]
 
         MAX_PTS = 2000
         if len(tt) > MAX_PTS:
@@ -514,9 +608,17 @@ def xrd_preview():
 
 
 if __name__ == '__main__':
+    # Check GSAS-II status for startup banner
+    try:
+        from modules.xrd.gsasii_backend import is_available as _gsas_avail
+        _gsas_status = 'ready' if _gsas_avail() else 'not installed'
+    except Exception:
+        _gsas_status = 'not installed'
+
     print("\n" + "━"*50)
     print("  Catalysis Data Toolkit")
     print(f"  pymatgen:          {'ready' if _pymatgen_ready else 'not installed'}")
+    print(f"  GSAS-II:           {_gsas_status}")
     print(f"  Materials Project: {'configured' if MP_API_KEY else 'no API key'}")
     print(f"  CIF cache:         {_cache.stats()['entries']} entries "
           f"({_cache.stats()['size_mb']} MB)")
@@ -528,5 +630,5 @@ if __name__ == '__main__':
     if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
         Timer(1.2, open_browser).start()
 
-    app.run(debug=True, port=5000, use_reloader=True)
+    app.run(debug=True, port=5000, use_reloader=True, threaded=True)
 
