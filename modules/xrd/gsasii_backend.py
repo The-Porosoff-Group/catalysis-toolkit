@@ -1021,10 +1021,42 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             # ── Primary: GSAS-II phase isolation ─────────────────────
             print("  Phase isolation: computing GSAS-II per-phase "
                   "patterns...", flush=True)
+
+            # Save ALL refinement flags — the main refinement left many
+            # params refinable (background, U/V/W/X/Y, cell, Uiso).
+            # We must turn them ALL off before isolation, otherwise
+            # do_refinements will try to refine them with one phase
+            # zeroed, causing that phase's parameters to diverge.
             orig_hap_scales = []
             for phase_obj in gsas_phases:
                 hapData = list(phase_obj.data['Histograms'].values())[0]
                 orig_hap_scales.append(list(hapData['Scale']))
+
+            # Save & turn off background refinement flag
+            saved_bg_flag = histogram.data['Background'][0][1]
+            histogram.data['Background'][0][1] = False
+
+            # Save & turn off instrument parameter refinement flags
+            inst_params_raw = histogram.data['Instrument Parameters'][0]
+            saved_inst_flags = {}
+            for key in ['U', 'V', 'W', 'X', 'Y', 'SH/L', 'Zero']:
+                if key in inst_params_raw and len(inst_params_raw[key]) >= 3:
+                    saved_inst_flags[key] = inst_params_raw[key][2]
+                    inst_params_raw[key][2] = False
+
+            # Save & turn off cell and atom refinement flags
+            saved_cell_flags = []
+            saved_atom_flags = []
+            for phase_obj in gsas_phases:
+                cell = phase_obj.data['General']['Cell']
+                saved_cell_flags.append(cell[0])
+                cell[0] = False
+                atom_flags = []
+                for atom in phase_obj.data['Atoms']:
+                    if len(atom) > 9:
+                        atom_flags.append(str(atom[9]))
+                        atom[9] = ''
+                saved_atom_flags.append(atom_flags)
 
             try:
                 phase_patterns = []
@@ -1037,13 +1069,12 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                         else:
                             hapData['Scale'] = [0.0, False]
 
-                    # Persist zeroed scales to disk so that do_refinements
-                    # (which re-reads the GPX file) picks them up.
+                    # Persist to disk so do_refinements picks up changes.
                     gpx.save()
 
-                    # Recompute pattern — use cycles=1 with all params
-                    # fixed to ensure GSAS-II evaluates the forward model.
-                    gpx.do_refinements([{'set': {}, 'cycles': 1}])
+                    # Evaluate only (cycles=0) — all refinement flags are
+                    # OFF, so nothing can diverge.
+                    gpx.do_refinements([{'set': {}, 'cycles': 0}])
 
                     # Re-fetch histogram — do_refinements reloads the
                     # project from disk, so the old reference may be stale.
@@ -1062,8 +1093,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                           f"max={np.max(phase_pat):.1f}, "
                           f"integrated={np.sum(phase_pat):.1f}", flush=True)
 
-                # Diagnostic: check whether isolation produced distinct
-                # patterns (if all are identical, isolation didn't work).
+                # Diagnostic: verify isolation produced correct patterns.
                 sum_iso = np.zeros_like(tt_out, dtype=np.float64)
                 for pp in phase_patterns:
                     sum_iso += np.array(pp)
@@ -1092,10 +1122,19 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 print(f"  Phase isolation failed: {e_iso}", flush=True)
                 phase_patterns = []
             finally:
-                # Always restore original scales and re-fetch histogram
-                for j, phase_obj in enumerate(gsas_phases):
+                # Always restore ALL original flags and scales
+                histogram.data['Background'][0][1] = saved_bg_flag
+                for key, flag in saved_inst_flags.items():
+                    inst_params_raw[key][2] = flag
+                for idx_r, phase_obj in enumerate(gsas_phases):
+                    phase_obj.data['General']['Cell'][0] = \
+                        saved_cell_flags[idx_r]
+                    for j_a, atom in enumerate(phase_obj.data['Atoms']):
+                        if (len(atom) > 9
+                                and j_a < len(saved_atom_flags[idx_r])):
+                            atom[9] = saved_atom_flags[idx_r][j_a]
                     hapData = list(phase_obj.data['Histograms'].values())[0]
-                    hapData['Scale'] = orig_hap_scales[j]
+                    hapData['Scale'] = orig_hap_scales[idx_r]
                 gpx.save()
                 histogram = gpx.histograms()[0]
 
