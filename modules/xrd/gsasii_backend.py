@@ -1036,13 +1036,28 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             saved_bg_flag = histogram.data['Background'][0][1]
             histogram.data['Background'][0][1] = False
 
-            # Save & turn off instrument parameter refinement flags
-            inst_params_raw = histogram.data['Instrument Parameters'][0]
+            # Save & turn off instrument parameter refinement flags.
+            # GSAS-II stores refine flags in TWO possible locations:
+            # (a) inline: inst_params[0][key][2] (3-element lists)
+            # (b) separate dict: inst_params[1][key] (boolean)
+            inst_params_all = histogram.data['Instrument Parameters']
+            inst_params_raw = inst_params_all[0]
+            inst_refine_dict = (inst_params_all[1]
+                                if len(inst_params_all) > 1
+                                and isinstance(inst_params_all[1], dict)
+                                else {})
             saved_inst_flags = {}
             for key in ['U', 'V', 'W', 'X', 'Y', 'SH/L', 'Zero']:
+                # Location (a): inline in parameter list
                 if key in inst_params_raw and len(inst_params_raw[key]) >= 3:
-                    saved_inst_flags[key] = inst_params_raw[key][2]
+                    saved_inst_flags[(key, 'inline')] = \
+                        inst_params_raw[key][2]
                     inst_params_raw[key][2] = False
+                # Location (b): separate refine-flags dict
+                if key in inst_refine_dict:
+                    saved_inst_flags[(key, 'dict')] = \
+                        inst_refine_dict[key]
+                    inst_refine_dict[key] = False
 
             # Save & turn off cell and atom refinement flags
             saved_cell_flags = []
@@ -1124,8 +1139,11 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             finally:
                 # Always restore ALL original flags and scales
                 histogram.data['Background'][0][1] = saved_bg_flag
-                for key, flag in saved_inst_flags.items():
-                    inst_params_raw[key][2] = flag
+                for (key, loc), flag in saved_inst_flags.items():
+                    if loc == 'inline':
+                        inst_params_raw[key][2] = flag
+                    else:
+                        inst_refine_dict[key] = flag
                 for idx_r, phase_obj in enumerate(gsas_phases):
                     phase_obj.data['General']['Cell'][0] = \
                         saved_cell_flags[idx_r]
