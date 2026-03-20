@@ -1059,7 +1059,9 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                         inst_refine_dict[key]
                     inst_refine_dict[key] = False
 
-            # Save & turn off cell and atom refinement flags
+            # Save & turn off cell and atom refinement flags.
+            # atom[2] = refinement flags string ('XU', 'U', '' etc.)
+            # atom[9] = multiplicity — NOT the refinement flag.
             saved_cell_flags = []
             saved_atom_flags = []
             for phase_obj in gsas_phases:
@@ -1068,10 +1070,16 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 cell[0] = False
                 atom_flags = []
                 for atom in phase_obj.data['Atoms']:
-                    if len(atom) > 9:
-                        atom_flags.append(str(atom[9]))
-                        atom[9] = ''
+                    if len(atom) > 2:
+                        atom_flags.append(str(atom[2]))
+                        atom[2] = ''   # clear XYZ + Uiso flags
                 saved_atom_flags.append(atom_flags)
+
+            # Belt-and-suspenders: force 0 cycles in Controls so GSAS-II
+            # cannot iterate even if a flag was somehow missed.
+            _controls = gpx.data.get('Controls', {}).get('data', {})
+            _saved_maxcyc = _controls.get('max cyc', 3)
+            _controls['max cyc'] = 0
 
             try:
                 phase_patterns = []
@@ -1148,11 +1156,13 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                     phase_obj.data['General']['Cell'][0] = \
                         saved_cell_flags[idx_r]
                     for j_a, atom in enumerate(phase_obj.data['Atoms']):
-                        if (len(atom) > 9
+                        if (len(atom) > 2
                                 and j_a < len(saved_atom_flags[idx_r])):
-                            atom[9] = saved_atom_flags[idx_r][j_a]
+                            atom[2] = saved_atom_flags[idx_r][j_a]
                     hapData = list(phase_obj.data['Histograms'].values())[0]
                     hapData['Scale'] = orig_hap_scales[idx_r]
+                # Restore max cycles to original value
+                _controls['max cyc'] = _saved_maxcyc
                 gpx.save()
                 histogram = gpx.histograms()[0]
 
