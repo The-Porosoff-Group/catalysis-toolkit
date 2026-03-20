@@ -822,7 +822,11 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         _kx   = np.arange(-_k, _k + 1, dtype=float)
         _kern = np.exp(-0.5 * (_kx / _sig) ** 2)
         _kern /= _kern.sum()
-        _smooth_bg = np.convolve(y_bg_out, _kern, mode='same')
+        # Pad with edge values so the convolution doesn't see zeros
+        # beyond the array — eliminates the ~30° corruption zone that
+        # caused the visible baseline discontinuity.
+        _padded = np.pad(y_bg_out, _k, mode='edge')
+        _smooth_bg = np.convolve(_padded, _kern, mode='valid')
         y_bg_out = np.maximum(y_bg_out, _smooth_bg)
 
         diff_out = y_obs_out - y_calc_out
