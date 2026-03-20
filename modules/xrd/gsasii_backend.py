@@ -597,8 +597,9 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
 
         # Set background
         bkg_data = histogram.data['Background']
+        bg_init = float(np.percentile(y_r, 2))
         bkg_data[0] = ['chebyschev-1', True, n_bg_coeffs,
-                        1.0] + [0.0] * (n_bg_coeffs - 1)
+                        bg_init] + [0.0] * (n_bg_coeffs - 1)
 
         # Add phases from CIF files — always embed the space group number in
         # the GSAS-II phasename so that two phases with the same formula
@@ -774,6 +775,22 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             'set': {},
             'cycles': min(max_cycles, 5),
         }], 4)
+
+        if progress_callback:
+            progress_callback('GSAS-II: stage 5 — final background + scale polish...')
+
+        # ── Stage 5: Final polish — re-refine background + scale ────────
+        # Background was first refined in Stage 1 when profile/cell/Uiso
+        # were still at initial values. Now that all structural parameters
+        # have converged, re-optimize background to remove systematic
+        # misfit (e.g. Chebyshev polynomial dipping on right side).
+        _safe_refine('final polish', [{
+            'set': {
+                'Background': {'type': 'chebyschev-1', 'refine': True,
+                                'no. coeffs': n_bg_coeffs},
+            },
+            'cycles': min(max_cycles, 5),
+        }], 5)
 
         if progress_callback:
             progress_callback('GSAS-II: extracting results...')
