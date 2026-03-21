@@ -765,6 +765,17 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # Set data range
         histogram.data['Limits'] = [[tt_min, tt_max], [tt_min, tt_max]]
 
+        # Fix histogram scale to 1.0 — NEVER refine it.
+        # GSAS-II has N+1 scale parameters (N phase scales + 1 histogram
+        # scale).  Only N are independent.  Refining all N+1 creates a
+        # perfect correlation (100%) that causes SVD singularity and the
+        # refinement gets stuck with zero peak intensity.
+        # Standard practice: fix histogram scale, refine only phase scales.
+        try:
+            histogram.data['Sample Parameters']['Scale'] = [1.0, False]
+        except (KeyError, TypeError):
+            pass
+
         # Set background
         bkg_data = histogram.data['Background']
         bg_init = float(np.percentile(y_r, 2))
@@ -844,6 +855,13 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             try:
                 gpx.do_refinements(refinement_dicts)
                 last_good_stage = stage_num
+                # Guard: ensure histogram scale stays fixed at 1.0.
+                # GSAS-II's do_refinements can re-enable it internally
+                # when 'Scale' appears in any refinement dict.
+                try:
+                    histogram.data['Sample Parameters']['Scale'] = [1.0, False]
+                except (KeyError, TypeError):
+                    pass
                 return True
             except Exception as e:
                 # GSAS-II internally restores from .bak0.gpx on failure,
@@ -867,14 +885,20 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # ── Stage 1: Background + scale (one phase at a time) ────────────
         # Fix all scales first, then refine them one at a time to break
         # the correlation that causes SVD singularities.
+        # Estimate a data-driven initial scale for each phase.
+        # With the histogram scale fixed at 1.0, the phase scale must absorb
+        # the full intensity.  A rough estimate based on peak height and
+        # structural complexity helps GSAS-II converge from the right region.
+        peak_height = float(np.max(y_r) - np.percentile(y_r, 5))
+        n_phases = len(gsas_phases)
         for phase_obj, ph_input in zip(gsas_phases, phases):
             hapData = list(phase_obj.data['Histograms'].values())[0]
-            # Estimate initial scale: complex structures (many atoms per cell)
-            # have larger structure factors, needing smaller starting scale.
-            # Count asymmetric-unit sites as a proxy.
             cif_text = ph_input.get('cif_text', '')
             n_asym = len(_reduce_to_asymmetric_unit(cif_text)) if cif_text else 1
-            init_scale = 1.0 / max(n_asym, 1)
+            # Scale ∝ peak_height / (n_atoms² × n_phases).  The n_atoms²
+            # factor approximates how F² grows with atom count.
+            init_scale = peak_height / max(1.0, (n_asym ** 2) * n_phases * 10.0)
+            init_scale = max(init_scale, 0.001)  # floor to avoid zero
             hapData['Scale'] = [init_scale, False]  # start fixed
 
         # First: refine background only
@@ -895,9 +919,12 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 'cycles': 3,
             }], 1)
 
-        # Now refine all scales together (they have good starting values)
-        _safe_refine('all scales', [{
-            'set': {'Scale': True},
+        # Re-refine all phase scales together (they have good starting values).
+        # Do NOT use {'Scale': True} here — that enables the histogram scale
+        # refinement flag, which is degenerate with phase scales and causes
+        # 100% correlation / SVD singularity.
+        _safe_refine('all phase scales', [{
+            'set': {},
             'cycles': min(max_cycles, 5),
         }], 1)
 
