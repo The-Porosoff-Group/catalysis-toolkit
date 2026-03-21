@@ -188,17 +188,31 @@ def _reduce_to_asymmetric_unit(cif_text):
     asymmetric unit in the CIF.  If we give it the full unit cell plus
     the space group, it over-expands and generates wrong reflections.
 
-    Uses pymatgen's symmetrized structure to get the unique sites.
-    Falls back to the raw sites if pymatgen is unavailable.
-
-    Validates the result by re-expanding and comparing site counts.
+    Strategy:
+    1. First, try raw CIF sites from parse_cif(). For COD/ICSD CIFs these
+       ARE the asymmetric unit — the most reliable source.
+    2. If raw sites appear to be the full unit cell (same count as pymatgen
+       expansion), use SpacegroupAnalyzer to reduce them.
+    3. Validate that SpacegroupAnalyzer actually REDUCED the site count
+       (len(candidate) < full_cell_n), preventing the P1 false-positive
+       where every atom is its own group.
     """
     if not cif_text:
         return []
 
+    # ── Strategy 1: Raw CIF sites (most reliable for database CIFs) ──────
+    raw_sites = []
+    try:
+        parsed = parse_cif(cif_text)
+        raw_sites = parsed.get('sites') or []
+    except Exception:
+        pass
+
+    # Get pymatgen full unit cell for comparison
+    full_cell_n = None
+    full_struct = None
     try:
         from pymatgen.io.cif import CifParser
-        from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
         try:
             parser = CifParser.from_str(cif_text, occupancy_tolerance=100.0)
         except (AttributeError, TypeError):
@@ -210,15 +224,31 @@ def _reduce_to_asymmetric_unit(cif_text):
             _os.unlink(_tmp)
         structs = parser.parse_structures(primitive=False)
         if structs:
-            full_cell_n = len(structs[0])  # total sites in full unit cell
+            full_struct = structs[0]
+            full_cell_n = len(full_struct)
+    except Exception:
+        pass
 
-            # Try tight tolerance first (0.01 Å), fall back to looser (0.1 Å).
-            # Tight tolerance avoids merging non-equivalent sites in compact
-            # cells like W2C Pbcn where heavy atoms are close together.
+    # If raw CIF has fewer sites than the full cell, it's already the
+    # asymmetric unit — use it directly. This is the common case for
+    # COD and ICSD CIFs and avoids the lossy SpacegroupAnalyzer round-trip.
+    if raw_sites and full_cell_n is not None:
+        if len(raw_sites) < full_cell_n:
+            return raw_sites
+    elif raw_sites and full_cell_n is None:
+        # Can't validate, but raw sites are our best bet
+        return raw_sites
+
+    # ── Strategy 2: SpacegroupAnalyzer reduction (for full-cell CIFs) ────
+    # Only needed when raw CIF sites == full cell (e.g. Materials Project).
+    if full_struct is not None and full_cell_n is not None:
+        try:
+            from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+
             sites = None
-            for symprec in (0.01, 0.05, 0.1):
+            for symprec in (0.1, 0.05, 0.01):
                 try:
-                    sga = SpacegroupAnalyzer(structs[0], symprec=symprec)
+                    sga = SpacegroupAnalyzer(full_struct, symprec=symprec)
                     sym_struct = sga.get_symmetrized_structure()
                     candidate = []
                     for equiv_sites in sym_struct.equivalent_sites:
@@ -233,29 +263,30 @@ def _reduce_to_asymmetric_unit(cif_text):
                         candidate.append((el, float(frac[0]), float(frac[1]),
                                           float(frac[2]), occ))
 
-                    # Validate: the number of equivalent sites summed across
-                    # all groups should equal the full unit cell site count.
-                    # This catches bad equivalence groupings.
+                    # Validate: (a) expansion count matches full cell, AND
+                    # (b) actual reduction happened (fewer unique sites).
+                    # Condition (b) prevents the P1 false-positive where
+                    # symprec is too tight and every atom is its own group.
                     expanded_n = sum(
                         len(eq) for eq in sym_struct.equivalent_sites)
-                    if expanded_n == full_cell_n and candidate:
+                    if (expanded_n == full_cell_n and candidate
+                            and len(candidate) < full_cell_n):
                         sites = candidate
                         break
-                    # If counts don't match, try a looser tolerance
                 except Exception:
                     continue
 
             if sites:
                 return sites
-    except Exception as e:
-        print(f"  Warning: pymatgen asymmetric-unit reduction failed: {e}",
-              flush=True)
-        print("  Falling back to raw CIF sites — if the CIF contains the "
-              "full unit cell, GSAS-II may over-expand.", flush=True)
+        except Exception as e:
+            print(f"  Warning: pymatgen asymmetric-unit reduction failed: {e}",
+                  flush=True)
 
-    # Fallback: raw parse_cif (usually fine for COD CIFs which list
-    # asymmetric unit; may cause over-expansion for MP/pymatgen CIFs
-    # which list the full unit cell).
+    # ── Fallback: return raw sites (may cause over-expansion for MP CIFs
+    # with full unit cell, but better than returning nothing) ──────────────
+    if raw_sites:
+        return raw_sites
+
     try:
         parsed = parse_cif(cif_text)
         return parsed.get('sites') or []
@@ -294,6 +325,10 @@ def _build_conventional_cif(ph):
     # reflections (e.g. ghost peaks at ~25° for A15-W).
     cif_text = ph.get('cif_text', '')
     sites = _reduce_to_asymmetric_unit(cif_text) if cif_text else []
+    print(f"  _build_conventional_cif: SG={sg} ({hm}), "
+          f"asymmetric unit has {len(sites)} site(s): "
+          f"{[(s[0], round(s[1],3), round(s[2],3), round(s[3],3)) for s in sites[:6]]}",
+          flush=True)
 
     lines = [
         'data_phase',
