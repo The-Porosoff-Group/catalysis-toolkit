@@ -15,24 +15,34 @@ COD_CIF    = "https://www.crystallography.net/cod/cif/{cod_id}.cif"
 TIMEOUT    = 20
 
 
-def _cod_get(url, params=None, timeout=TIMEOUT):
-    """GET request to COD with SSL-error retry and better diagnostics.
+# COD actively filters requests with the default python-requests user-agent
+# (bot traffic protection after a disk failure from overload).
+_HEADERS = {
+    "User-Agent": "CatalysisToolkit/1.0 (scientific research tool)"
+}
 
-    COD's SSL certificate has known intermittent issues.  On SSLError we
-    retry once with verification disabled so that a flaky certificate
-    doesn't block the user entirely.
+
+def _cod_get(url, params=None, timeout=TIMEOUT):
+    """GET request to COD with User-Agent header, SSL retry, and
+    transient-error retry.
+
+    COD blocks the default python-requests UA as bot traffic, and its
+    SSL certificate has known intermittent issues.
     """
     try:
-        return requests.get(url, params=params, timeout=timeout)
+        return requests.get(url, params=params, timeout=timeout,
+                            headers=_HEADERS)
     except requests.exceptions.SSLError:
         # Retry without SSL verification — COD cert may be expired/misconfigured
         warnings.warn("COD SSL certificate error — retrying without verification.")
-        return requests.get(url, params=params, timeout=timeout, verify=False)
+        return requests.get(url, params=params, timeout=timeout,
+                            headers=_HEADERS, verify=False)
     except requests.exceptions.ConnectionError:
         # One retry on transient connection issues
         import time
         time.sleep(1)
-        return requests.get(url, params=params, timeout=timeout)
+        return requests.get(url, params=params, timeout=timeout,
+                            headers=_HEADERS)
 
 SORT_OPTIONS = {
     "formula":      ("Chemical formula", "formula", "asc"),
