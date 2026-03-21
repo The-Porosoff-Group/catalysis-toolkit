@@ -7,12 +7,32 @@ Uses the CSV endpoint which reliably returns full cell parameters,
 unlike the JSON endpoint which often has missing values.
 """
 
-import io, csv, re, math, requests, tempfile, os
+import io, csv, re, math, warnings, requests, tempfile, os
 from .crystallography import parse_cif
 
 COD_SEARCH = "https://www.crystallography.net/cod/result.php"
 COD_CIF    = "https://www.crystallography.net/cod/cif/{cod_id}.cif"
-TIMEOUT    = 15
+TIMEOUT    = 20
+
+
+def _cod_get(url, params=None, timeout=TIMEOUT):
+    """GET request to COD with SSL-error retry and better diagnostics.
+
+    COD's SSL certificate has known intermittent issues.  On SSLError we
+    retry once with verification disabled so that a flaky certificate
+    doesn't block the user entirely.
+    """
+    try:
+        return requests.get(url, params=params, timeout=timeout)
+    except requests.exceptions.SSLError:
+        # Retry without SSL verification — COD cert may be expired/misconfigured
+        warnings.warn("COD SSL certificate error — retrying without verification.")
+        return requests.get(url, params=params, timeout=timeout, verify=False)
+    except requests.exceptions.ConnectionError:
+        # One retry on transient connection issues
+        import time
+        time.sleep(1)
+        return requests.get(url, params=params, timeout=timeout)
 
 SORT_OPTIONS = {
     "formula":      ("Chemical formula", "formula", "asc"),
@@ -53,11 +73,11 @@ def search_by_elements(elements, strict=True, max_results=100,
     _apply_sort(params, sort_by)
 
     try:
-        resp = requests.get(COD_SEARCH, params=params, timeout=TIMEOUT)
+        resp = _cod_get(COD_SEARCH, params=params)
         resp.raise_for_status()
         return _parse_csv(resp.text)
     except requests.exceptions.ConnectionError:
-        return {'error': 'Cannot reach COD. Check internet connection.'}
+        return {'error': 'Cannot reach COD. The server may be down — try again later.'}
     except requests.exceptions.Timeout:
         return {'error': 'COD search timed out. Try again.'}
     except Exception as e:
@@ -69,11 +89,11 @@ def search_by_name(name, max_results=100, sort_by="formula"):
     params = {'format': 'csv', 'limit': max_results, 'text': name.strip()}
     _apply_sort(params, sort_by)
     try:
-        resp = requests.get(COD_SEARCH, params=params, timeout=TIMEOUT)
+        resp = _cod_get(COD_SEARCH, params=params)
         resp.raise_for_status()
         return _parse_csv(resp.text)
     except requests.exceptions.ConnectionError:
-        return {'error': 'Cannot reach COD. Check internet connection.'}
+        return {'error': 'Cannot reach COD. The server may be down — try again later.'}
     except Exception as e:
         return {'error': f'Search error: {e}'}
 
@@ -88,11 +108,11 @@ def search_by_formula(formula, max_results=100, sort_by="formula"):
     params = {'format': 'csv', 'limit': max_results, 'formula': formula_hill}
     _apply_sort(params, sort_by)
     try:
-        resp = requests.get(COD_SEARCH, params=params, timeout=TIMEOUT)
+        resp = _cod_get(COD_SEARCH, params=params)
         resp.raise_for_status()
         return _parse_csv(resp.text)
     except requests.exceptions.ConnectionError:
-        return {'error': 'Cannot reach COD. Check internet connection.'}
+        return {'error': 'Cannot reach COD. The server may be down — try again later.'}
     except Exception as e:
         return {'error': f'Search error: {e}'}
 
@@ -234,7 +254,7 @@ def fetch_cif(cod_id):
     """
     url = COD_CIF.format(cod_id=str(cod_id).zfill(7))
     try:
-        resp = requests.get(url, timeout=TIMEOUT)
+        resp = _cod_get(url)
         resp.raise_for_status()
         cif_text = resp.text
         parsed   = parse_cif(cif_text)
@@ -242,7 +262,7 @@ def fetch_cif(cod_id):
         parsed['cif_text'] = cif_text
         return parsed
     except requests.exceptions.ConnectionError:
-        raise ConnectionError('Cannot reach COD. Check internet connection.')
+        raise ConnectionError('Cannot reach COD. The server may be down — try again later.')
     except requests.exceptions.Timeout:
         raise TimeoutError('CIF download timed out.')
     except Exception as e:

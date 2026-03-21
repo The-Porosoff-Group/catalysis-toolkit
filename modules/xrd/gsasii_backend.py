@@ -84,16 +84,67 @@ def import_error():
 # ─────────────────────────────────────────────────────────────────────────────
 
 _SG_HM = {
-    # Common catalyst phases — add entries as needed
-    1: 'P 1', 2: 'P -1', 12: 'C 2/m', 14: 'P 21/c', 15: 'C 2/c',
-    62: 'P n m a', 63: 'C m c m', 139: 'I 4/m m m', 141: 'I 41/a m d',
-    148: 'R -3', 166: 'R -3 m', 167: 'R -3 c',
-    173: 'P 63', 176: 'P 63/m', 186: 'P 63 m c', 187: 'P -6 m 2',
-    191: 'P 6/m m m', 194: 'P 63/m m c',
-    196: 'F 2 3', 202: 'F m -3', 216: 'F -4 3 m', 225: 'F m -3 m',
-    227: 'F d -3 m', 229: 'I m -3 m', 223: 'P m -3 n', 221: 'P m -3 m',
+    # Triclinic / Monoclinic
+    1: 'P 1', 2: 'P -1', 3: 'P 2', 4: 'P 21', 5: 'C 2',
+    6: 'P m', 7: 'P c', 8: 'C m', 9: 'C c', 10: 'P 2/m',
+    11: 'P 21/m', 12: 'C 2/m', 13: 'P 2/c', 14: 'P 21/c', 15: 'C 2/c',
+    # Orthorhombic (common catalyst phases)
+    16: 'P 2 2 2', 19: 'P 21 21 21', 26: 'P m c 21', 29: 'P c a 21',
+    31: 'P m n 21', 33: 'P n a 21', 36: 'C m c 21', 40: 'A m a 2',
+    44: 'I m m 2', 46: 'I m a 2',
+    47: 'P m m m', 51: 'P m m a', 55: 'P b a m', 57: 'P b c m',
+    58: 'P n n m', 59: 'P m m n', 60: 'P b c n', 61: 'P b c a',
+    62: 'P n m a', 63: 'C m c m', 64: 'C m c a', 65: 'C m m m',
+    66: 'C c c m', 69: 'F m m m', 70: 'F d d d', 71: 'I m m m',
+    72: 'I b a m', 74: 'I m m a',
+    # Tetragonal
+    75: 'P 4', 82: 'I -4', 83: 'P 4/m', 84: 'P 42/m',
+    85: 'P 4/n', 87: 'I 4/m', 88: 'I 41/a',
+    99: 'P 4 m m', 107: 'I 4 m m', 115: 'P -4 m 2',
+    119: 'I -4 m 2', 121: 'I -4 2 m', 122: 'I -4 2 d',
+    123: 'P 4/m m m', 129: 'P 4/n m m', 131: 'P 42/m m c',
+    136: 'P 42/m n m', 139: 'I 4/m m m', 140: 'I 4/m c m',
+    141: 'I 41/a m d', 142: 'I 41/a c d',
+    # Trigonal / Hexagonal
+    143: 'P 3', 146: 'R 3', 147: 'P -3', 148: 'R -3',
+    150: 'P 3 2 1', 152: 'P 31 2 1', 154: 'P 32 2 1',
+    155: 'R 3 2', 156: 'P 3 m 1', 157: 'P 3 1 m',
+    160: 'R 3 m', 161: 'R 3 c', 162: 'P -3 1 m', 163: 'P -3 1 c',
+    164: 'P -3 m 1', 165: 'P -3 c 1', 166: 'R -3 m', 167: 'R -3 c',
+    168: 'P 6', 173: 'P 63', 174: 'P -6', 175: 'P 6/m', 176: 'P 63/m',
+    183: 'P 6 m m', 186: 'P 63 m c', 187: 'P -6 m 2', 189: 'P -6 2 m',
+    191: 'P 6/m m m', 193: 'P 63/m c m', 194: 'P 63/m m c',
+    # Cubic
+    195: 'P 2 3', 196: 'F 2 3', 197: 'I 2 3', 198: 'P 21 3',
+    199: 'I 21 3', 200: 'P m -3', 201: 'P n -3', 202: 'F m -3',
+    203: 'F d -3', 204: 'I m -3', 205: 'P a -3', 206: 'I a -3',
+    207: 'P 4 3 2', 209: 'F 4 3 2', 211: 'I 4 3 2',
+    212: 'P 43 3 2', 213: 'P 41 3 2', 214: 'I 41 3 2',
+    215: 'P -4 3 m', 216: 'F -4 3 m', 217: 'I -4 3 m',
+    218: 'P -4 3 n', 219: 'F -4 3 c', 220: 'I -4 3 d',
+    221: 'P m -3 m', 222: 'P n -3 n', 223: 'P m -3 n',
+    224: 'P n -3 m', 225: 'F m -3 m', 226: 'F m -3 c',
+    227: 'F d -3 m', 228: 'F d -3 c', 229: 'I m -3 m',
     230: 'I a -3 d',
 }
+
+
+def _get_hm_symbol(sg_num):
+    """Get H-M symbol for a space group number.
+
+    Uses the static table first, then tries pymatgen as a fallback.
+    """
+    if sg_num in _SG_HM:
+        return _SG_HM[sg_num]
+    try:
+        from pymatgen.symmetry.groups import SpaceGroup
+        sg = SpaceGroup.from_int_number(sg_num)
+        return sg.symbol
+    except Exception:
+        pass
+    warnings.warn(f"Space group {sg_num} not in lookup table — using 'P 1'. "
+                  f"Add it to _SG_HM in gsasii_backend.py for correct results.")
+    return 'P 1'
 
 
 # ── Default instrument / refinement parameters ────────────────────────────
@@ -164,14 +215,25 @@ def _reduce_to_asymmetric_unit(cif_text):
                 site = equiv_sites[0]  # take first of each equivalent group
                 frac = site.frac_coords % 1.0
                 el = str(site.specie)
+                # Preserve actual occupancy for disordered sites
+                occ = 1.0
+                if hasattr(site, 'species'):
+                    sp = site.species
+                    if hasattr(sp, 'num_atoms'):
+                        occ = float(sp.num_atoms)
                 sites.append((el, float(frac[0]), float(frac[1]),
-                              float(frac[2]), 1.0))
+                              float(frac[2]), occ))
             if sites:
                 return sites
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"  Warning: pymatgen asymmetric-unit reduction failed: {e}",
+              flush=True)
+        print("  Falling back to raw CIF sites — if the CIF contains the "
+              "full unit cell, GSAS-II may over-expand.", flush=True)
 
-    # Fallback: raw parse_cif
+    # Fallback: raw parse_cif (usually fine for COD CIFs which list
+    # asymmetric unit; may cause over-expansion for MP/pymatgen CIFs
+    # which list the full unit cell).
     try:
         parsed = parse_cif(cif_text)
         return parsed.get('sites') or []
@@ -199,10 +261,10 @@ def _build_conventional_cif(ph):
     formula = ph.get('formula', '')
     Z   = ph.get('Z', '')
 
-    # H-M symbol — try phase dict first, then lookup table
+    # H-M symbol — try phase dict first, then dynamic lookup
     hm = ph.get('spacegroup', '') or ph.get('spacegroup_name', '')
     if not hm:
-        hm = _SG_HM.get(sg, 'P 1')
+        hm = _get_hm_symbol(sg)
 
     # Get atom sites reduced to the asymmetric unit.
     # GSAS-II applies space-group symmetry itself, so we must NOT give
@@ -817,20 +879,23 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # so the Gaussian doesn't blur steep slopes at low 2θ into
         # the 30-50° region.
         if len(y_bg_out) >= 3:
-            _trend_coeffs = np.polyfit(tt_out, y_bg_out, 2)
-            _trend = np.polyval(_trend_coeffs, tt_out)
-            _resid = y_bg_out - _trend
+            try:
+                _trend_coeffs = np.polyfit(tt_out, y_bg_out, 2)
+                _trend = np.polyval(_trend_coeffs, tt_out)
+                _resid = y_bg_out - _trend
 
-            _step = float(tt_out[1] - tt_out[0]) if len(tt_out) > 1 else 0.02
-            _sig  = max(3, int(10.0 / _step))          # 10° Gaussian sigma
-            _k    = min(3 * _sig, len(_resid) // 2)
-            if _k >= 1:
-                _kx   = np.arange(-_k, _k + 1, dtype=float)
-                _kern = np.exp(-0.5 * (_kx / _sig) ** 2)
-                _kern /= _kern.sum()
-                _padded = np.pad(_resid, _k, mode='edge')
-                _smooth_resid = np.convolve(_padded, _kern, mode='valid')
-                y_bg_out = _trend + np.maximum(_resid, _smooth_resid)
+                _step = float(tt_out[1] - tt_out[0]) if len(tt_out) > 1 else 0.02
+                _sig  = max(3, int(10.0 / _step))          # 10° Gaussian sigma
+                _k    = min(3 * _sig, len(_resid) // 2)
+                if _k >= 1:
+                    _kx   = np.arange(-_k, _k + 1, dtype=float)
+                    _kern = np.exp(-0.5 * (_kx / _sig) ** 2)
+                    _kern /= _kern.sum()
+                    _padded = np.pad(_resid, _k, mode='edge')
+                    _smooth_resid = np.convolve(_padded, _kern, mode='valid')
+                    y_bg_out = _trend + np.maximum(_resid, _smooth_resid)
+            except (np.linalg.LinAlgError, ValueError):
+                pass  # skip dip correction if polyfit fails
 
         diff_out = y_obs_out - y_calc_out
 
