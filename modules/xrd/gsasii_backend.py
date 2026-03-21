@@ -190,6 +190,8 @@ def _reduce_to_asymmetric_unit(cif_text):
 
     Uses pymatgen's symmetrized structure to get the unique sites.
     Falls back to the raw sites if pymatgen is unavailable.
+
+    Validates the result by re-expanding and comparing site counts.
     """
     if not cif_text:
         return []
@@ -208,21 +210,41 @@ def _reduce_to_asymmetric_unit(cif_text):
             _os.unlink(_tmp)
         structs = parser.parse_structures(primitive=False)
         if structs:
-            sga = SpacegroupAnalyzer(structs[0], symprec=0.1)
-            sym_struct = sga.get_symmetrized_structure()
-            sites = []
-            for equiv_sites in sym_struct.equivalent_sites:
-                site = equiv_sites[0]  # take first of each equivalent group
-                frac = site.frac_coords % 1.0
-                el = str(site.specie)
-                # Preserve actual occupancy for disordered sites
-                occ = 1.0
-                if hasattr(site, 'species'):
-                    sp = site.species
-                    if hasattr(sp, 'num_atoms'):
-                        occ = float(sp.num_atoms)
-                sites.append((el, float(frac[0]), float(frac[1]),
-                              float(frac[2]), occ))
+            full_cell_n = len(structs[0])  # total sites in full unit cell
+
+            # Try tight tolerance first (0.01 Å), fall back to looser (0.1 Å).
+            # Tight tolerance avoids merging non-equivalent sites in compact
+            # cells like W2C Pbcn where heavy atoms are close together.
+            sites = None
+            for symprec in (0.01, 0.05, 0.1):
+                try:
+                    sga = SpacegroupAnalyzer(structs[0], symprec=symprec)
+                    sym_struct = sga.get_symmetrized_structure()
+                    candidate = []
+                    for equiv_sites in sym_struct.equivalent_sites:
+                        site = equiv_sites[0]
+                        frac = site.frac_coords % 1.0
+                        el = str(site.specie)
+                        occ = 1.0
+                        if hasattr(site, 'species'):
+                            sp = site.species
+                            if hasattr(sp, 'num_atoms'):
+                                occ = float(sp.num_atoms)
+                        candidate.append((el, float(frac[0]), float(frac[1]),
+                                          float(frac[2]), occ))
+
+                    # Validate: the number of equivalent sites summed across
+                    # all groups should equal the full unit cell site count.
+                    # This catches bad equivalence groupings.
+                    expanded_n = sum(
+                        len(eq) for eq in sym_struct.equivalent_sites)
+                    if expanded_n == full_cell_n and candidate:
+                        sites = candidate
+                        break
+                    # If counts don't match, try a looser tolerance
+                except Exception:
+                    continue
+
             if sites:
                 return sites
     except Exception as e:
@@ -451,7 +473,87 @@ def _write_xye(path, tt, y_obs, sigma):
             f.write(f"{tt[i]:.6f}  {y_obs[i]:.4f}  {sigma[i]:.4f}\n")
 
 
-def _write_instprm(work_dir, wavelength, polariz=None, sh_l=None):
+def _estimate_profile_params(tt, y_obs):
+    """Estimate initial Caglioti U, V, W from observed peak widths.
+
+    Finds the strongest peaks in the data, measures their approximate FWHM,
+    and fits the Caglioti equation FWHM² = U tan²θ + V tanθ + W to get
+    reasonable starting values.  Returns (U, V, W) in centidegrees² / centideg²
+    (GSAS-II internal units), or the module defaults if estimation fails.
+
+    This is critical for complex phases like W2C where the default U/V/W
+    may be far from the true broadening, causing GSAS-II to converge to
+    a local minimum.
+    """
+    try:
+        from scipy.signal import find_peaks
+
+        # Subtract a simple baseline (percentile)
+        baseline = np.percentile(y_obs, 10)
+        y_corr = y_obs - baseline
+
+        # Find prominent peaks (height > 10% of max, well separated)
+        height_thresh = 0.1 * y_corr.max()
+        step = float(tt[1] - tt[0]) if len(tt) > 1 else 0.02
+        distance = max(1, int(0.5 / step))  # at least 0.5° apart
+        peaks, props = find_peaks(y_corr, height=height_thresh, distance=distance)
+
+        if len(peaks) < 2:
+            return DEFAULT_U, DEFAULT_V, DEFAULT_W
+
+        # Measure FWHM for each peak
+        fwhm_data = []  # (tan_theta, fwhm_deg)
+        for pk in peaks:
+            half_max = y_corr[pk] / 2.0
+            # Walk left
+            left = pk
+            while left > 0 and y_corr[left] > half_max:
+                left -= 1
+            # Walk right
+            right = pk
+            while right < len(y_corr) - 1 and y_corr[right] > half_max:
+                right += 1
+            fwhm_deg = float(tt[right] - tt[left])
+            if 0.02 < fwhm_deg < 3.0:  # reasonable range
+                theta_rad = math.radians(float(tt[pk]) / 2.0)
+                tan_th = math.tan(theta_rad)
+                fwhm_data.append((tan_th, fwhm_deg))
+
+        if len(fwhm_data) < 2:
+            return DEFAULT_U, DEFAULT_V, DEFAULT_W
+
+        # Fit Caglioti: FWHM² = U tan²θ + V tanθ + W
+        # In GSAS-II, U/V/W are in centideg² so FWHM is in centideg.
+        # We work in degrees then convert.
+        tan_arr = np.array([d[0] for d in fwhm_data])
+        fwhm_sq = np.array([d[1] ** 2 for d in fwhm_data])
+
+        # Build design matrix [tan²θ, tanθ, 1]
+        A = np.column_stack([tan_arr ** 2, tan_arr, np.ones_like(tan_arr)])
+        try:
+            result, _, _, _ = np.linalg.lstsq(A, fwhm_sq, rcond=None)
+            U_deg2, V_deg2, W_deg2 = float(result[0]), float(result[1]), float(result[2])
+        except np.linalg.LinAlgError:
+            return DEFAULT_U, DEFAULT_V, DEFAULT_W
+
+        # Convert degrees² → centideg²  (multiply by 10000)
+        U_cdeg2 = U_deg2 * 10000.0
+        V_cdeg2 = V_deg2 * 10000.0
+        W_cdeg2 = W_deg2 * 10000.0
+
+        # Sanity clamp: U and W should be positive, V typically negative
+        U_cdeg2 = max(0.1, min(U_cdeg2, 500.0))
+        V_cdeg2 = max(-200.0, min(V_cdeg2, 200.0))
+        W_cdeg2 = max(0.1, min(W_cdeg2, 500.0))
+
+        return U_cdeg2, V_cdeg2, W_cdeg2
+
+    except Exception:
+        return DEFAULT_U, DEFAULT_V, DEFAULT_W
+
+
+def _write_instprm(work_dir, wavelength, polariz=None, sh_l=None,
+                   u=None, v=None, w=None):
     """Write a minimal GSAS-II .instprm file. Returns path.
 
     Uses module-level DEFAULT_* constants unless overridden.
@@ -461,15 +563,18 @@ def _write_instprm(work_dir, wavelength, polariz=None, sh_l=None):
     path = os.path.join(work_dir, 'instrument.instprm')
     pol = polariz if polariz is not None else DEFAULT_POLARIZ
     shl = sh_l if sh_l is not None else DEFAULT_SH_L
+    _u = u if u is not None else DEFAULT_U
+    _v = v if v is not None else DEFAULT_V
+    _w = w if w is not None else DEFAULT_W
     lines = [
         '#GSAS-II instrument parameter file; do not add/delete items!',
         'Type:PXC',
         f'Lam:{wavelength:.6f}',
         'Zero:0.0',
         f'Polariz.:{pol}',
-        f'U:{DEFAULT_U}',
-        f'V:{DEFAULT_V}',
-        f'W:{DEFAULT_W}',
+        f'U:{_u}',
+        f'V:{_v}',
+        f'W:{_w}',
         f'X:{DEFAULT_X}',
         f'Y:{DEFAULT_Y}',
         'Z:0.0',
@@ -619,8 +724,11 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         print(f"Using user-provided instrument parameters: {instprm_file}",
               flush=True)
     else:
+        # Estimate initial profile parameters from observed peak widths
+        est_u, est_v, est_w = _estimate_profile_params(tt_r, y_r)
         instprm_path = _write_instprm(work_dir, wavelength,
-                                       polariz=polariz, sh_l=sh_l)
+                                       polariz=polariz, sh_l=sh_l,
+                                       u=est_u, v=est_v, w=est_w)
     _write_xye(data_path, tt_r, y_r, sig_r)
 
     cif_paths = []

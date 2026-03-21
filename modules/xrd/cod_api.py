@@ -317,7 +317,8 @@ def get_stick_pattern(structure, wavelength, tt_min=5.0, tt_max=90.0):
 
     # Try to get atom sites for structure factor calculation.
     # Use pymatgen expansion for correct F² (asymmetric unit → full cell),
-    # then fall back to raw parse_cif.
+    # then fall back to raw parse_cif.  Without sites, generate_reflections
+    # uses multiplicity-only weighting which shows many F²≈0 "ghost" sticks.
     sites = structure.get('sites')
     if not sites and structure.get('cif_text'):
         sites = expand_sites_from_cif(structure['cif_text'])
@@ -327,7 +328,29 @@ def get_stick_pattern(structure, wavelength, tt_min=5.0, tt_max=90.0):
                 sites = parsed.get('sites')
             except Exception:
                 sites = None
-    # sites=None is fine — generate_reflections will use multiplicity-only
+
+    # If we still have no sites but have cell + space group info, build
+    # a minimal pymatgen structure for expansion.  This catches cases where
+    # the structure dict has lattice parameters and formula but no cif_text.
+    if not sites:
+        try:
+            from pymatgen.core import Lattice, Structure
+            from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+            lattice = Lattice.from_parameters(a, b, c, al, be, ga)
+            # Try to infer a single atom at origin — better than nothing
+            formula = structure.get('formula', '')
+            if formula:
+                import re
+                elements = re.findall(r'[A-Z][a-z]?', formula)
+                if elements:
+                    # Place one atom of first element at origin; pymatgen
+                    # will expand by symmetry, giving approximate F² filtering
+                    struct = Structure.from_spacegroup(
+                        sg, lattice, [elements[0]], [[0.0, 0.0, 0.0]])
+                    sites = [(str(s.specie), *[float(c) for c in s.frac_coords % 1.0], 1.0)
+                             for s in struct]
+        except Exception:
+            pass
 
     try:
         refs = generate_reflections(a, b, c, al, be, ga, sys_, sg,
