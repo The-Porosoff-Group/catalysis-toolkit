@@ -728,6 +728,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
 
         # Track which stage succeeded (for fallback on failure)
         last_good_stage = 0
+        _failed_stages = []
 
         # ── Helper to safely run a refinement stage ──────────────────────
         def _safe_refine(stage_name, refinement_dicts, stage_num):
@@ -739,9 +740,18 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             except Exception as e:
                 # GSAS-II internally restores from .bak0.gpx on failure,
                 # so the project state reverts to pre-refinement. Safe to continue.
+                _failed_stages.append(stage_name)
                 warnings.warn(f"GSAS-II: {stage_name} failed ({e}). "
                              f"Continuing with results from stage {last_good_stage}.")
                 return False
+
+        # Determine structural complexity → boost cycles for complex phases
+        max_asym_atoms = max(
+            (len(_reduce_to_asymmetric_unit(ph.get('cif_text', '')))
+             for ph in phases if ph.get('cif_text')),
+            default=1)
+        _complex = max_asym_atoms > 6  # W2C has ~6 asym sites
+        _cyc_mult = 2 if _complex else 1  # double cycles for complex phases
 
         if progress_callback:
             progress_callback('GSAS-II: stage 1 — refining background + scale...')
@@ -749,9 +759,15 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # ── Stage 1: Background + scale (one phase at a time) ────────────
         # Fix all scales first, then refine them one at a time to break
         # the correlation that causes SVD singularities.
-        for phase_obj in gsas_phases:
+        for phase_obj, ph_input in zip(gsas_phases, phases):
             hapData = list(phase_obj.data['Histograms'].values())[0]
-            hapData['Scale'] = [1.0, False]  # start fixed
+            # Estimate initial scale: complex structures (many atoms per cell)
+            # have larger structure factors, needing smaller starting scale.
+            # Count asymmetric-unit sites as a proxy.
+            cif_text = ph_input.get('cif_text', '')
+            n_asym = len(_reduce_to_asymmetric_unit(cif_text)) if cif_text else 1
+            init_scale = 1.0 / max(n_asym, 1)
+            hapData['Scale'] = [init_scale, False]  # start fixed
 
         # First: refine background only
         _safe_refine('background', [{
@@ -785,7 +801,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             'set': {
                 'Instrument Parameters': ['U', 'V', 'W', 'X', 'Y'],
             },
-            'cycles': min(max_cycles, 5),
+            'cycles': min(max_cycles, 5 * _cyc_mult),
         }], 2)
 
         if progress_callback:
@@ -818,7 +834,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             phase_obj.set_refinements({'Cell': True})
             ok = _safe_refine(f'cell (phase {idx})', [{
                 'set': {},
-                'cycles': min(max_cycles, 8),
+                'cycles': min(max_cycles, 8 * _cyc_mult),
             }], 3)
             if not ok:
                 # Turn cell refinement back off for this phase
@@ -835,7 +851,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 pass
         _safe_refine('Uiso', [{
             'set': {},
-            'cycles': min(max_cycles, 5),
+            'cycles': min(max_cycles, 5 * _cyc_mult),
         }], 4)
 
         if progress_callback:
@@ -851,8 +867,15 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 'Background': {'type': 'chebyschev-1', 'refine': True,
                                 'no. coeffs': n_bg_coeffs},
             },
-            'cycles': min(max_cycles, 5),
+            'cycles': min(max_cycles, 5 * _cyc_mult),
         }], 5)
+
+        # Warn if multiple refinement stages failed — result may be unreliable
+        if len(_failed_stages) >= 3:
+            warnings.warn(
+                f"GSAS-II: {len(_failed_stages)} stages failed "
+                f"({', '.join(_failed_stages)}). The refinement result may be "
+                f"unreliable — check CIF quality or try simpler fitting range.")
 
         if progress_callback:
             progress_callback('GSAS-II: extracting results...')
