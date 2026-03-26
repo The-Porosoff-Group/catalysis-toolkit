@@ -335,18 +335,28 @@ def get_stick_pattern(structure, wavelength, tt_min=5.0, tt_max=90.0):
     if not sites:
         try:
             from pymatgen.core import Lattice, Structure
-            from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
             lattice = Lattice.from_parameters(a, b, c, al, be, ga)
-            # Try to infer a single atom at origin — better than nothing
             formula = structure.get('formula', '')
             if formula:
                 import re
                 elements = re.findall(r'[A-Z][a-z]?', formula)
-                if elements:
-                    # Place one atom of first element at origin; pymatgen
-                    # will expand by symmetry, giving approximate F² filtering
+                # Use ALL unique elements, not just the first — omitting
+                # elements (e.g. C in W2C) produces wrong structure factors
+                # and ghost reflections where F² should be zero.
+                unique_els = list(dict.fromkeys(elements))  # preserve order, dedupe
+                if unique_els:
+                    # Place each element at a distinct general position.
+                    # Positions are approximate but allow F² cancellation
+                    # from multi-element interference to take effect.
+                    gen_pos = [
+                        [0.0,  0.0,  0.0 ],
+                        [0.25, 0.25, 0.25],
+                        [0.5,  0.0,  0.25],
+                        [0.0,  0.5,  0.5 ],
+                    ]
+                    coords = [gen_pos[i % len(gen_pos)] for i in range(len(unique_els))]
                     struct = Structure.from_spacegroup(
-                        sg, lattice, [elements[0]], [[0.0, 0.0, 0.0]])
+                        sg, lattice, unique_els, coords)
                     sites = [(str(s.specie), *[float(c) for c in s.frac_coords % 1.0], 1.0)
                              for s in struct]
         except Exception:
