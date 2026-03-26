@@ -1376,21 +1376,25 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             zmv_val = zmv_values.get(phase_obj.name, scale_val)
             wt_pct = (zmv_val / total_zmv) * 100 if total_zmv > 0 else 0
 
-            # ── Generate reflections using our own crystallography code ──
-            # This is the same approach used by the in-house Rietveld and
-            # is independent of GSAS-II's internal data structures.
-            # Each phase gets its own reflection list based on its own
-            # space group, cell parameters, and atom sites from CIF.
-            sys_ = (ph.get('system') or 'triclinic').lower()
-            sg = ph.get('spacegroup_number', 1)
-            # Get symmetry-expanded sites for correct structure factors
-            sites = _get_expanded_sites(ph.get('cif_text', ''), sg)
-
-            phase_refs = generate_reflections(
-                a, b, c, alpha, beta, gamma, sys_, sg,
-                wavelength, tt_min, tt_max, hkl_max=12,
-                sites=sites)
-            tick_positions = [round(r[0], 3) for r in phase_refs]
+            # ── Generate tick positions / reflection list ─────────────────
+            # Prefer GSAS-II's refined Fc² values (gsas_refs) when available
+            # — they correctly account for all atoms and symmetry, so ghost
+            # reflections with Fc²≈0 are already excluded (filtered at
+            # extraction, line 1334).  Fall back to our generate_reflections
+            # with pre-refinement F² only when GSAS-II data is missing.
+            gsas_phase_refs = gsas_refs.get(phase_obj.name)
+            if gsas_phase_refs:
+                phase_refs = gsas_phase_refs
+                tick_positions = [round(r[0], 3) for r in phase_refs]
+            else:
+                sys_ = (ph.get('system') or 'triclinic').lower()
+                sg = ph.get('spacegroup_number', 1)
+                sites = _get_expanded_sites(ph.get('cif_text', ''), sg)
+                phase_refs = generate_reflections(
+                    a, b, c, alpha, beta, gamma, sys_, sg,
+                    wavelength, tt_min, tt_max, hkl_max=12,
+                    sites=sites)
+                tick_positions = [round(r[0], 3) for r in phase_refs]
             all_phase_refs.append(phase_refs)
 
             # B_iso (average over atoms; falls back to DEFAULT_B_ISO)
