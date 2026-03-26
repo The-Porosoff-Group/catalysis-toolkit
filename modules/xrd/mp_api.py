@@ -279,6 +279,19 @@ def fetch_cif(mp_id, api_key):
     parsed = parse_cif(cif_text)
     parsed.update({"mp_id": mp_id, "cod_id": mp_id,
                    "formula": formula, "cif_text": cif_text, "source": "mp"})
+
+    # Merge MP symmetry data — pymatgen writes P1 CIFs from Structure dicts
+    # (no symmetry info), so parse_cif returns spacegroup_number=1.  The MP
+    # API's symmetry field has the correct space group.
+    if sym:
+        if sym.get('number'):
+            parsed['spacegroup_number'] = int(sym['number'])
+        if sym.get('symbol'):
+            parsed['spacegroup'] = sym['symbol']
+            parsed['spacegroup_name'] = sym['symbol']
+        if sym.get('crystal_system'):
+            parsed['system'] = sym['crystal_system'].lower()
+
     return parsed
 
 
@@ -287,17 +300,36 @@ def _structure_dict_to_cif(struct_dict, mp_id, formula, sym):
     Convert a pymatgen structure JSON dict to CIF text.
     Tries pymatgen first; falls back to hand-building minimal CIF.
     """
-    # Try pymatgen conversion (available once venv installs it)
+    # Try pymatgen CifWriter with symmetry detection so the CIF
+    # contains the correct space group (not P1).
     try:
         from pymatgen.core import Structure
+        from pymatgen.io.cif import CifWriter
         struct = Structure.from_dict(struct_dict)
+        # Use symprec to detect symmetry; fall back to plain write
+        sg_num = sym.get("number", 1)
+        try:
+            writer = CifWriter(struct, symprec=0.1)
+        except Exception:
+            writer = CifWriter(struct)
         import tempfile, os
         with tempfile.NamedTemporaryFile(suffix=".cif", delete=False, mode="w") as f:
             tmp = f.name
-        struct.to(filename=tmp)
+        writer.write_file(tmp)
         with open(tmp) as f:
             cif_text = f.read()
         os.unlink(tmp)
+        # If pymatgen still wrote P1 but MP knows the real SG, patch the tags
+        if sg_num > 1 and ("_symmetry_Int_Tables_number 1" in cif_text
+                           or "'P 1'" in cif_text):
+            sg_sym = sym.get("symbol", "P 1")
+            import re
+            cif_text = re.sub(
+                r"_symmetry_Int_Tables_number\s+\d+",
+                f"_symmetry_Int_Tables_number {sg_num}", cif_text)
+            cif_text = re.sub(
+                r"_symmetry_space_group_name_H-M\s+'[^']*'",
+                f"_symmetry_space_group_name_H-M '{sg_sym}'", cif_text)
         return cif_text
     except Exception:
         pass
