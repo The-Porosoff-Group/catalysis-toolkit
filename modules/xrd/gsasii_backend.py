@@ -552,8 +552,124 @@ def _estimate_profile_params(tt, y_obs):
         return DEFAULT_U, DEFAULT_V, DEFAULT_W
 
 
+def _estimate_lorentzian_params(tt, y_obs, U_cdeg2, V_cdeg2, W_cdeg2):
+    """Estimate initial Lorentzian profile parameters X and Y from peak shapes.
+
+    Measures the Lorentzian fraction of observed peaks by comparing their
+    half-max width to their quarter-max width (Gaussian ratio ~1.48,
+    Lorentzian ratio ~1.73).  Decomposes each peak's FWHM into Gaussian and
+    Lorentzian components using the Thompson-Cox-Hastings (TCH) relationship,
+    then fits H_L = X*tan(theta) + Y/cos(theta) across peaks.
+
+    Returns (X, Y) in centidegrees, or moderate defaults if estimation fails.
+    Critical for carbides/oxides with significant crystallite-size (Y) and
+    micro-strain (X) Lorentzian broadening.
+    """
+    try:
+        from scipy.signal import find_peaks
+
+        baseline = np.percentile(y_obs, 10)
+        y_corr = y_obs - baseline
+
+        height_thresh = 0.1 * y_corr.max()
+        step = float(tt[1] - tt[0]) if len(tt) > 1 else 0.02
+        distance = max(1, int(0.5 / step))
+        peaks, _ = find_peaks(y_corr, height=height_thresh, distance=distance)
+
+        if len(peaks) < 2:
+            return DEFAULT_X, DEFAULT_Y
+
+        lor_data = []  # (tan_theta, cos_theta, H_L_deg)
+        for pk in peaks:
+            half_max = y_corr[pk] / 2.0
+            quarter_max = y_corr[pk] / 4.0
+
+            # Measure half-max width
+            left_h, right_h = pk, pk
+            while left_h > 0 and y_corr[left_h] > half_max:
+                left_h -= 1
+            while right_h < len(y_corr) - 1 and y_corr[right_h] > half_max:
+                right_h += 1
+            fwhm_deg = float(tt[right_h] - tt[left_h])
+
+            # Measure quarter-max width
+            left_q, right_q = pk, pk
+            while left_q > 0 and y_corr[left_q] > quarter_max:
+                left_q -= 1
+            while right_q < len(y_corr) - 1 and y_corr[right_q] > quarter_max:
+                right_q += 1
+            fwqm_deg = float(tt[right_q] - tt[left_q])
+
+            if fwhm_deg < 0.02 or fwhm_deg > 3.0 or fwqm_deg <= fwhm_deg:
+                continue
+
+            # Estimate Lorentzian fraction eta from FWQM/FWHM ratio.
+            # Gaussian: FWQM/FWHM = sqrt(2) ≈ 1.414
+            # Lorentzian: FWQM/FWHM = sqrt(3) ≈ 1.732
+            # Linear interpolation gives eta (Lorentzian fraction).
+            ratio = fwqm_deg / fwhm_deg
+            # Linear interpolation for eta
+            eta = (ratio - 1.4142) / (1.7321 - 1.4142)
+            eta = max(0.0, min(eta, 1.0))
+
+            if eta < 0.01:
+                continue  # essentially pure Gaussian, no Lorentzian info
+
+            # TCH decomposition: total FWHM ≈ eta*H_L + (1-eta)*H_G (simplified)
+            # More precise: use the 5th-order TCH formula inverse.
+            # For a practical estimate, the pseudo-Voigt approximation gives:
+            #   H_L ≈ FWHM * eta (leading-order)
+            #   H_G ≈ FWHM * (1 - eta)
+            # Subtract the Gaussian Caglioti contribution to isolate Lorentzian.
+            theta_rad = math.radians(float(tt[pk]) / 2.0)
+            tan_th = math.tan(theta_rad)
+            cos_th = math.cos(theta_rad)
+
+            # Caglioti Gaussian FWHM² in deg² (convert from centideg²)
+            H_G_sq_deg2 = (U_cdeg2 * tan_th**2 + V_cdeg2 * tan_th
+                           + W_cdeg2) / 10000.0
+            H_G_deg = math.sqrt(max(H_G_sq_deg2, 0.001))
+
+            # Lorentzian FWHM: from total FWHM and Gaussian contribution
+            # Using TCH relation: H_total^5 ≈ H_G^5 + ... + H_L^5
+            # Simplified: H_L ≈ max(0, FWHM - H_G) when eta > 0
+            # More robust: H_L = FWHM * eta (pseudo-Voigt definition)
+            H_L_deg = fwhm_deg * eta
+            if H_L_deg > 0.005:
+                lor_data.append((tan_th, cos_th, H_L_deg))
+
+        if len(lor_data) < 2:
+            return DEFAULT_X, DEFAULT_Y
+
+        # Fit H_L = X*tan(theta) + Y/cos(theta)
+        # X and Y are in degrees here; convert to centideg at the end.
+        tan_arr = np.array([d[0] for d in lor_data])
+        inv_cos_arr = np.array([1.0 / d[1] for d in lor_data])
+        hl_arr = np.array([d[2] for d in lor_data])
+
+        A = np.column_stack([tan_arr, inv_cos_arr])
+        try:
+            result, _, _, _ = np.linalg.lstsq(A, hl_arr, rcond=None)
+            X_deg, Y_deg = float(result[0]), float(result[1])
+        except np.linalg.LinAlgError:
+            return DEFAULT_X, DEFAULT_Y
+
+        # Convert degrees → centidegrees (multiply by 100)
+        X_cdeg = X_deg * 100.0
+        Y_cdeg = Y_deg * 100.0
+
+        # Sanity clamp: both should be non-negative, moderate magnitude
+        X_cdeg = max(0.0, min(X_cdeg, 50.0))
+        Y_cdeg = max(0.0, min(Y_cdeg, 50.0))
+
+        return X_cdeg, Y_cdeg
+
+    except Exception:
+        return DEFAULT_X, DEFAULT_Y
+
+
 def _write_instprm(work_dir, wavelength, polariz=None, sh_l=None,
-                   u=None, v=None, w=None):
+                   u=None, v=None, w=None, x=None, y=None):
     """Write a minimal GSAS-II .instprm file. Returns path.
 
     Uses module-level DEFAULT_* constants unless overridden.
@@ -566,6 +682,8 @@ def _write_instprm(work_dir, wavelength, polariz=None, sh_l=None,
     _u = u if u is not None else DEFAULT_U
     _v = v if v is not None else DEFAULT_V
     _w = w if w is not None else DEFAULT_W
+    _x = x if x is not None else DEFAULT_X
+    _y = y if y is not None else DEFAULT_Y
     lines = [
         '#GSAS-II instrument parameter file; do not add/delete items!',
         'Type:PXC',
@@ -575,8 +693,8 @@ def _write_instprm(work_dir, wavelength, polariz=None, sh_l=None,
         f'U:{_u}',
         f'V:{_v}',
         f'W:{_w}',
-        f'X:{DEFAULT_X}',
-        f'Y:{DEFAULT_Y}',
+        f'X:{_x}',
+        f'Y:{_y}',
         'Z:0.0',
         f'SH/L:{shl}',
         'Azimuth:0.0',
@@ -726,9 +844,12 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
     else:
         # Estimate initial profile parameters from observed peak widths
         est_u, est_v, est_w = _estimate_profile_params(tt_r, y_r)
+        est_x, est_y = _estimate_lorentzian_params(tt_r, y_r,
+                                                    est_u, est_v, est_w)
         instprm_path = _write_instprm(work_dir, wavelength,
                                        polariz=polariz, sh_l=sh_l,
-                                       u=est_u, v=est_v, w=est_w)
+                                       u=est_u, v=est_v, w=est_w,
+                                       x=est_x, y=est_y)
     _write_xye(data_path, tt_r, y_r, sig_r)
 
     cif_paths = []
@@ -990,9 +1111,62 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         }], 4)
 
         if progress_callback:
-            progress_callback('GSAS-II: stage 5 — final background + scale polish...')
+            progress_callback('GSAS-II: stage 5 — refining atom positions (XYZ)...')
 
-        # ── Stage 5: Final polish — re-refine background + scale ────────
+        # ── Stage 5: Atom positions (XYZ) ─────────────────────────────
+        # For complex structures (carbides, oxides) the COD database atom
+        # coordinates may not exactly match this sample.  Wrong positions →
+        # wrong structure factors F(hkl) → the Rietveld model cannot match
+        # observed peak intensity ratios → convergence failure.
+        # GSAS-II automatically constrains atoms on special positions, so
+        # this is safe for simple metals (no-op) while critical for W2C etc.
+        #
+        # Save atom positions before refinement for damping check.
+        saved_xyz = {}
+        for idx, phase_obj in enumerate(gsas_phases):
+            phase_atoms = phase_obj.data.get('Atoms', [])
+            saved_xyz[idx] = [(a[3], a[4], a[5]) if len(a) > 5 else None
+                              for a in phase_atoms]
+            try:
+                phase_obj.set_refinements({'Atoms': {'all': 'XU'}})
+            except Exception:
+                pass
+        xyz_ok = _safe_refine('atom XYZ', [{
+            'set': {},
+            'cycles': min(max_cycles, 3 * _cyc_mult),
+        }], 5)
+
+        # Damping check: if any atom jumped > 0.5 fractional units,
+        # it likely hopped to a symmetry-equivalent site — revert it.
+        if xyz_ok:
+            for idx, phase_obj in enumerate(gsas_phases):
+                phase_atoms = phase_obj.data.get('Atoms', [])
+                for j, atom in enumerate(phase_atoms):
+                    if (len(atom) > 5 and idx in saved_xyz
+                            and j < len(saved_xyz[idx])
+                            and saved_xyz[idx][j] is not None):
+                        ox, oy, oz = saved_xyz[idx][j]
+                        dx = abs(atom[3] - ox)
+                        dy = abs(atom[4] - oy)
+                        dz = abs(atom[5] - oz)
+                        if max(dx, dy, dz) > 0.5:
+                            warnings.warn(
+                                f"GSAS-II: atom {j} in phase {idx} jumped "
+                                f"by ({dx:.3f},{dy:.3f},{dz:.3f}) — "
+                                f"reverting to original position.")
+                            atom[3], atom[4], atom[5] = ox, oy, oz
+
+        # Turn off XYZ refinement flags, keep only Uiso for remaining stages
+        for phase_obj in gsas_phases:
+            try:
+                phase_obj.set_refinements({'Atoms': {'all': 'U'}})
+            except Exception:
+                pass
+
+        if progress_callback:
+            progress_callback('GSAS-II: stage 6 — final background + scale polish...')
+
+        # ── Stage 6: Final polish — re-refine background + scale ────────
         # Background was first refined in Stage 1 when profile/cell/Uiso
         # were still at initial values. Now that all structural parameters
         # have converged, re-optimize background to remove systematic
@@ -1003,7 +1177,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                                 'no. coeffs': n_bg_coeffs},
             },
             'cycles': min(max_cycles, 5 * _cyc_mult),
-        }], 5)
+        }], 6)
 
         # Warn if multiple refinement stages failed — result may be unreliable
         if len(_failed_stages) >= 3:
