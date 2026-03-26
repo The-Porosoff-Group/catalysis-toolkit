@@ -460,13 +460,27 @@ def generate_reflections(a, b, c, al, be, ga, system, spacegroup_number,
                         F2 = structure_factor_sq(h, k, l, sites, s)
                     seen_d[d_key] = [two_theta, d, (abs(h), abs(k), abs(l)), 1, F2]
 
-    # Build final list with intensity weights
+    # Build final list with intensity weights.
+    # Use a two-pass filter: absolute threshold removes truly extinct peaks,
+    # then a relative threshold removes ghost reflections whose F² is
+    # negligible compared to the strongest peak (common in multi-element
+    # compounds like W2C where W-C cancellation produces near-zero F²).
+    entries = sorted(seen_d.values(), key=lambda x: x[0])
+
+    max_F2 = 0.0
+    if sites is not None:
+        for entry in entries:
+            F2 = entry[4]
+            if F2 is not None and F2 > max_F2:
+                max_F2 = F2
+    rel_threshold = max_F2 * 1e-3  # 0.1% of strongest reflection
+
     reflections = []
-    for entry in sorted(seen_d.values(), key=lambda x: x[0]):
+    for entry in entries:
         two_theta, d, hkl, mult, F2 = entry
         if sites is not None:
             # Skip reflections with negligible structure factor
-            if F2 is not None and F2 < 1e-4:
+            if F2 is not None and F2 < max(1e-4, rel_threshold):
                 continue
             # Intensity weight = mult × |F|² (LP applied later in compute_phase_pattern)
             weight = mult * (F2 if F2 is not None else 1.0)
