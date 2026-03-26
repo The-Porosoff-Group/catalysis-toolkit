@@ -175,7 +175,8 @@ def _sg_symbol_to_number(symbol):
     s = str(symbol).strip().replace(' ', '').replace('_', '')
     # Direct lookup table for phases common in catalysis research
     _MAP = {
-        'Im-3m': 229, 'Im3m': 229, 'Im-3m': 229,
+        # Cubic
+        'Im-3m': 229, 'Im3m': 229,
         'Fm-3m': 225, 'Fm3m': 225,
         'Pm-3n': 223, 'Pm3n': 223,
         'Pm-3m': 221, 'Pm3m': 221,
@@ -183,20 +184,50 @@ def _sg_symbol_to_number(symbol):
         'Ia-3':  206, 'Ia3':  206,
         'Ia-3d': 230, 'Ia3d': 230,
         'Fd-3m': 227, 'Fd3m': 227,
+        'Fm-3':  202, 'Fm3':  202,
+        'F-43m': 216, 'F43m': 216,
+        'Pn-3m': 224, 'Pn3m': 224,
+        'Im-3':  204, 'Im3':  204,
+        # Hexagonal / Trigonal
         'P63/mmc': 194, 'P6_3/mmc': 194, 'P63mmc': 194,
         'P6/mmm': 191, 'P6mmm': 191,
         'P63/m':  176, 'P6_3/m': 176,
         'P-6m2':  187, 'P6m2':  187,
+        'P-62m':  189, 'P62m':  189,
         'P-6':    174,
         'P63mc':  186,
         'P6322':  182,
         'P63':    173,
         'R-3m':   166, 'R3m': 166,
+        'R-3c':   167, 'R3c': 167,
         'R-3':    148, 'R3':  148,
+        'R3':     146,
+        # Tetragonal
+        'I4/mmm': 139, 'I4mmm': 139,
+        'I41/amd': 141, 'I41amd': 141,
+        'P42/mnm': 136, 'P42mnm': 136,
+        'I4/mcm': 140,
+        'P4/mmm': 123,
+        # Orthorhombic — critical for carbides, oxides
+        'Pbcn':    60,
+        'Pbca':    61,
         'Pnma':    62, 'Pbnm': 62,
-        'Cmcm':    63, 'Cmce': 64,
-        'P21/c':   14, 'P2_1/c': 14,
-        'C2/m':    12,
+        'Cmcm':    63, 'Cmce': 64, 'Cmca': 64,
+        'Cmmm':    65,
+        'Fmmm':    69,
+        'Immm':    71,
+        'Imma':    74,
+        'P212121': 19,
+        'Pna21':   33,
+        'Pca21':   29,
+        'Pmc21':   26,
+        # Monoclinic
+        'P21/c':   14, 'P2_1/c': 14, 'P21c': 14,
+        'C2/c':    15, 'C2c':    15,
+        'C2/m':    12, 'C2m':    12,
+        'P21/m':   11, 'P21m':   11,
+        'P21':      4,
+        # Triclinic
         'P-1':      2, 'P1':  1,
     }
     # Try as-is first, then stripped

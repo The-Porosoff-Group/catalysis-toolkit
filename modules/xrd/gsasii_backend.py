@@ -84,16 +84,67 @@ def import_error():
 # ─────────────────────────────────────────────────────────────────────────────
 
 _SG_HM = {
-    # Common catalyst phases — add entries as needed
-    1: 'P 1', 2: 'P -1', 12: 'C 2/m', 14: 'P 21/c', 15: 'C 2/c',
-    62: 'P n m a', 63: 'C m c m', 139: 'I 4/m m m', 141: 'I 41/a m d',
-    148: 'R -3', 166: 'R -3 m', 167: 'R -3 c',
-    173: 'P 63', 176: 'P 63/m', 186: 'P 63 m c', 187: 'P -6 m 2',
-    191: 'P 6/m m m', 194: 'P 63/m m c',
-    196: 'F 2 3', 202: 'F m -3', 216: 'F -4 3 m', 225: 'F m -3 m',
-    227: 'F d -3 m', 229: 'I m -3 m', 223: 'P m -3 n', 221: 'P m -3 m',
+    # Triclinic / Monoclinic
+    1: 'P 1', 2: 'P -1', 3: 'P 2', 4: 'P 21', 5: 'C 2',
+    6: 'P m', 7: 'P c', 8: 'C m', 9: 'C c', 10: 'P 2/m',
+    11: 'P 21/m', 12: 'C 2/m', 13: 'P 2/c', 14: 'P 21/c', 15: 'C 2/c',
+    # Orthorhombic (common catalyst phases)
+    16: 'P 2 2 2', 19: 'P 21 21 21', 26: 'P m c 21', 29: 'P c a 21',
+    31: 'P m n 21', 33: 'P n a 21', 36: 'C m c 21', 40: 'A m a 2',
+    44: 'I m m 2', 46: 'I m a 2',
+    47: 'P m m m', 51: 'P m m a', 55: 'P b a m', 57: 'P b c m',
+    58: 'P n n m', 59: 'P m m n', 60: 'P b c n', 61: 'P b c a',
+    62: 'P n m a', 63: 'C m c m', 64: 'C m c a', 65: 'C m m m',
+    66: 'C c c m', 69: 'F m m m', 70: 'F d d d', 71: 'I m m m',
+    72: 'I b a m', 74: 'I m m a',
+    # Tetragonal
+    75: 'P 4', 82: 'I -4', 83: 'P 4/m', 84: 'P 42/m',
+    85: 'P 4/n', 87: 'I 4/m', 88: 'I 41/a',
+    99: 'P 4 m m', 107: 'I 4 m m', 115: 'P -4 m 2',
+    119: 'I -4 m 2', 121: 'I -4 2 m', 122: 'I -4 2 d',
+    123: 'P 4/m m m', 129: 'P 4/n m m', 131: 'P 42/m m c',
+    136: 'P 42/m n m', 139: 'I 4/m m m', 140: 'I 4/m c m',
+    141: 'I 41/a m d', 142: 'I 41/a c d',
+    # Trigonal / Hexagonal
+    143: 'P 3', 146: 'R 3', 147: 'P -3', 148: 'R -3',
+    150: 'P 3 2 1', 152: 'P 31 2 1', 154: 'P 32 2 1',
+    155: 'R 3 2', 156: 'P 3 m 1', 157: 'P 3 1 m',
+    160: 'R 3 m', 161: 'R 3 c', 162: 'P -3 1 m', 163: 'P -3 1 c',
+    164: 'P -3 m 1', 165: 'P -3 c 1', 166: 'R -3 m', 167: 'R -3 c',
+    168: 'P 6', 173: 'P 63', 174: 'P -6', 175: 'P 6/m', 176: 'P 63/m',
+    183: 'P 6 m m', 186: 'P 63 m c', 187: 'P -6 m 2', 189: 'P -6 2 m',
+    191: 'P 6/m m m', 193: 'P 63/m c m', 194: 'P 63/m m c',
+    # Cubic
+    195: 'P 2 3', 196: 'F 2 3', 197: 'I 2 3', 198: 'P 21 3',
+    199: 'I 21 3', 200: 'P m -3', 201: 'P n -3', 202: 'F m -3',
+    203: 'F d -3', 204: 'I m -3', 205: 'P a -3', 206: 'I a -3',
+    207: 'P 4 3 2', 209: 'F 4 3 2', 211: 'I 4 3 2',
+    212: 'P 43 3 2', 213: 'P 41 3 2', 214: 'I 41 3 2',
+    215: 'P -4 3 m', 216: 'F -4 3 m', 217: 'I -4 3 m',
+    218: 'P -4 3 n', 219: 'F -4 3 c', 220: 'I -4 3 d',
+    221: 'P m -3 m', 222: 'P n -3 n', 223: 'P m -3 n',
+    224: 'P n -3 m', 225: 'F m -3 m', 226: 'F m -3 c',
+    227: 'F d -3 m', 228: 'F d -3 c', 229: 'I m -3 m',
     230: 'I a -3 d',
 }
+
+
+def _get_hm_symbol(sg_num):
+    """Get H-M symbol for a space group number.
+
+    Uses the static table first, then tries pymatgen as a fallback.
+    """
+    if sg_num in _SG_HM:
+        return _SG_HM[sg_num]
+    try:
+        from pymatgen.symmetry.groups import SpaceGroup
+        sg = SpaceGroup.from_int_number(sg_num)
+        return sg.symbol
+    except Exception:
+        pass
+    warnings.warn(f"Space group {sg_num} not in lookup table — using 'P 1'. "
+                  f"Add it to _SG_HM in gsasii_backend.py for correct results.")
+    return 'P 1'
 
 
 # ── Default instrument / refinement parameters ────────────────────────────
@@ -139,6 +190,8 @@ def _reduce_to_asymmetric_unit(cif_text):
 
     Uses pymatgen's symmetrized structure to get the unique sites.
     Falls back to the raw sites if pymatgen is unavailable.
+
+    Validates the result by re-expanding and comparing site counts.
     """
     if not cif_text:
         return []
@@ -157,21 +210,52 @@ def _reduce_to_asymmetric_unit(cif_text):
             _os.unlink(_tmp)
         structs = parser.parse_structures(primitive=False)
         if structs:
-            sga = SpacegroupAnalyzer(structs[0], symprec=0.1)
-            sym_struct = sga.get_symmetrized_structure()
-            sites = []
-            for equiv_sites in sym_struct.equivalent_sites:
-                site = equiv_sites[0]  # take first of each equivalent group
-                frac = site.frac_coords % 1.0
-                el = str(site.specie)
-                sites.append((el, float(frac[0]), float(frac[1]),
-                              float(frac[2]), 1.0))
+            full_cell_n = len(structs[0])  # total sites in full unit cell
+
+            # Try tight tolerance first (0.01 Å), fall back to looser (0.1 Å).
+            # Tight tolerance avoids merging non-equivalent sites in compact
+            # cells like W2C Pbcn where heavy atoms are close together.
+            sites = None
+            for symprec in (0.01, 0.05, 0.1):
+                try:
+                    sga = SpacegroupAnalyzer(structs[0], symprec=symprec)
+                    sym_struct = sga.get_symmetrized_structure()
+                    candidate = []
+                    for equiv_sites in sym_struct.equivalent_sites:
+                        site = equiv_sites[0]
+                        frac = site.frac_coords % 1.0
+                        el = str(site.specie)
+                        occ = 1.0
+                        if hasattr(site, 'species'):
+                            sp = site.species
+                            if hasattr(sp, 'num_atoms'):
+                                occ = float(sp.num_atoms)
+                        candidate.append((el, float(frac[0]), float(frac[1]),
+                                          float(frac[2]), occ))
+
+                    # Validate: the number of equivalent sites summed across
+                    # all groups should equal the full unit cell site count.
+                    # This catches bad equivalence groupings.
+                    expanded_n = sum(
+                        len(eq) for eq in sym_struct.equivalent_sites)
+                    if expanded_n == full_cell_n and candidate:
+                        sites = candidate
+                        break
+                    # If counts don't match, try a looser tolerance
+                except Exception:
+                    continue
+
             if sites:
                 return sites
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"  Warning: pymatgen asymmetric-unit reduction failed: {e}",
+              flush=True)
+        print("  Falling back to raw CIF sites — if the CIF contains the "
+              "full unit cell, GSAS-II may over-expand.", flush=True)
 
-    # Fallback: raw parse_cif
+    # Fallback: raw parse_cif (usually fine for COD CIFs which list
+    # asymmetric unit; may cause over-expansion for MP/pymatgen CIFs
+    # which list the full unit cell).
     try:
         parsed = parse_cif(cif_text)
         return parsed.get('sites') or []
@@ -199,10 +283,10 @@ def _build_conventional_cif(ph):
     formula = ph.get('formula', '')
     Z   = ph.get('Z', '')
 
-    # H-M symbol — try phase dict first, then lookup table
+    # H-M symbol — try phase dict first, then dynamic lookup
     hm = ph.get('spacegroup', '') or ph.get('spacegroup_name', '')
     if not hm:
-        hm = _SG_HM.get(sg, 'P 1')
+        hm = _get_hm_symbol(sg)
 
     # Get atom sites reduced to the asymmetric unit.
     # GSAS-II applies space-group symmetry itself, so we must NOT give
@@ -389,7 +473,203 @@ def _write_xye(path, tt, y_obs, sigma):
             f.write(f"{tt[i]:.6f}  {y_obs[i]:.4f}  {sigma[i]:.4f}\n")
 
 
-def _write_instprm(work_dir, wavelength, polariz=None, sh_l=None):
+def _estimate_profile_params(tt, y_obs):
+    """Estimate initial Caglioti U, V, W from observed peak widths.
+
+    Finds the strongest peaks in the data, measures their approximate FWHM,
+    and fits the Caglioti equation FWHM² = U tan²θ + V tanθ + W to get
+    reasonable starting values.  Returns (U, V, W) in centidegrees² / centideg²
+    (GSAS-II internal units), or the module defaults if estimation fails.
+
+    This is critical for complex phases like W2C where the default U/V/W
+    may be far from the true broadening, causing GSAS-II to converge to
+    a local minimum.
+    """
+    try:
+        from scipy.signal import find_peaks
+
+        # Subtract a simple baseline (percentile)
+        baseline = np.percentile(y_obs, 10)
+        y_corr = y_obs - baseline
+
+        # Find prominent peaks (height > 10% of max, well separated)
+        height_thresh = 0.1 * y_corr.max()
+        step = float(tt[1] - tt[0]) if len(tt) > 1 else 0.02
+        distance = max(1, int(0.5 / step))  # at least 0.5° apart
+        peaks, props = find_peaks(y_corr, height=height_thresh, distance=distance)
+
+        if len(peaks) < 2:
+            return DEFAULT_U, DEFAULT_V, DEFAULT_W
+
+        # Measure FWHM for each peak
+        fwhm_data = []  # (tan_theta, fwhm_deg)
+        for pk in peaks:
+            half_max = y_corr[pk] / 2.0
+            # Walk left
+            left = pk
+            while left > 0 and y_corr[left] > half_max:
+                left -= 1
+            # Walk right
+            right = pk
+            while right < len(y_corr) - 1 and y_corr[right] > half_max:
+                right += 1
+            fwhm_deg = float(tt[right] - tt[left])
+            if 0.02 < fwhm_deg < 3.0:  # reasonable range
+                theta_rad = math.radians(float(tt[pk]) / 2.0)
+                tan_th = math.tan(theta_rad)
+                fwhm_data.append((tan_th, fwhm_deg))
+
+        if len(fwhm_data) < 2:
+            return DEFAULT_U, DEFAULT_V, DEFAULT_W
+
+        # Fit Caglioti: FWHM² = U tan²θ + V tanθ + W
+        # In GSAS-II, U/V/W are in centideg² so FWHM is in centideg.
+        # We work in degrees then convert.
+        tan_arr = np.array([d[0] for d in fwhm_data])
+        fwhm_sq = np.array([d[1] ** 2 for d in fwhm_data])
+
+        # Build design matrix [tan²θ, tanθ, 1]
+        A = np.column_stack([tan_arr ** 2, tan_arr, np.ones_like(tan_arr)])
+        try:
+            result, _, _, _ = np.linalg.lstsq(A, fwhm_sq, rcond=None)
+            U_deg2, V_deg2, W_deg2 = float(result[0]), float(result[1]), float(result[2])
+        except np.linalg.LinAlgError:
+            return DEFAULT_U, DEFAULT_V, DEFAULT_W
+
+        # Convert degrees² → centideg²  (multiply by 10000)
+        U_cdeg2 = U_deg2 * 10000.0
+        V_cdeg2 = V_deg2 * 10000.0
+        W_cdeg2 = W_deg2 * 10000.0
+
+        # Sanity clamp: U and W should be positive, V typically negative
+        U_cdeg2 = max(0.1, min(U_cdeg2, 500.0))
+        V_cdeg2 = max(-200.0, min(V_cdeg2, 200.0))
+        W_cdeg2 = max(0.1, min(W_cdeg2, 500.0))
+
+        return U_cdeg2, V_cdeg2, W_cdeg2
+
+    except Exception:
+        return DEFAULT_U, DEFAULT_V, DEFAULT_W
+
+
+def _estimate_lorentzian_params(tt, y_obs, U_cdeg2, V_cdeg2, W_cdeg2):
+    """Estimate initial Lorentzian profile parameters X and Y from peak shapes.
+
+    Measures the Lorentzian fraction of observed peaks by comparing their
+    half-max width to their quarter-max width (Gaussian ratio ~1.48,
+    Lorentzian ratio ~1.73).  Decomposes each peak's FWHM into Gaussian and
+    Lorentzian components using the Thompson-Cox-Hastings (TCH) relationship,
+    then fits H_L = X*tan(theta) + Y/cos(theta) across peaks.
+
+    Returns (X, Y) in centidegrees, or moderate defaults if estimation fails.
+    Critical for carbides/oxides with significant crystallite-size (Y) and
+    micro-strain (X) Lorentzian broadening.
+    """
+    try:
+        from scipy.signal import find_peaks
+
+        baseline = np.percentile(y_obs, 10)
+        y_corr = y_obs - baseline
+
+        height_thresh = 0.1 * y_corr.max()
+        step = float(tt[1] - tt[0]) if len(tt) > 1 else 0.02
+        distance = max(1, int(0.5 / step))
+        peaks, _ = find_peaks(y_corr, height=height_thresh, distance=distance)
+
+        if len(peaks) < 2:
+            return DEFAULT_X, DEFAULT_Y
+
+        lor_data = []  # (tan_theta, cos_theta, H_L_deg)
+        for pk in peaks:
+            half_max = y_corr[pk] / 2.0
+            quarter_max = y_corr[pk] / 4.0
+
+            # Measure half-max width
+            left_h, right_h = pk, pk
+            while left_h > 0 and y_corr[left_h] > half_max:
+                left_h -= 1
+            while right_h < len(y_corr) - 1 and y_corr[right_h] > half_max:
+                right_h += 1
+            fwhm_deg = float(tt[right_h] - tt[left_h])
+
+            # Measure quarter-max width
+            left_q, right_q = pk, pk
+            while left_q > 0 and y_corr[left_q] > quarter_max:
+                left_q -= 1
+            while right_q < len(y_corr) - 1 and y_corr[right_q] > quarter_max:
+                right_q += 1
+            fwqm_deg = float(tt[right_q] - tt[left_q])
+
+            if fwhm_deg < 0.02 or fwhm_deg > 3.0 or fwqm_deg <= fwhm_deg:
+                continue
+
+            # Estimate Lorentzian fraction eta from FWQM/FWHM ratio.
+            # Gaussian: FWQM/FWHM = sqrt(2) ≈ 1.414
+            # Lorentzian: FWQM/FWHM = sqrt(3) ≈ 1.732
+            # Linear interpolation gives eta (Lorentzian fraction).
+            ratio = fwqm_deg / fwhm_deg
+            # Linear interpolation for eta
+            eta = (ratio - 1.4142) / (1.7321 - 1.4142)
+            eta = max(0.0, min(eta, 1.0))
+
+            if eta < 0.01:
+                continue  # essentially pure Gaussian, no Lorentzian info
+
+            # TCH decomposition: total FWHM ≈ eta*H_L + (1-eta)*H_G (simplified)
+            # More precise: use the 5th-order TCH formula inverse.
+            # For a practical estimate, the pseudo-Voigt approximation gives:
+            #   H_L ≈ FWHM * eta (leading-order)
+            #   H_G ≈ FWHM * (1 - eta)
+            # Subtract the Gaussian Caglioti contribution to isolate Lorentzian.
+            theta_rad = math.radians(float(tt[pk]) / 2.0)
+            tan_th = math.tan(theta_rad)
+            cos_th = math.cos(theta_rad)
+
+            # Caglioti Gaussian FWHM² in deg² (convert from centideg²)
+            H_G_sq_deg2 = (U_cdeg2 * tan_th**2 + V_cdeg2 * tan_th
+                           + W_cdeg2) / 10000.0
+            H_G_deg = math.sqrt(max(H_G_sq_deg2, 0.001))
+
+            # Lorentzian FWHM: from total FWHM and Gaussian contribution
+            # Using TCH relation: H_total^5 ≈ H_G^5 + ... + H_L^5
+            # Simplified: H_L ≈ max(0, FWHM - H_G) when eta > 0
+            # More robust: H_L = FWHM * eta (pseudo-Voigt definition)
+            H_L_deg = fwhm_deg * eta
+            if H_L_deg > 0.005:
+                lor_data.append((tan_th, cos_th, H_L_deg))
+
+        if len(lor_data) < 2:
+            return DEFAULT_X, DEFAULT_Y
+
+        # Fit H_L = X*tan(theta) + Y/cos(theta)
+        # X and Y are in degrees here; convert to centideg at the end.
+        tan_arr = np.array([d[0] for d in lor_data])
+        inv_cos_arr = np.array([1.0 / d[1] for d in lor_data])
+        hl_arr = np.array([d[2] for d in lor_data])
+
+        A = np.column_stack([tan_arr, inv_cos_arr])
+        try:
+            result, _, _, _ = np.linalg.lstsq(A, hl_arr, rcond=None)
+            X_deg, Y_deg = float(result[0]), float(result[1])
+        except np.linalg.LinAlgError:
+            return DEFAULT_X, DEFAULT_Y
+
+        # Convert degrees → centidegrees (multiply by 100)
+        X_cdeg = X_deg * 100.0
+        Y_cdeg = Y_deg * 100.0
+
+        # Sanity clamp: both should be non-negative, moderate magnitude
+        X_cdeg = max(0.0, min(X_cdeg, 50.0))
+        Y_cdeg = max(0.0, min(Y_cdeg, 50.0))
+
+        return X_cdeg, Y_cdeg
+
+    except Exception:
+        return DEFAULT_X, DEFAULT_Y
+
+
+def _write_instprm(work_dir, wavelength, polariz=None, sh_l=None,
+                   u=None, v=None, w=None, x=None, y=None):
     """Write a minimal GSAS-II .instprm file. Returns path.
 
     Uses module-level DEFAULT_* constants unless overridden.
@@ -399,17 +679,22 @@ def _write_instprm(work_dir, wavelength, polariz=None, sh_l=None):
     path = os.path.join(work_dir, 'instrument.instprm')
     pol = polariz if polariz is not None else DEFAULT_POLARIZ
     shl = sh_l if sh_l is not None else DEFAULT_SH_L
+    _u = u if u is not None else DEFAULT_U
+    _v = v if v is not None else DEFAULT_V
+    _w = w if w is not None else DEFAULT_W
+    _x = x if x is not None else DEFAULT_X
+    _y = y if y is not None else DEFAULT_Y
     lines = [
         '#GSAS-II instrument parameter file; do not add/delete items!',
         'Type:PXC',
         f'Lam:{wavelength:.6f}',
         'Zero:0.0',
         f'Polariz.:{pol}',
-        f'U:{DEFAULT_U}',
-        f'V:{DEFAULT_V}',
-        f'W:{DEFAULT_W}',
-        f'X:{DEFAULT_X}',
-        f'Y:{DEFAULT_Y}',
+        f'U:{_u}',
+        f'V:{_v}',
+        f'W:{_w}',
+        f'X:{_x}',
+        f'Y:{_y}',
         'Z:0.0',
         f'SH/L:{shl}',
         'Azimuth:0.0',
@@ -557,8 +842,14 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         print(f"Using user-provided instrument parameters: {instprm_file}",
               flush=True)
     else:
+        # Estimate initial profile parameters from observed peak widths
+        est_u, est_v, est_w = _estimate_profile_params(tt_r, y_r)
+        est_x, est_y = _estimate_lorentzian_params(tt_r, y_r,
+                                                    est_u, est_v, est_w)
         instprm_path = _write_instprm(work_dir, wavelength,
-                                       polariz=polariz, sh_l=sh_l)
+                                       polariz=polariz, sh_l=sh_l,
+                                       u=est_u, v=est_v, w=est_w,
+                                       x=est_x, y=est_y)
     _write_xye(data_path, tt_r, y_r, sig_r)
 
     cif_paths = []
@@ -594,6 +885,17 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
 
         # Set data range
         histogram.data['Limits'] = [[tt_min, tt_max], [tt_min, tt_max]]
+
+        # Fix histogram scale to 1.0 — NEVER refine it.
+        # GSAS-II has N+1 scale parameters (N phase scales + 1 histogram
+        # scale).  Only N are independent.  Refining all N+1 creates a
+        # perfect correlation (100%) that causes SVD singularity and the
+        # refinement gets stuck with zero peak intensity.
+        # Standard practice: fix histogram scale, refine only phase scales.
+        try:
+            histogram.data['Sample Parameters']['Scale'] = [1.0, False]
+        except (KeyError, TypeError):
+            pass
 
         # Set background
         bkg_data = histogram.data['Background']
@@ -666,6 +968,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
 
         # Track which stage succeeded (for fallback on failure)
         last_good_stage = 0
+        _failed_stages = []
 
         # ── Helper to safely run a refinement stage ──────────────────────
         def _safe_refine(stage_name, refinement_dicts, stage_num):
@@ -673,13 +976,29 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             try:
                 gpx.do_refinements(refinement_dicts)
                 last_good_stage = stage_num
+                # Guard: ensure histogram scale stays fixed at 1.0.
+                # GSAS-II's do_refinements can re-enable it internally
+                # when 'Scale' appears in any refinement dict.
+                try:
+                    histogram.data['Sample Parameters']['Scale'] = [1.0, False]
+                except (KeyError, TypeError):
+                    pass
                 return True
             except Exception as e:
                 # GSAS-II internally restores from .bak0.gpx on failure,
                 # so the project state reverts to pre-refinement. Safe to continue.
+                _failed_stages.append(stage_name)
                 warnings.warn(f"GSAS-II: {stage_name} failed ({e}). "
                              f"Continuing with results from stage {last_good_stage}.")
                 return False
+
+        # Determine structural complexity → boost cycles for complex phases
+        max_asym_atoms = max(
+            (len(_reduce_to_asymmetric_unit(ph.get('cif_text', '')))
+             for ph in phases if ph.get('cif_text')),
+            default=1)
+        _complex = max_asym_atoms > 6  # W2C has ~6 asym sites
+        _cyc_mult = 2 if _complex else 1  # double cycles for complex phases
 
         if progress_callback:
             progress_callback('GSAS-II: stage 1 — refining background + scale...')
@@ -687,9 +1006,21 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # ── Stage 1: Background + scale (one phase at a time) ────────────
         # Fix all scales first, then refine them one at a time to break
         # the correlation that causes SVD singularities.
-        for phase_obj in gsas_phases:
+        # Estimate a data-driven initial scale for each phase.
+        # With the histogram scale fixed at 1.0, the phase scale must absorb
+        # the full intensity.  A rough estimate based on peak height and
+        # structural complexity helps GSAS-II converge from the right region.
+        peak_height = float(np.max(y_r) - np.percentile(y_r, 5))
+        n_phases = len(gsas_phases)
+        for phase_obj, ph_input in zip(gsas_phases, phases):
             hapData = list(phase_obj.data['Histograms'].values())[0]
-            hapData['Scale'] = [1.0, False]  # start fixed
+            cif_text = ph_input.get('cif_text', '')
+            n_asym = len(_reduce_to_asymmetric_unit(cif_text)) if cif_text else 1
+            # Scale ∝ peak_height / (n_atoms² × n_phases).  The n_atoms²
+            # factor approximates how F² grows with atom count.
+            init_scale = peak_height / max(1.0, (n_asym ** 2) * n_phases * 10.0)
+            init_scale = max(init_scale, 0.001)  # floor to avoid zero
+            hapData['Scale'] = [init_scale, False]  # start fixed
 
         # First: refine background only
         _safe_refine('background', [{
@@ -709,9 +1040,12 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 'cycles': 3,
             }], 1)
 
-        # Now refine all scales together (they have good starting values)
-        _safe_refine('all scales', [{
-            'set': {'Scale': True},
+        # Re-refine all phase scales together (they have good starting values).
+        # Do NOT use {'Scale': True} here — that enables the histogram scale
+        # refinement flag, which is degenerate with phase scales and causes
+        # 100% correlation / SVD singularity.
+        _safe_refine('all phase scales', [{
+            'set': {},
             'cycles': min(max_cycles, 5),
         }], 1)
 
@@ -723,7 +1057,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             'set': {
                 'Instrument Parameters': ['U', 'V', 'W', 'X', 'Y'],
             },
-            'cycles': min(max_cycles, 5),
+            'cycles': min(max_cycles, 5 * _cyc_mult),
         }], 2)
 
         if progress_callback:
@@ -756,7 +1090,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             phase_obj.set_refinements({'Cell': True})
             ok = _safe_refine(f'cell (phase {idx})', [{
                 'set': {},
-                'cycles': min(max_cycles, 8),
+                'cycles': min(max_cycles, 8 * _cyc_mult),
             }], 3)
             if not ok:
                 # Turn cell refinement back off for this phase
@@ -773,13 +1107,66 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 pass
         _safe_refine('Uiso', [{
             'set': {},
-            'cycles': min(max_cycles, 5),
+            'cycles': min(max_cycles, 5 * _cyc_mult),
         }], 4)
 
         if progress_callback:
-            progress_callback('GSAS-II: stage 5 — final background + scale polish...')
+            progress_callback('GSAS-II: stage 5 — refining atom positions (XYZ)...')
 
-        # ── Stage 5: Final polish — re-refine background + scale ────────
+        # ── Stage 5: Atom positions (XYZ) ─────────────────────────────
+        # For complex structures (carbides, oxides) the COD database atom
+        # coordinates may not exactly match this sample.  Wrong positions →
+        # wrong structure factors F(hkl) → the Rietveld model cannot match
+        # observed peak intensity ratios → convergence failure.
+        # GSAS-II automatically constrains atoms on special positions, so
+        # this is safe for simple metals (no-op) while critical for W2C etc.
+        #
+        # Save atom positions before refinement for damping check.
+        saved_xyz = {}
+        for idx, phase_obj in enumerate(gsas_phases):
+            phase_atoms = phase_obj.data.get('Atoms', [])
+            saved_xyz[idx] = [(a[3], a[4], a[5]) if len(a) > 5 else None
+                              for a in phase_atoms]
+            try:
+                phase_obj.set_refinements({'Atoms': {'all': 'XU'}})
+            except Exception:
+                pass
+        xyz_ok = _safe_refine('atom XYZ', [{
+            'set': {},
+            'cycles': min(max_cycles, 3 * _cyc_mult),
+        }], 5)
+
+        # Damping check: if any atom jumped > 0.5 fractional units,
+        # it likely hopped to a symmetry-equivalent site — revert it.
+        if xyz_ok:
+            for idx, phase_obj in enumerate(gsas_phases):
+                phase_atoms = phase_obj.data.get('Atoms', [])
+                for j, atom in enumerate(phase_atoms):
+                    if (len(atom) > 5 and idx in saved_xyz
+                            and j < len(saved_xyz[idx])
+                            and saved_xyz[idx][j] is not None):
+                        ox, oy, oz = saved_xyz[idx][j]
+                        dx = abs(atom[3] - ox)
+                        dy = abs(atom[4] - oy)
+                        dz = abs(atom[5] - oz)
+                        if max(dx, dy, dz) > 0.5:
+                            warnings.warn(
+                                f"GSAS-II: atom {j} in phase {idx} jumped "
+                                f"by ({dx:.3f},{dy:.3f},{dz:.3f}) — "
+                                f"reverting to original position.")
+                            atom[3], atom[4], atom[5] = ox, oy, oz
+
+        # Turn off XYZ refinement flags, keep only Uiso for remaining stages
+        for phase_obj in gsas_phases:
+            try:
+                phase_obj.set_refinements({'Atoms': {'all': 'U'}})
+            except Exception:
+                pass
+
+        if progress_callback:
+            progress_callback('GSAS-II: stage 6 — final background + scale polish...')
+
+        # ── Stage 6: Final polish — re-refine background + scale ────────
         # Background was first refined in Stage 1 when profile/cell/Uiso
         # were still at initial values. Now that all structural parameters
         # have converged, re-optimize background to remove systematic
@@ -789,8 +1176,15 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 'Background': {'type': 'chebyschev-1', 'refine': True,
                                 'no. coeffs': n_bg_coeffs},
             },
-            'cycles': min(max_cycles, 5),
-        }], 5)
+            'cycles': min(max_cycles, 5 * _cyc_mult),
+        }], 6)
+
+        # Warn if multiple refinement stages failed — result may be unreliable
+        if len(_failed_stages) >= 3:
+            warnings.warn(
+                f"GSAS-II: {len(_failed_stages)} stages failed "
+                f"({', '.join(_failed_stages)}). The refinement result may be "
+                f"unreliable — check CIF quality or try simpler fitting range.")
 
         if progress_callback:
             progress_callback('GSAS-II: extracting results...')
@@ -817,20 +1211,23 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # so the Gaussian doesn't blur steep slopes at low 2θ into
         # the 30-50° region.
         if len(y_bg_out) >= 3:
-            _trend_coeffs = np.polyfit(tt_out, y_bg_out, 2)
-            _trend = np.polyval(_trend_coeffs, tt_out)
-            _resid = y_bg_out - _trend
+            try:
+                _trend_coeffs = np.polyfit(tt_out, y_bg_out, 2)
+                _trend = np.polyval(_trend_coeffs, tt_out)
+                _resid = y_bg_out - _trend
 
-            _step = float(tt_out[1] - tt_out[0]) if len(tt_out) > 1 else 0.02
-            _sig  = max(3, int(10.0 / _step))          # 10° Gaussian sigma
-            _k    = min(3 * _sig, len(_resid) // 2)
-            if _k >= 1:
-                _kx   = np.arange(-_k, _k + 1, dtype=float)
-                _kern = np.exp(-0.5 * (_kx / _sig) ** 2)
-                _kern /= _kern.sum()
-                _padded = np.pad(_resid, _k, mode='edge')
-                _smooth_resid = np.convolve(_padded, _kern, mode='valid')
-                y_bg_out = _trend + np.maximum(_resid, _smooth_resid)
+                _step = float(tt_out[1] - tt_out[0]) if len(tt_out) > 1 else 0.02
+                _sig  = max(3, int(10.0 / _step))          # 10° Gaussian sigma
+                _k    = min(3 * _sig, len(_resid) // 2)
+                if _k >= 1:
+                    _kx   = np.arange(-_k, _k + 1, dtype=float)
+                    _kern = np.exp(-0.5 * (_kx / _sig) ** 2)
+                    _kern /= _kern.sum()
+                    _padded = np.pad(_resid, _k, mode='edge')
+                    _smooth_resid = np.convolve(_padded, _kern, mode='valid')
+                    y_bg_out = _trend + np.maximum(_resid, _smooth_resid)
+            except (np.linalg.LinAlgError, ValueError):
+                pass  # skip dip correction if polyfit fails
 
         diff_out = y_obs_out - y_calc_out
 
