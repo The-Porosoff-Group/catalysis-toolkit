@@ -529,14 +529,34 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
 
     cif_paths = []
     for i, ph in enumerate(phases):
-        # Build a synthetic CIF from the phase dict's (conventional) cell
-        # parameters.  This guarantees GSAS-II sees the correct space group
-        # and cell geometry even when the original CIF used a primitive
-        # setting (common with Materials Project data).
-        cif_for_gsas = _build_conventional_cif(ph)
+        orig_cif = ph.get('cif_text', '')
+        sg_num = ph.get('spacegroup_number', 1)
+
+        # ── Strategy: try original CIF first, synthetic as fallback ──
+        # GSAS-II is designed to read standard CIF files from databases
+        # like COD.  Our synthetic CIF pipeline (_reduce_to_asymmetric_unit
+        # → _build_conventional_cif) can lose atom sites or produce wrong
+        # structure when pymatgen is unavailable.  The original CIF is
+        # more reliable for GSAS-II, which handles symmetry expansion
+        # internally.
+        #
+        # Only fall back to synthetic CIF for edge cases (e.g. Materials
+        # Project primitive cells that need conversion to conventional).
+        cif_for_gsas = None
+        cif_source = None
+
+        if orig_cif:
+            cif_for_gsas = orig_cif
+            cif_source = 'original'
+        else:
+            cif_for_gsas = _build_conventional_cif(ph)
+            cif_source = 'synthetic'
+
         cif_path = _write_temp_cif(cif_for_gsas, ph.get('name', 'phase'),
                                    work_dir=work_dir, index=i)
         cif_paths.append(cif_path)
+        print(f"  Phase {i} CIF: source={cif_source}, SG={sg_num}, "
+              f"file={os.path.basename(cif_path)}", flush=True)
 
     try:
         # ── Build GSAS-II project ────────────────────────────────────────
@@ -587,45 +607,52 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                     histograms=[histogram],
                 )
             except Exception as e1:
-                # Synthetic CIF failed — fall back to original CIF text
-                orig_cif = ph.get('cif_text', '')
-                if orig_cif:
+                # Primary CIF failed — try the alternative
+                print(f"  Phase {i}: {cif_source} CIF failed ({e1}), "
+                      f"trying fallback...", flush=True)
+                fallback_cif = None
+                if cif_source == 'original':
+                    # Original failed → try synthetic
+                    fallback_cif = _build_conventional_cif(ph)
+                elif cif_source == 'synthetic' and orig_cif:
+                    # Synthetic failed → try original
+                    fallback_cif = orig_cif
+
+                if fallback_cif:
                     try:
-                        orig_path = _write_temp_cif(
-                            orig_cif, ph.get('name', 'phase'),
+                        fb_path = _write_temp_cif(
+                            fallback_cif, ph.get('name', 'phase'),
                             work_dir=work_dir, index=100+i)
-                        cif_paths.append(orig_path)  # for cleanup
+                        cif_paths.append(fb_path)
                         phase_obj = gpx.add_phase(
-                            orig_path,
+                            fb_path,
                             phasename=phasename,
                             histograms=[histogram],
                         )
-                        warnings.warn(
-                            f"Synthetic CIF failed for '{ph.get('name', '?')}', "
-                            f"using original CIF text (error: {e1})")
+                        fb_source = 'synthetic' if cif_source == 'original' else 'original'
+                        print(f"  Phase {i}: fallback {fb_source} CIF succeeded",
+                              flush=True)
                     except Exception as e2:
-                        cif_size = os.path.getsize(cif_path) if os.path.exists(cif_path) else -1
                         cif_head = ''
                         if os.path.exists(cif_path):
                             with open(cif_path, 'r', encoding='utf-8') as _f:
                                 cif_head = _f.read(500)
                         raise RuntimeError(
-                            f"GSAS-II could not read CIF for phase '{ph.get('name', '?')}' "
-                            f"(file: {cif_path}, size: {cif_size} bytes).\n"
-                            f"CIF preview:\n{cif_head}\n\n"
-                            f"Original error: {e2}"
+                            f"GSAS-II could not read any CIF for phase "
+                            f"'{ph.get('name', '?')}'.\n"
+                            f"Primary ({cif_source}) error: {e1}\n"
+                            f"Fallback error: {e2}\n"
+                            f"CIF preview:\n{cif_head}"
                         ) from e2
                 else:
-                    cif_size = os.path.getsize(cif_path) if os.path.exists(cif_path) else -1
                     cif_head = ''
                     if os.path.exists(cif_path):
                         with open(cif_path, 'r', encoding='utf-8') as _f:
                             cif_head = _f.read(500)
                     raise RuntimeError(
-                        f"GSAS-II could not read CIF for phase '{ph.get('name', '?')}' "
-                        f"(file: {cif_path}, size: {cif_size} bytes).\n"
-                        f"CIF preview:\n{cif_head}\n\n"
-                        f"Original error: {e1}"
+                        f"GSAS-II could not read CIF for phase "
+                        f"'{ph.get('name', '?')}'.\n"
+                        f"Error: {e1}\nCIF preview:\n{cif_head}"
                     ) from e1
             gsas_phases.append(phase_obj)
 
@@ -653,17 +680,25 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         for phase_obj in gsas_phases:
             try:
                 gen = phase_obj.data['General']
-                n_atoms = len(gen.get('AtomTypes', []))
                 _cell = gen['Cell']
-                print(f"  GSAS-II phase '{phase_obj.name}': "
-                      f"{n_atoms} atom types, "
-                      f"cell=[{_cell[1]:.4f}, {_cell[2]:.4f}, {_cell[3]:.4f}], "
-                      f"SG='{gen.get('SGData', {}).get('SpGrp', '?')}'",
-                      flush=True)
-                # Show actual atom list
+                sg_data = gen.get('SGData', {})
+                print(f"  GSAS-II phase '{phase_obj.name}':", flush=True)
+                print(f"    SG='{sg_data.get('SpGrp', '?')}', "
+                      f"SG#={sg_data.get('SGNum', '?')}", flush=True)
+                print(f"    cell=[{_cell[1]:.4f}, {_cell[2]:.4f}, {_cell[3]:.4f}, "
+                      f"{_cell[4]:.2f}, {_cell[5]:.2f}, {_cell[6]:.2f}]", flush=True)
+                # Show atom count per type
                 atoms = gen.get('NoAtoms', {})
-                if atoms:
-                    print(f"    Atoms: {dict(atoms)}", flush=True)
+                print(f"    NoAtoms: {dict(atoms) if atoms else 'EMPTY!'}", flush=True)
+                # Show actual atom site list
+                atom_data = phase_obj.data.get('Atoms', [])
+                print(f"    Atom sites: {len(atom_data)} entries", flush=True)
+                for at in atom_data[:10]:  # show first 10
+                    # Atom list format: [label, type, mult, x, y, z, frac, ...]
+                    if len(at) >= 6:
+                        print(f"      {at[0]:6s} {at[1]:3s}  "
+                              f"({at[3]:.5f}, {at[4]:.5f}, {at[5]:.5f})",
+                              flush=True)
             except Exception as e_diag:
                 print(f"  GSAS-II phase diag error: {e_diag}", flush=True)
 
