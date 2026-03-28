@@ -129,6 +129,7 @@ def _reduce_to_asymmetric_unit(cif_text):
     Falls back to the raw sites if pymatgen is unavailable.
     """
     if not cif_text:
+        print("  _reduce_to_asymmetric_unit: no cif_text", flush=True)
         return []
 
     try:
@@ -155,15 +156,23 @@ def _reduce_to_asymmetric_unit(cif_text):
                 sites.append((el, float(frac[0]), float(frac[1]),
                               float(frac[2]), 1.0))
             if sites:
+                print(f"  _reduce_to_asymmetric_unit: pymatgen → "
+                      f"{len(sites)} unique sites", flush=True)
                 return sites
-    except Exception:
-        pass
+    except Exception as e_pmg:
+        print(f"  _reduce_to_asymmetric_unit: pymatgen unavailable ({e_pmg})",
+              flush=True)
 
-    # Fallback: raw parse_cif
+    # Fallback: raw parse_cif — the CIF typically lists the asymmetric unit
+    # already (standard CIF convention), so raw sites should be OK.
     try:
         parsed = parse_cif(cif_text)
-        return parsed.get('sites') or []
+        raw_sites = parsed.get('sites') or []
+        print(f"  _reduce_to_asymmetric_unit: raw CIF fallback → "
+              f"{len(raw_sites)} sites", flush=True)
+        return raw_sites
     except Exception:
+        print("  _reduce_to_asymmetric_unit: parse_cif failed", flush=True)
         return []
 
 
@@ -198,6 +207,12 @@ def _build_conventional_cif(ph):
     # reflections (e.g. ghost peaks at ~25° for A15-W).
     cif_text = ph.get('cif_text', '')
     sites = _reduce_to_asymmetric_unit(cif_text) if cif_text else []
+    print(f"  _build_conventional_cif: SG={sg}, HM='{hm}', "
+          f"cell=[{a:.4f}, {b:.4f}, {c:.4f}], "
+          f"{len(sites)} asymmetric-unit sites"
+          f"{', Z=' + str(Z) if Z else ''}", flush=True)
+    for s in sites:
+        print(f"    {s[0]}  ({s[1]:.6f}, {s[2]:.6f}, {s[3]:.6f})  occ={s[4]}", flush=True)
 
     lines = [
         'data_phase',
@@ -374,7 +389,7 @@ def _write_instprm(work_dir, wavelength):
         'V:-2.0',
         'W:5.0',
         'X:0.0',
-        'Y:0.0',
+        'Y:2.0',
         'Z:0.0',
         'SH/L:0.002',
         'Azimuth:0.0',
@@ -634,47 +649,70 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         if progress_callback:
             progress_callback('GSAS-II: stage 1 — refining background + scale...')
 
-        # ── Stage 1: Background + scale (one phase at a time) ────────────
-        # Fix all scales first, then refine them one at a time to break
-        # the correlation that causes SVD singularities.
+        # ── Diagnostics: show what GSAS-II sees ─────────────────────────
+        for phase_obj in gsas_phases:
+            try:
+                gen = phase_obj.data['General']
+                n_atoms = len(gen.get('AtomTypes', []))
+                _cell = gen['Cell']
+                print(f"  GSAS-II phase '{phase_obj.name}': "
+                      f"{n_atoms} atom types, "
+                      f"cell=[{_cell[1]:.4f}, {_cell[2]:.4f}, {_cell[3]:.4f}], "
+                      f"SG='{gen.get('SGData', {}).get('SpGrp', '?')}'",
+                      flush=True)
+                # Show actual atom list
+                atoms = gen.get('NoAtoms', {})
+                if atoms:
+                    print(f"    Atoms: {dict(atoms)}", flush=True)
+            except Exception as e_diag:
+                print(f"  GSAS-II phase diag error: {e_diag}", flush=True)
+
+        # ── Stage 1: Background + scale ──────────────────────────────────
+        # For single-phase: fix phase scale at 1.0, use ONLY histogram
+        # scale.  This is standard GSAS-II practice — the two scales are
+        # 100% correlated for a single phase and cause SVD singularity.
+        #
+        # For multi-phase: fix histogram scale, refine each phase scale
+        # one at a time, then together.
         for phase_obj in gsas_phases:
             hapData = list(phase_obj.data['Histograms'].values())[0]
             hapData['Scale'] = [1.0, False]  # start fixed
 
-        # First: refine background only
-        _safe_refine('background', [{
-            'set': {
-                'Background': {'type': 'chebyschev-1', 'refine': True,
-                                'no. coeffs': n_bg_coeffs},
-            },
-            'cycles': min(max_cycles, 5),
-        }], 1)
-
-        # Then: refine each phase's scale one at a time
-        for idx, phase_obj in enumerate(gsas_phases):
-            hapData = list(phase_obj.data['Histograms'].values())[0]
-            hapData['Scale'] = [hapData['Scale'][0], True]  # turn on
-            _safe_refine(f'scale (phase {idx})', [{
-                'set': {},
-                'cycles': 3,
-            }], 1)
-
-        # Now refine all scales together (they have good starting values).
-        # IMPORTANT: 'Scale': True turns on the *histogram* scale, which
-        # is 100% correlated with the single phase scale when there is
-        # only one phase.  Only turn it on for multi-phase fits where we
-        # need both histogram and phase scales to be free.  For single-
-        # phase fits the phase scale alone is sufficient.
-        if len(gsas_phases) > 1:
-            _safe_refine('all scales', [{
-                'set': {'Scale': True},
+        if len(gsas_phases) == 1:
+            # ── Single-phase: histogram scale only ──────────────────────
+            # Explicitly turn OFF phase scale, ON histogram scale.
+            _safe_refine('background + histogram scale', [{
+                'set': {
+                    'Background': {'type': 'chebyschev-1', 'refine': True,
+                                    'no. coeffs': n_bg_coeffs},
+                    'Scale': True,
+                },
                 'cycles': min(max_cycles, 5),
             }], 1)
         else:
-            # Single phase: just re-refine the phase scale + background
-            # without histogram scale to avoid 100% correlation / SVD
-            _safe_refine('scale + background', [{
-                'set': {},
+            # ── Multi-phase: background first, then per-phase scales ────
+            # First: refine background only
+            _safe_refine('background', [{
+                'set': {
+                    'Background': {'type': 'chebyschev-1', 'refine': True,
+                                    'no. coeffs': n_bg_coeffs},
+                    'Scale': False,
+                },
+                'cycles': min(max_cycles, 5),
+            }], 1)
+
+            # Then: refine each phase's scale one at a time
+            for idx, phase_obj in enumerate(gsas_phases):
+                hapData = list(phase_obj.data['Histograms'].values())[0]
+                hapData['Scale'] = [hapData['Scale'][0], True]  # turn on
+                _safe_refine(f'scale (phase {idx})', [{
+                    'set': {},
+                    'cycles': 3,
+                }], 1)
+
+            # Now refine all phase scales + histogram scale together
+            _safe_refine('all scales', [{
+                'set': {'Scale': True},
                 'cycles': min(max_cycles, 5),
             }], 1)
 
