@@ -659,19 +659,48 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 'cycles': 3,
             }], 1)
 
-        # Now refine all scales together (they have good starting values)
-        _safe_refine('all scales', [{
-            'set': {'Scale': True},
-            'cycles': min(max_cycles, 5),
-        }], 1)
+        # Now refine all scales together (they have good starting values).
+        # IMPORTANT: 'Scale': True turns on the *histogram* scale, which
+        # is 100% correlated with the single phase scale when there is
+        # only one phase.  Only turn it on for multi-phase fits where we
+        # need both histogram and phase scales to be free.  For single-
+        # phase fits the phase scale alone is sufficient.
+        if len(gsas_phases) > 1:
+            _safe_refine('all scales', [{
+                'set': {'Scale': True},
+                'cycles': min(max_cycles, 5),
+            }], 1)
+        else:
+            # Single phase: just re-refine the phase scale + background
+            # without histogram scale to avoid 100% correlation / SVD
+            _safe_refine('scale + background', [{
+                'set': {},
+                'cycles': min(max_cycles, 5),
+            }], 1)
 
         if progress_callback:
             progress_callback('GSAS-II: stage 2 — refining profile parameters...')
 
         # ── Stage 2: Profile parameters ──────────────────────────────────
-        _safe_refine('profile', [{
+        # Refine Gaussian (U, V, W) first, then Lorentzian Y (size), then
+        # X (strain).  X and Y are highly correlated (~99%) when refined
+        # together, causing SVD problems.  Splitting them lets each settle
+        # before the other is freed.
+        _safe_refine('profile (Gaussian)', [{
             'set': {
-                'Instrument Parameters': ['U', 'V', 'W', 'X', 'Y'],
+                'Instrument Parameters': ['U', 'V', 'W'],
+            },
+            'cycles': min(max_cycles, 5),
+        }], 2)
+        _safe_refine('profile (Y – size)', [{
+            'set': {
+                'Instrument Parameters': ['Y'],
+            },
+            'cycles': min(max_cycles, 5),
+        }], 2)
+        _safe_refine('profile (X – strain)', [{
+            'set': {
+                'Instrument Parameters': ['X'],
             },
             'cycles': min(max_cycles, 5),
         }], 2)
