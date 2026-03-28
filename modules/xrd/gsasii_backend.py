@@ -85,8 +85,11 @@ def import_error():
 
 _SG_HM = {
     # Common catalyst phases — add entries as needed
-    1: 'P 1', 2: 'P -1', 12: 'C 2/m', 14: 'P 21/c', 15: 'C 2/c',
-    62: 'P n m a', 63: 'C m c m', 139: 'I 4/m m m', 141: 'I 41/a m d',
+    1: 'P 1', 2: 'P -1', 4: 'P 21',
+    12: 'C 2/m', 14: 'P 21/c', 15: 'C 2/c',
+    33: 'P n a 21', 50: 'P b a n', 57: 'P b c m', 59: 'P m m n',
+    60: 'P b c n', 61: 'P b c a', 62: 'P n m a', 63: 'C m c m',
+    139: 'I 4/m m m', 141: 'I 41/a m d',
     148: 'R -3', 166: 'R -3 m', 167: 'R -3 c',
     173: 'P 63', 176: 'P 63/m', 186: 'P 63 m c', 187: 'P -6 m 2',
     191: 'P 6/m m m', 194: 'P 63/m m c',

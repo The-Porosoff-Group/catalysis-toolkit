@@ -120,31 +120,122 @@ def is_allowed(h, k, l, spacegroup_number):
             return False
 
     # C-centred: h+k even
-    _C_centred = set(range(5,6)) | set(range(8,10)) | set(range(12,16)) | \
-                 set(range(20,22)) | set(range(35,42)) | set(range(63,69)) | \
-                 set(range(63,69))
+    # NB: Only include actually C-centred SGs. SG 13 (P2/c) and 14 (P21/c)
+    # are P-lattice despite being in the monoclinic range 12–15.
+    # SGs 38–41 are A-centred (k+l=2n), not C-centred.
+    _C_centred = ({5} | {8, 9} | {12, 15} |
+                  {20, 21} | {35, 36, 37} | set(range(63, 69)))
     if sg in _C_centred:
         if (h+k) % 2 != 0:
             return False
 
-    # ── Screw axis / glide plane conditions for common phases ─────────────────
+    # A-centred: k+l even (SGs 38–41: Amm2, Aem2, Ama2, Aea2)
+    _A_centred = {38, 39, 40, 41}
+    if sg in _A_centred:
+        if (k+l) % 2 != 0:
+            return False
 
-    # Pm-3n (#223, beta-W A15, Cr3Si type):
-    # In cubic m-3m, the HM positions are ⟨100⟩, ⟨111⟩, ⟨110⟩.
-    # "n" is in the third position → n-glide ⊥ ⟨110⟩.
-    # Reflection conditions (ITC Vol A):
-    #   hhl: l = 2n   (and equivalents hkh, khh, etc. by cubic symmetry)
-    #   00l: l = 2n   (implied serial condition)
-    if sg == 223:
-        # hhl-type: any two indices equal → the third must be even
-        ah, ak, al = abs(h), abs(k), abs(l)
-        if ah == ak and al % 2 != 0: return False   # hhl: l=2n
-        if ah == al and ak % 2 != 0: return False   # hlh → k=2n
-        if ak == al and ah % 2 != 0: return False   # hkk → h=2n
-        # Serial: 00l, h00, 0k0 → index must be even (implied by above)
-        if h == 0 and k == 0 and l % 2 != 0: return False
+    # ── Screw axis / glide plane conditions ────────────────────────────────────
+    #
+    # For each space group we enforce the ITC Vol A "reflection conditions"
+    # (equivalent of "systematic absences").  Missing rules here cause
+    # spurious zero-intensity sticks in the diffraction pattern.
+    #
+    # The rules below cover: (a) all cubic SGs already handled above via
+    # lattice centering, plus specific glide rules; (b) common monoclinic,
+    # orthorhombic, tetragonal, and hexagonal SGs encountered in catalysis.
+
+    # ── Monoclinic ──────────────────────────────────────────────────────────
+
+    # P21/c (#14): 21-screw ∥ b, c-glide ⊥ b
+    #   h0l: l = 2n   (c-glide)
+    #   0k0: k = 2n   (21 screw)
+    if sg == 14:
+        if h == 0 and l == 0 and k % 2 != 0: return False
+        if k == 0 and (h + l) % 2 != 0:
+            # Standard setting P21/c: h0l: l = 2n
+            # Alternate setting P21/n: h0l: h+l = 2n — use h+l to cover both
+            pass  # handled below per-setting
+        # P21/c standard: h0l: l = 2n
+        if k == 0 and l % 2 != 0: return False
+
+    # P21 (#4): 0k0: k = 2n
+    if sg == 4:
+        if h == 0 and l == 0 and k % 2 != 0: return False
+
+    # C2/c (#15): C-centering handled above, plus c-glide
+    #   h0l: l = 2n  (c-glide)
+    #   0k0: k = 2n  (implied by C + 21)
+    if sg == 15:
+        if k == 0 and l % 2 != 0: return False
+
+    # ── Orthorhombic P-lattice with glide planes ───────────────────────────
+
+    # Pbcn (#60, W2C orthorhombic):
+    #   0kl: k = 2n   (b-glide ⊥ a)
+    #   h0l: l = 2n   (c-glide ⊥ b)
+    #   hk0: h+k = 2n (n-glide ⊥ c)
+    #   h00: h = 2n,  0k0: k = 2n,  00l: l = 2n  (implied serials)
+    if sg == 60:
+        if h == 0 and k % 2 != 0: return False               # 0kl: k=2n
+        if k == 0 and l % 2 != 0: return False               # h0l: l=2n
+        if l == 0 and (h + k) % 2 != 0: return False         # hk0: h+k=2n
+        if k == 0 and l == 0 and h % 2 != 0: return False    # h00: h=2n
+        if h == 0 and l == 0 and k % 2 != 0: return False    # 0k0: k=2n
+        if h == 0 and k == 0 and l % 2 != 0: return False    # 00l: l=2n
+
+    # Pnma (#62, Fe3C cementite, common orthorhombic):
+    #   0kl: k+l = 2n (n-glide ⊥ a)
+    #   hk0: h = 2n   (a-glide ⊥ c)
+    #   h00: h = 2n,  0k0: k = 2n,  00l: l = 2n  (screws)
+    if sg == 62:
+        if h == 0 and (k + l) % 2 != 0: return False         # 0kl: k+l=2n
+        if l == 0 and h % 2 != 0: return False               # hk0: h=2n
+        if k == 0 and l == 0 and h % 2 != 0: return False    # h00: h=2n
+        if h == 0 and l == 0 and k % 2 != 0: return False    # 0k0: k=2n
+        if h == 0 and k == 0 and l % 2 != 0: return False    # 00l: l=2n
+
+    # Pbca (#61, common orthorhombic):
+    #   0kl: k = 2n (b-glide ⊥ a)
+    #   h0l: l = 2n (c-glide ⊥ b)  — wait, it's actually:
+    #   0kl: k = 2n, h0l: l = 2n, hk0: h = 2n (all three glide planes)
+    if sg == 61:
+        if h == 0 and k % 2 != 0: return False               # 0kl: k=2n
+        if k == 0 and l % 2 != 0: return False               # h0l: l=2n
+        if l == 0 and h % 2 != 0: return False               # hk0: h=2n
         if k == 0 and l == 0 and h % 2 != 0: return False
         if h == 0 and l == 0 and k % 2 != 0: return False
+        if h == 0 and k == 0 and l % 2 != 0: return False
+
+    # Pna21 (#33): n-glide ⊥ a, a-glide ⊥ b, 21 screw ∥ c
+    #   0kl: k+l = 2n (n-glide)
+    #   h0l: h = 2n   (a-glide)
+    #   00l: l = 2n   (21 screw)
+    if sg == 33:
+        if h == 0 and (k + l) % 2 != 0: return False
+        if k == 0 and h % 2 != 0: return False
+        if h == 0 and k == 0 and l % 2 != 0: return False
+
+    # Pban (#50): b-glide ⊥ a, a-glide ⊥ b, n-glide ⊥ c
+    #   0kl: k = 2n, h0l: h = 2n, hk0: h+k = 2n
+    if sg == 50:
+        if h == 0 and k % 2 != 0: return False
+        if k == 0 and h % 2 != 0: return False
+        if l == 0 and (h + k) % 2 != 0: return False
+
+    # Pmmn (#59): n-glide ⊥ c
+    #   hk0: h+k = 2n
+    if sg == 59:
+        if l == 0 and (h + k) % 2 != 0: return False
+
+    # Pbcm (#57): b-glide ⊥ a, c-glide ⊥ b, m ⊥ c + 21 screw
+    #   0kl: k = 2n, h0l: l = 2n, 00l: l = 2n
+    if sg == 57:
+        if h == 0 and k % 2 != 0: return False
+        if k == 0 and l % 2 != 0: return False
+        if h == 0 and k == 0 and l % 2 != 0: return False
+
+    # ── Hexagonal / Trigonal ────────────────────────────────────────────────
 
     # P63/mmc (#194, e.g. Mo2C, beta-W2C, graphite, WC):
     # (00l): l must be even (63 screw)
@@ -160,14 +251,27 @@ def is_allowed(h, k, l, spacegroup_number):
     # P-6m2 (#187, alpha-WC, hexagonal): no screw absences beyond lattice
     # P-43m (#215), F-43m (#216) — already handled by F centering above
 
+    # ── Cubic ──────────────────────────────────────────────────────────────
+
+    # Pm-3n (#223, beta-W A15, Cr3Si type):
+    #   hhl: l = 2n (n-glide ⊥ ⟨110⟩, by cubic symmetry)
+    #   00l: l = 2n
+    if sg == 223:
+        ah, ak, al = abs(h), abs(k), abs(l)
+        if ah == ak and al % 2 != 0: return False   # hhl: l=2n
+        if ah == al and ak % 2 != 0: return False   # hlh → k=2n
+        if ak == al and ah % 2 != 0: return False   # hkk → h=2n
+        if h == 0 and k == 0 and l % 2 != 0: return False
+        if k == 0 and l == 0 and h % 2 != 0: return False
+        if h == 0 and l == 0 and k % 2 != 0: return False
+
     # Ia-3d (#230, garnets): I-centred + d-glide
     if sg == 230:
         if h == 0 and k == 0 and l % 4 != 0: return False  # 00l: l=4n
         if h == 0 and l == 0 and k % 4 != 0: return False
         if k == 0 and l == 0 and h % 4 != 0: return False
 
-    # Im-3m (#229, alpha-W, alpha-Mo, alpha-Fe): pure I-centring, no screw absences
-    # Already handled by _I_cubic set above
+    # Im-3m (#229), Pm-3m (#221): handled by lattice centering above
 
     return True
 
@@ -702,7 +806,184 @@ def expand_sites_from_cif(cif_text):
                 return sites
     except Exception:
         pass
+
+    # ── Fallback: expand using built-in symmetry operations ─────────────
+    # When pymatgen is unavailable, apply space group symmetry operations
+    # to the asymmetric unit parsed from the CIF.
+    try:
+        parsed = parse_cif(cif_text)
+        asym_sites = parsed.get('sites') or []
+        sg = parsed.get('spacegroup_number', 1)
+        if asym_sites and sg > 1:
+            expanded = _expand_by_symmetry(asym_sites, sg)
+            if expanded and len(expanded) > len(asym_sites):
+                return expanded
+    except Exception:
+        pass
+
     return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BUILT-IN SYMMETRY EXPANSION (fallback when pymatgen is unavailable)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Symmetry operations as (rotation_matrix_rows, translation_vector).
+# Each operation: ((r00,r01,r02), (r10,r11,r12), (r20,r21,r22)), (tx,ty,tz)
+# Only the most common space groups are included; others return None.
+
+def _apply_symop(site, op):
+    """Apply a symmetry operation to a fractional coordinate site."""
+    el, x, y, z, occ = site
+    rot, trans = op
+    xn = rot[0][0]*x + rot[0][1]*y + rot[0][2]*z + trans[0]
+    yn = rot[1][0]*x + rot[1][1]*y + rot[1][2]*z + trans[1]
+    zn = rot[2][0]*x + rot[2][1]*y + rot[2][2]*z + trans[2]
+    return (el, xn % 1.0, yn % 1.0, zn % 1.0, occ)
+
+
+def _expand_by_symmetry(asym_sites, spacegroup_number):
+    """Expand asymmetric unit to full unit cell using space group operations.
+
+    Returns list of (element, x, y, z, occupancy) for the full unit cell,
+    or None if the space group is not in our built-in table.
+    """
+    ops = _SG_SYMOPS.get(spacegroup_number)
+    if ops is None:
+        return None
+
+    all_sites = []
+    for site in asym_sites:
+        seen = set()
+        for op in ops:
+            new_site = _apply_symop(site, op)
+            # Round to avoid floating-point duplicates
+            key = (new_site[0],
+                   round(new_site[1], 4),
+                   round(new_site[2], 4),
+                   round(new_site[3], 4))
+            if key not in seen:
+                seen.add(key)
+                all_sites.append(new_site)
+    return all_sites if all_sites else None
+
+
+# Identity operation (used by all space groups)
+_E = ((1,0,0),(0,1,0),(0,0,1)), (0,0,0)
+
+# Symmetry operations for common space groups.
+# These are the FULL set of general-position operations from ITC Vol A.
+
+_SG_SYMOPS = {
+    # P1 (#1): just identity
+    1: [_E],
+
+    # P-1 (#2): identity + inversion
+    2: [
+        _E,
+        (((-1,0,0),(0,-1,0),(0,0,-1)), (0,0,0)),
+    ],
+
+    # P21/c (#14): 4 operations
+    14: [
+        _E,
+        (((-1,0,0),(0,1,0),(0,0,-1)), (0,0.5,0.5)),   # 21 screw + c-glide
+        (((-1,0,0),(0,-1,0),(0,0,-1)), (0,0,0)),        # inversion
+        (((1,0,0),(0,-1,0),(0,0,1)), (0,0.5,0.5)),      # glide
+    ],
+
+    # Pbcn (#60): 8 operations  (ITC Vol A, origin choice 1)
+    60: [
+        _E,
+        (((-1,0,0),(0,-1,0),(0,0,1)),  (0.5,0.5,0.5)),  # 2₁(001)
+        (((1,0,0),(0,-1,0),(0,0,-1)),  (0.5,0.5,0.5)),   # 2₁(010)
+        (((-1,0,0),(0,1,0),(0,0,-1)),  (0,0,0)),          # 2(100)
+        (((-1,0,0),(0,-1,0),(0,0,-1)), (0,0,0)),          # inversion
+        (((1,0,0),(0,1,0),(0,0,-1)),   (0.5,0.5,0.5)),   # b-glide
+        (((-1,0,0),(0,1,0),(0,0,1)),   (0.5,0.5,0.5)),   # c-glide
+        (((1,0,0),(0,-1,0),(0,0,1)),   (0,0,0)),          # n-glide
+    ],
+
+    # Pbca (#61): 8 operations
+    61: [
+        _E,
+        (((-1,0,0),(0,-1,0),(0,0,1)),  (0.5,0,0.5)),
+        (((1,0,0),(0,-1,0),(0,0,-1)),  (0,0.5,0.5)),
+        (((-1,0,0),(0,1,0),(0,0,-1)),  (0.5,0.5,0)),
+        (((-1,0,0),(0,-1,0),(0,0,-1)), (0,0,0)),
+        (((1,0,0),(0,1,0),(0,0,-1)),   (0.5,0,0.5)),
+        (((-1,0,0),(0,1,0),(0,0,1)),   (0,0.5,0.5)),
+        (((1,0,0),(0,-1,0),(0,0,1)),   (0.5,0.5,0)),
+    ],
+
+    # Pnma (#62): 8 operations
+    62: [
+        _E,
+        (((-1,0,0),(0,-1,0),(0,0,1)),  (0.5,0,0.5)),
+        (((-1,0,0),(0,1,0),(0,0,-1)),  (0,0.5,0)),
+        (((1,0,0),(0,-1,0),(0,0,-1)),  (0.5,0.5,0.5)),
+        (((-1,0,0),(0,-1,0),(0,0,-1)), (0,0,0)),
+        (((1,0,0),(0,1,0),(0,0,-1)),   (0.5,0,0.5)),
+        (((1,0,0),(0,-1,0),(0,0,1)),   (0,0.5,0)),
+        (((-1,0,0),(0,1,0),(0,0,1)),   (0.5,0.5,0.5)),
+    ],
+
+    # Cmcm (#63): C-centred, 16 positions in full cell
+    63: [
+        _E,
+        (((-1,0,0),(0,-1,0),(0,0,1)),  (0,0,0.5)),
+        (((1,0,0),(0,-1,0),(0,0,-1)),  (0,0,0)),
+        (((-1,0,0),(0,1,0),(0,0,-1)),  (0,0,0.5)),
+        (((-1,0,0),(0,-1,0),(0,0,-1)), (0,0,0)),
+        (((1,0,0),(0,1,0),(0,0,-1)),   (0,0,0.5)),
+        (((-1,0,0),(0,1,0),(0,0,1)),   (0,0,0)),
+        (((1,0,0),(0,-1,0),(0,0,1)),   (0,0,0.5)),
+        # C-centering translations of the above 8
+        (((1,0,0),(0,1,0),(0,0,1)),    (0.5,0.5,0)),
+        (((-1,0,0),(0,-1,0),(0,0,1)),  (0.5,0.5,0.5)),
+        (((1,0,0),(0,-1,0),(0,0,-1)),  (0.5,0.5,0)),
+        (((-1,0,0),(0,1,0),(0,0,-1)),  (0.5,0.5,0.5)),
+        (((-1,0,0),(0,-1,0),(0,0,-1)), (0.5,0.5,0)),
+        (((1,0,0),(0,1,0),(0,0,-1)),   (0.5,0.5,0.5)),
+        (((-1,0,0),(0,1,0),(0,0,1)),   (0.5,0.5,0)),
+        (((1,0,0),(0,-1,0),(0,0,1)),   (0.5,0.5,0.5)),
+    ],
+
+    # P63/mmc (#194): 24 operations
+    194: [
+        _E,
+        (((-1,1,0),(-1,0,0),(0,0,1)),  (0,0,0.5)),
+        (((0,1,0),(-1,1,0),(0,0,1)),   (0,0,0)),
+        (((-1,0,0),(0,-1,0),(0,0,1)),   (0,0,0.5)),
+        (((1,-1,0),(1,0,0),(0,0,1)),    (0,0,0)),
+        (((0,-1,0),(1,-1,0),(0,0,1)),   (0,0,0.5)),
+        (((0,-1,0),(-1,0,0),(0,0,-1)),  (0,0,0.5)),
+        (((-1,1,0),(0,1,0),(0,0,-1)),   (0,0,0)),
+        (((1,0,0),(1,-1,0),(0,0,-1)),   (0,0,0.5)),
+        (((0,1,0),(1,0,0),(0,0,-1)),    (0,0,0)),
+        (((1,-1,0),(0,-1,0),(0,0,-1)),  (0,0,0.5)),
+        (((-1,0,0),(-1,1,0),(0,0,-1)),  (0,0,0)),
+        (((-1,0,0),(0,-1,0),(0,0,-1)),  (0,0,0)),
+        (((1,-1,0),(1,0,0),(0,0,-1)),   (0,0,0.5)),
+        (((0,-1,0),(1,-1,0),(0,0,-1)),  (0,0,0)),
+        (((1,0,0),(0,1,0),(0,0,-1)),    (0,0,0.5)),
+        (((-1,1,0),(-1,0,0),(0,0,-1)),  (0,0,0)),
+        (((0,1,0),(-1,1,0),(0,0,-1)),   (0,0,0.5)),
+        (((0,1,0),(1,0,0),(0,0,1)),     (0,0,0.5)),
+        (((1,-1,0),(0,-1,0),(0,0,1)),   (0,0,0)),
+        (((-1,0,0),(-1,1,0),(0,0,1)),   (0,0,0.5)),
+        (((0,-1,0),(-1,0,0),(0,0,1)),   (0,0,0)),
+        (((-1,1,0),(0,1,0),(0,0,1)),    (0,0,0.5)),
+        (((1,0,0),(1,-1,0),(0,0,1)),    (0,0,0)),
+    ],
+
+    # Im-3m (#229): BCC metals (W, Mo, Fe) — CIFs typically provide
+    # all sites already. Rely on is_allowed() I-centering filter.
+
+    # Pm-3n (#223): A15 phases — CIFs typically provide all sites.
+
+    # Fm-3m (#225): FCC metals — CIFs provide full conventional cell.
+}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
