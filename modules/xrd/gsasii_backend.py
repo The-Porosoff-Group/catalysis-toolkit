@@ -903,7 +903,20 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 a, b, c, alpha, beta, gamma, sys_, sg,
                 wavelength, tt_min, tt_max, hkl_max=12,
                 sites=sites)
-            tick_positions = [round(r[0], 3) for r in phase_refs]
+            # Filter tick positions by intensity weight — same approach
+            # as Le Bail / Rietveld.  This removes reflections that are
+            # technically allowed by lattice centering but have negligible
+            # structure factor (e.g. glide-extinct peaks whose F² didn't
+            # quite reach zero due to asymmetric-unit-only sites).
+            # This makes the tick marks robust for ALL space groups, not
+            # just those with hand-coded rules in is_allowed().
+            if phase_refs:
+                max_wt = max(r[3] for r in phase_refs)
+                wt_threshold = max_wt * 1e-3  # 0.1% of strongest
+                tick_positions = [round(r[0], 3) for r in phase_refs
+                                  if r[3] > wt_threshold]
+            else:
+                tick_positions = []
             all_phase_refs.append(phase_refs)
 
             # B_iso (average over atoms)
