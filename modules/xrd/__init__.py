@@ -265,10 +265,29 @@ def validate_phases(phases, fetch_missing=True):
             try:
                 parsed = parse_cif(cif_text)
                 # Only fill fields that are missing or None
-                for key in ['a','b','c','alpha','beta','gamma',
-                            'spacegroup_number','system','Z']:
+                for key in ['a','b','c','alpha','beta','gamma','Z']:
                     if ph.get(key) is None and parsed.get(key) is not None:
                         ph[key] = parsed[key]
+                # Space group: override default SG=1 with CIF value.
+                # The frontend defaults to 1 when the CIF tag is missing,
+                # but parse_cif checks both _symmetry_Int_Tables_number
+                # AND _space_group_IT_number, so it's more reliable.
+                parsed_sg = parsed.get('spacegroup_number')
+                if parsed_sg and parsed_sg > 1:
+                    cur_sg = ph.get('spacegroup_number')
+                    if cur_sg is None or cur_sg <= 1:
+                        ph['spacegroup_number'] = parsed_sg
+                # Also fill system from CIF if missing/default
+                parsed_sys = parsed.get('system')
+                if parsed_sys and parsed_sys != 'triclinic':
+                    cur_sys = ph.get('system')
+                    if not cur_sys or cur_sys == 'triclinic':
+                        ph['system'] = parsed_sys
+                # Fill spacegroup H-M symbol from CIF if missing
+                parsed_sg_name = parsed.get('spacegroup_name')
+                if parsed_sg_name and parsed_sg_name != 'P 1':
+                    if not ph.get('spacegroup'):
+                        ph['spacegroup'] = parsed_sg_name
                 if not ph.get('name'):
                     ph['name'] = parsed.get('formula', 'Phase')
                 if not ph.get('formula') and parsed.get('formula'):

@@ -1562,8 +1562,13 @@ async function uploadCIF(e) {
     const m = text.match(new RegExp(key + '\\s+([\\d\\.\\(\\)]+)'));
     return m ? parseFloat(m[1]) : null;
   };
-  const sgm = text.match(/_symmetry_Int_Tables_number\s+(\d+)/);
+  const sgm = text.match(/_symmetry_Int_Tables_number\s+(\d+)/)
+           || text.match(/_space_group_IT_number\s+(\d+)/);
   const sg  = sgm ? parseInt(sgm[1]) : 1;
+  // Also extract H-M symbol for display
+  const sgHM = text.match(/_symmetry_space_group_name_H-M\s+['"](.*?)['"]/)
+            || text.match(/_space_group_name_H-M_alt\s+['"](.*?)['"]/);
+  const spacegroup = sgHM ? sgHM[1].trim() : '';
   const fm  = text.match(/_chemical_formula_sum\s+['"](.*?)['"]/);
   const formula = fm ? fm[1].trim() : file.name.replace('.cif','');
 
@@ -1577,6 +1582,7 @@ async function uploadCIF(e) {
     beta:  getVal('_cell_angle_beta')  || 90.0,
     gamma: getVal('_cell_angle_gamma') || 90.0,
     spacegroup_number: sg,
+    spacegroup,
     cod_id: 'manual',
     cif_text: text,
   };
