@@ -99,6 +99,89 @@ _SG_HM = {
 }
 
 
+def _patch_cif_for_gsas(cif_text, spacegroup_number):
+    """Patch a CIF's space-group tags so GSAS-II reads them correctly.
+
+    GSAS-II's CIF reader requires H-M symbols with spaces between
+    symmetry elements (e.g. 'P b c n' not 'Pbcn').  COD CIFs often
+    use the compact notation which GSAS-II misreads as P 1.
+
+    This function:
+    1. Ensures _symmetry_Int_Tables_number is present
+    2. Ensures _symmetry_space_group_name_H-M has the spaced form
+    3. Adds _space_group_IT_number and _space_group_name_H-M_alt
+    """
+    import re
+
+    if not cif_text or not spacegroup_number or spacegroup_number < 2:
+        return cif_text
+
+    hm_spaced = _SG_HM.get(spacegroup_number)
+    if not hm_spaced:
+        return cif_text  # unknown SG, leave CIF as-is
+
+    lines = cif_text.splitlines()
+    out = []
+    found_sg_num = False
+    found_sg_hm = False
+    found_sg2_num = False
+    found_sg2_hm = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Replace or note existing SG number tags
+        if stripped.startswith('_symmetry_Int_Tables_number'):
+            out.append(f'_symmetry_Int_Tables_number {spacegroup_number}')
+            found_sg_num = True
+            continue
+        if stripped.startswith('_space_group_IT_number') or \
+           stripped.startswith('_space_group.IT_number'):
+            out.append(f'_space_group_IT_number {spacegroup_number}')
+            found_sg2_num = True
+            continue
+
+        # Replace existing H-M symbol tags with spaced form
+        if stripped.startswith('_symmetry_space_group_name_H-M'):
+            out.append(f"_symmetry_space_group_name_H-M '{hm_spaced}'")
+            found_sg_hm = True
+            continue
+        if stripped.startswith('_space_group_name_H-M_alt') or \
+           stripped.startswith('_space_group.name_H-M'):
+            out.append(f"_space_group_name_H-M_alt '{hm_spaced}'")
+            found_sg2_hm = True
+            continue
+
+        out.append(line)
+
+    # Add missing tags after the data_ line
+    additions = []
+    if not found_sg_num:
+        additions.append(f'_symmetry_Int_Tables_number {spacegroup_number}')
+    if not found_sg_hm:
+        additions.append(f"_symmetry_space_group_name_H-M '{hm_spaced}'")
+    if not found_sg2_num:
+        additions.append(f'_space_group_IT_number {spacegroup_number}')
+    if not found_sg2_hm:
+        additions.append(f"_space_group_name_H-M_alt '{hm_spaced}'")
+
+    if additions:
+        # Insert after the first data_ line
+        result = []
+        inserted = False
+        for line in out:
+            result.append(line)
+            if not inserted and line.strip().startswith('data_'):
+                result.extend(additions)
+                inserted = True
+        if not inserted:
+            # No data_ line found — prepend
+            result = ['data_patched'] + additions + out
+        out = result
+
+    return '\n'.join(out) + '\n'
+
+
 def _get_expanded_sites(cif_text, spacegroup_number=None):
     """Get symmetry-expanded unit-cell sites for structure factor computation.
 
@@ -546,8 +629,11 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         cif_source = None
 
         if orig_cif:
-            cif_for_gsas = orig_cif
-            cif_source = 'original'
+            # Patch the CIF's space-group tags so GSAS-II reads the
+            # correct SG (COD CIFs often use compact H-M like 'Pbcn'
+            # which GSAS-II misreads as P 1).
+            cif_for_gsas = _patch_cif_for_gsas(orig_cif, sg_num)
+            cif_source = 'original+patched'
         else:
             cif_for_gsas = _build_conventional_cif(ph)
             cif_source = 'synthetic'
