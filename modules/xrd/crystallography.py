@@ -1042,12 +1042,15 @@ def parse_cif(cif_text):
         elif line.startswith('_cell_angle_gamma'):
             v = parse_val(line.split()[-1])
             if v: result['gamma'] = v
-        elif line.startswith('_symmetry_Int_Tables_number') or \
-             line.startswith('_space_group_IT_number'):
+        elif (line.startswith('_symmetry_Int_Tables_number') or
+              line.startswith('_space_group_IT_number') or
+              line.startswith('_space_group.IT_number')):
             v = parse_val(line.split()[-1])
             if v: result['spacegroup_number'] = int(v)
-        elif line.startswith('_symmetry_space_group_name_H-M') or \
-             line.startswith('_space_group_name_H-M_alt'):
+        elif (line.startswith('_symmetry_space_group_name_H-M') or
+              line.startswith('_space_group_name_H-M_alt') or
+              line.startswith('_space_group.name_H-M') or
+              line.startswith('_space_group_name_H-M ')):
             parts = line.split(None, 1)
             if len(parts) > 1:
                 result['spacegroup_name'] = parts[1].strip().strip("'\"")

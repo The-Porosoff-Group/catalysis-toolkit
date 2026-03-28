@@ -169,13 +169,16 @@ def _parse_generic(lines, ext):
 def _sg_symbol_to_number(symbol):
     """
     Map common space group symbol strings to International Tables numbers.
-    Handles common variations in formatting.
+    Handles common variations in formatting (with/without spaces, dashes,
+    subscript notation).
     """
     # Normalise: remove spaces, underscores around subscripts
     s = str(symbol).strip().replace(' ', '').replace('_', '')
-    # Direct lookup table for phases common in catalysis research
+    # Direct lookup table — keys are SPACE-STRIPPED.
+    # Common catalysis phases + common orthorhombic/monoclinic/hexagonal SGs.
     _MAP = {
-        'Im-3m': 229, 'Im3m': 229, 'Im-3m': 229,
+        # Cubic
+        'Im-3m': 229, 'Im3m': 229,
         'Fm-3m': 225, 'Fm3m': 225,
         'Pm-3n': 223, 'Pm3n': 223,
         'Pm-3m': 221, 'Pm3m': 221,
@@ -183,20 +186,50 @@ def _sg_symbol_to_number(symbol):
         'Ia-3':  206, 'Ia3':  206,
         'Ia-3d': 230, 'Ia3d': 230,
         'Fd-3m': 227, 'Fd3m': 227,
+        'F-43m': 216, 'F43m': 216,
+        'I-43d': 220, 'I43d': 220,
+        # Hexagonal / Trigonal
         'P63/mmc': 194, 'P6_3/mmc': 194, 'P63mmc': 194,
         'P6/mmm': 191, 'P6mmm': 191,
         'P63/m':  176, 'P6_3/m': 176,
         'P-6m2':  187, 'P6m2':  187,
+        'P-62m':  189, 'P62m':  189,
         'P-6':    174,
-        'P63mc':  186,
-        'P6322':  182,
-        'P63':    173,
+        'P63mc':  186, 'P6_3mc': 186,
+        'P6322':  182, 'P6_322': 182,
+        'P63':    173, 'P6_3': 173,
         'R-3m':   166, 'R3m': 166,
+        'R-3c':   167, 'R3c': 167,
         'R-3':    148, 'R3':  148,
-        'Pnma':    62, 'Pbnm': 62,
-        'Cmcm':    63, 'Cmce': 64,
-        'P21/c':   14, 'P2_1/c': 14,
-        'C2/m':    12,
+        # Orthorhombic — common catalyst/carbide/oxide phases
+        'Pbcn':    60,                     # W2C
+        'Pbca':    61,
+        'Pnma':    62, 'Pbnm': 62,        # Fe3C cementite
+        'Cmcm':    63,
+        'Cmce':    64, 'Cmca': 64,
+        'Cmmm':    65,
+        'Pna21':   33, 'Pna2_1': 33,
+        'Pban':    50,
+        'Pbcm':    57,
+        'Pmmn':    59,
+        'Pmma':    51,
+        'Pnnm':    58,
+        'Immm':    71,
+        'Ibam':    72,
+        'Fmmm':    69,
+        'Fddd':    70,
+        # Tetragonal
+        'I4/mmm':  139, 'I4mmm': 139,
+        'I41/amd': 141, 'I41amd': 141,
+        'P42/mnm': 136, 'P42mnm': 136,    # rutile
+        'I4/mcm':  140, 'I4mcm': 140,
+        # Monoclinic
+        'P21/c':   14, 'P2_1/c': 14, 'P21c': 14,
+        'P21/n':   14, 'P2_1/n': 14, 'P21n': 14,  # alternate setting
+        'C2/m':    12, 'C2m': 12,
+        'C2/c':    15, 'C2c': 15,
+        'P21':      4, 'P2_1': 4,
+        # Triclinic
         'P-1':      2, 'P1':  1,
     }
     # Try as-is first, then stripped
@@ -329,10 +362,39 @@ def validate_phases(phases, fetch_missing=True):
         ph['name']   = ph.get('name') or ph.get('formula') or 'Phase'
 
         # If spacegroup_number is 1 (default/unknown), try to infer from symbol
-        if ph['spacegroup_number'] == 1 and ph.get('spacegroup'):
+        if ph['spacegroup_number'] <= 1 and ph.get('spacegroup'):
             inferred = _sg_symbol_to_number(ph['spacegroup'])
-            if inferred:
+            if inferred and inferred > 1:
                 ph['spacegroup_number'] = inferred
+                print(f"  Inferred SG {inferred} from H-M symbol "
+                      f"'{ph['spacegroup']}'", flush=True)
+
+        # Last resort: re-parse CIF text for the H-M symbol and try to
+        # convert it.  Some CIFs lack the numeric SG tag entirely.
+        if ph['spacegroup_number'] <= 1 and ph.get('cif_text'):
+            import re as _re
+            for pattern in [
+                r"_symmetry_space_group_name_H-M\s+['\"]?(.*?)['\"]?\s*$",
+                r"_space_group_name_H-M_alt\s+['\"]?(.*?)['\"]?\s*$",
+                r"_space_group\.name_H-M_full\s+['\"]?(.*?)['\"]?\s*$",
+            ]:
+                m = _re.search(pattern, ph['cif_text'], _re.MULTILINE)
+                if m:
+                    hm = m.group(1).strip().strip("'\"")
+                    inferred = _sg_symbol_to_number(hm)
+                    if inferred and inferred > 1:
+                        ph['spacegroup_number'] = inferred
+                        if not ph.get('spacegroup'):
+                            ph['spacegroup'] = hm
+                        print(f"  Inferred SG {inferred} from CIF H-M "
+                              f"'{hm}'", flush=True)
+                        break
+
+        # Diagnostic: warn if SG is still 1
+        if ph['spacegroup_number'] <= 1:
+            print(f"  WARNING: phase '{ph.get('name', '?')}' has "
+                  f"spacegroup_number=1 (P1). Check CIF for space group "
+                  f"tags.", flush=True)
 
         # If system is still triclinic but we have a real spacegroup number, fix it
         if ph['system'] == 'triclinic' and ph['spacegroup_number'] > 2:
