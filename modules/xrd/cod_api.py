@@ -376,4 +376,5 @@ def get_stick_pattern(structure, wavelength, tt_min=5.0, tt_max=90.0):
     return [{'two_theta': round(r[0], 3),
              'd':         round(r[1], 4),
              'hkl':       f'({r[2][0]}{r[2][1]}{r[2][2]})',
-             'rel_int':   round(r[3] / max_w, 3)} for r in refs]
+             'rel_int':   round(r[3] / max_w, 3)}
+            for r in refs if r[3] / max_w >= 0.01]  # drop sticks < 1% rel intensity

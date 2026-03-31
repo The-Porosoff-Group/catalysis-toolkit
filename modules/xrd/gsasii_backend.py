@@ -1340,7 +1340,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                                 max_weight = weight
                     # Second pass: apply relative F² threshold to remove
                     # ghost reflections (Fc² near zero compared to strongest)
-                    rel_thresh = max_weight * 1e-3  # 0.1% of strongest
+                    rel_thresh = max_weight * 1e-2  # 1% of strongest
                     refs = [r for r in raw_refs if r[3] >= max(1e-4, rel_thresh)]
                     if refs:
                         gsas_refs[ph_name] = refs
