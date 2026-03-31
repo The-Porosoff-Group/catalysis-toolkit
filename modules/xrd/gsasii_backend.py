@@ -1323,10 +1323,13 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             for ph_name, refl_data in raw_refl_lists.items():
                 ref_arr = refl_data.get('RefList')
                 if ref_arr is not None and len(ref_arr) > 0 and ref_arr.shape[1] > 8:
-                    # First pass: collect all reflections and find max weight
-                    # for relative threshold filtering (matches preview behavior)
+                    # First pass: collect all reflections and track max Fc²
+                    # (raw, without multiplicity) for threshold filtering.
+                    # Using raw Fc² matches how generate_reflections() filters
+                    # in the preview — multiplicity should not determine whether
+                    # a reflection is "real" vs "ghost".
                     raw_refs = []
-                    max_weight = 0.0
+                    max_fc2 = 0.0
                     for row in ref_arr:
                         h, k, l = int(row[0]), int(row[1]), int(row[2])
                         mult      = float(row[3])
@@ -1335,13 +1338,14 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                         fc2       = float(row[8])   # Fc²
                         weight    = mult * fc2
                         if weight > 0 and tt_min <= two_theta <= tt_max:
-                            raw_refs.append((two_theta, d_sp, (h, k, l), weight))
-                            if weight > max_weight:
-                                max_weight = weight
-                    # Second pass: apply relative F² threshold to remove
-                    # ghost reflections (Fc² near zero compared to strongest)
-                    rel_thresh = max_weight * 1e-2  # 1% of strongest
-                    refs = [r for r in raw_refs if r[3] >= max(1e-4, rel_thresh)]
+                            raw_refs.append((two_theta, d_sp, (h, k, l), weight, fc2))
+                            if fc2 > max_fc2:
+                                max_fc2 = fc2
+                    # Second pass: filter on raw Fc² (not mult*Fc²) to remove
+                    # ghost reflections without losing legitimate low-multiplicity peaks
+                    rel_thresh = max_fc2 * 1e-2  # 1% of strongest Fc²
+                    refs = [(r[0], r[1], r[2], r[3])
+                            for r in raw_refs if r[4] >= max(1e-4, rel_thresh)]
                     if refs:
                         gsas_refs[ph_name] = refs
                         print(f"  Loaded GSAS-II RefList for '{ph_name}': "
