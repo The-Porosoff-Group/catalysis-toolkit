@@ -1390,25 +1390,30 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             wt_pct = (zmv_val / total_zmv) * 100 if total_zmv > 0 else 0
 
             # ── Generate tick positions / reflection list ─────────────────
-            # Prefer GSAS-II's refined Fc² values (gsas_refs) when available
-            # — they correctly account for all atoms and symmetry.  Ghost
-            # reflections with Fc²≈0 are removed by a relative threshold
-            # (0.1% of strongest) matching the preview stick filter.
-            # Fall back to generate_reflections when GSAS-II data is missing.
+            # Always use generate_reflections() for tick positions — this
+            # matches the preview stick pattern and uses our pre-computed F²
+            # with correct filtering.  GSAS-II's refined Fc² values can be
+            # unreliable for phases that haven't fully converged (e.g. W2C
+            # Pbcn), causing legitimate reflections to be filtered out.
+            # The GSAS-II RefList (gsas_refs) is still used separately for
+            # phase profile reconstruction in _compute_raw_phase_profile().
+            sys_ = (ph.get('system') or 'triclinic').lower()
+            sg = ph.get('spacegroup_number', 1)
+            sites = _get_expanded_sites(ph.get('cif_text', ''), sg)
+            phase_refs = generate_reflections(
+                a, b, c, alpha, beta, gamma, sys_, sg,
+                wavelength, tt_min, tt_max, hkl_max=12,
+                sites=sites)
+            tick_positions = [round(r[0], 3) for r in phase_refs]
+            print(f"  Tick positions for '{ph.get('name', '?')}' (SG {sg}): "
+                  f"{len(tick_positions)} reflections in "
+                  f"{tt_min:.1f}–{tt_max:.1f}° 2θ", flush=True)
+            # Use GSAS-II RefList for profile reconstruction if available
             gsas_phase_refs = gsas_refs.get(phase_obj.name)
             if gsas_phase_refs:
-                phase_refs = gsas_phase_refs
-                tick_positions = [round(r[0], 3) for r in phase_refs]
-            else:
-                sys_ = (ph.get('system') or 'triclinic').lower()
-                sg = ph.get('spacegroup_number', 1)
-                sites = _get_expanded_sites(ph.get('cif_text', ''), sg)
-                phase_refs = generate_reflections(
-                    a, b, c, alpha, beta, gamma, sys_, sg,
-                    wavelength, tt_min, tt_max, hkl_max=12,
-                    sites=sites)
-                tick_positions = [round(r[0], 3) for r in phase_refs]
-            all_phase_refs.append(phase_refs)
+                print(f"    GSAS-II RefList: {len(gsas_phase_refs)} reflections "
+                      f"(used for profile reconstruction)", flush=True)
+            all_phase_refs.append(gsas_phase_refs if gsas_phase_refs else phase_refs)
 
             # B_iso (average over atoms; falls back to DEFAULT_B_ISO)
             b_iso_avg = DEFAULT_B_ISO
