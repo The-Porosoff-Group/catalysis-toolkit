@@ -595,6 +595,17 @@
                 <option value="20">20 — heavy amorphous background</option>
               </select>
             </div>
+            <div class="form-group" id="instprm-group" style="display:none;">
+              <label title="Upload a GSAS-II .instprm file from your instrument calibration. If not provided, default profile parameters will be used as starting guesses (U=2, V=−2, W=5) and refined during fitting.">
+                Instrument Parameters <span style="color:var(--muted);font-weight:400;"> — optional, GSAS-II only</span>
+              </label>
+              <input type="file" id="xrd-instprm-file" accept=".instprm,.prm,.inst"
+                     style="font-size:12px;">
+              <span style="font-size:11px;color:var(--muted);">
+                Upload your GSAS-II .instprm file for accurate profile parameters.
+                Without this, default values are used as initial guesses and refined.
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -1362,6 +1373,9 @@ document.addEventListener('DOMContentLoaded', () => {
       if (data.available) {
         const btn = document.getElementById('btn-xrd-gsas2');
         if (btn) btn.style.display = '';
+        // Show instrument parameter file upload (GSAS-II only)
+        const instGrp = document.getElementById('instprm-group');
+        if (instGrp) instGrp.style.display = '';
       }
     })
     .catch(() => {});  // silently ignore if endpoint not available
@@ -1611,6 +1625,7 @@ function renderSelectedPhases() {
     const div = document.createElement('div');
     div.style.cssText = `display:flex;align-items:center;gap:10px;padding:8px 14px;
       background:var(--surface2);border:1px solid ${c};border-radius:6px;`;
+    const zVal = ph.Z || '';
     div.innerHTML = `
       <span style="width:10px;height:10px;border-radius:50%;background:${c};flex-shrink:0;"></span>
       <span style="font-family:var(--mono);font-size:13px;font-weight:700;">${ph.formula||ph.name}</span>
@@ -1619,6 +1634,10 @@ function renderSelectedPhases() {
         a=${parseFloat(ph.a||0).toFixed(3)} c=${parseFloat(ph.c||0).toFixed(3)} Å
       </span>
       ${ph.cif_text ? '<span class="pill green" style="font-size:10px;padding:2px 8px;">CIF ✓</span>' : ''}
+      <label style="font-size:10px;color:var(--muted);display:flex;align-items:center;gap:4px;" title="Formula units per unit cell (Z) — needed for accurate weight fractions via Hill & Howard method">
+        Z=<input type="number" min="1" max="200" value="${zVal}" placeholder="?" style="width:40px;font-size:11px;padding:1px 4px;background:var(--surface);border:1px solid var(--border);color:var(--fg);border-radius:3px;"
+          onchange="xrdPhases[${i}].Z=parseInt(this.value)||null">
+      </label>
       <span style="margin-left:auto;font-size:11px;color:var(--muted);">COD ${ph.cod_id}</span>
       <button class="btn-sm" style="padding:3px 8px;font-size:11px;" onclick="removePhase(${i})">✕</button>`;
     cont.appendChild(div);
@@ -1686,6 +1705,11 @@ async function runXRD(method) {
     fd.append('n_bg_coeffs', document.getElementById('xrd-bg-coeffs').value || '10');
     fd.append('output_dir',  document.getElementById('xrd-output-dir').value);
     fd.append('method',      method);
+    // Include instrument parameter file if provided (GSAS-II only)
+    const instprmInput = document.getElementById('xrd-instprm-file');
+    if (instprmInput && instprmInput.files.length > 0) {
+      fd.append('instprm_file', instprmInput.files[0]);
+    }
     // Send phases WITHOUT cif_text (server pulls from cache)
     const phases_stripped = xrdPhases.map(p => {
       const {cif_text, ...rest} = p; return rest;

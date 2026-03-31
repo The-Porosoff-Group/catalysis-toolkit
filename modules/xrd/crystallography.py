@@ -273,6 +273,86 @@ def is_allowed(h, k, l, spacegroup_number):
 
     # Im-3m (#229), Pm-3m (#221): handled by lattice centering above
 
+    # ── P-lattice orthorhombic glide-plane absences ───────────────────────────
+    # These are critical for transition metal carbides, oxides, and ceramics.
+
+    # Pbcn (#60, W2C, Mo2C):  b-glide ⊥ a, c-glide ⊥ b, n-glide ⊥ c
+    #   0kl: k = 2n   |   h0l: l = 2n   |   hk0: h+k = 2n
+    if sg == 60:
+        if h == 0 and k % 2 != 0:            return False  # 0kl: k=2n
+        if k == 0 and l % 2 != 0:            return False  # h0l: l=2n
+        if l == 0 and (h + k) % 2 != 0:      return False  # hk0: h+k=2n
+        if h == 0 and k == 0 and l % 2 != 0: return False  # 00l: l=2n
+        if h == 0 and l == 0 and k % 2 != 0: return False  # 0k0: k=2n
+        if k == 0 and l == 0 and h % 2 != 0: return False  # h00: h=2n
+
+    # Pbca (#61, common for phosphates, silicates):
+    #   0kl: k = 2n   |   h0l: l = 2n   |   hk0: h = 2n
+    if sg == 61:
+        if h == 0 and k % 2 != 0:            return False
+        if k == 0 and l % 2 != 0:            return False
+        if l == 0 and h % 2 != 0:            return False
+        if h == 0 and k == 0 and l % 2 != 0: return False
+        if h == 0 and l == 0 and k % 2 != 0: return False
+        if k == 0 and l == 0 and h % 2 != 0: return False
+
+    # Pnma (#62, Fe3C cementite, many perovskites):
+    #   0kl: k+l = 2n   |   hk0: h = 2n   |   h0l: (no condition)
+    if sg == 62:
+        if h == 0 and (k + l) % 2 != 0:      return False  # 0kl: k+l=2n
+        if l == 0 and h % 2 != 0:             return False  # hk0: h=2n
+        if h == 0 and k == 0 and l % 2 != 0:  return False  # 00l: l=2n
+        if h == 0 and l == 0 and k % 2 != 0:  return False  # 0k0: k=2n
+        if k == 0 and l == 0 and h % 2 != 0:  return False  # h00: h=2n
+
+    # P21/c (#14, very common monoclinic):  c-glide ⊥ b, 21 screw along b
+    #   h0l: l = 2n   |   0k0: k = 2n
+    if sg == 14:
+        if k == 0 and l % 2 != 0: return False  # h0l: l=2n
+        if h == 0 and l == 0 and k % 2 != 0: return False  # 0k0: k=2n
+
+    # C2/c (#15):  C-centring (h+k even) already handled + c-glide ⊥ b
+    #   h0l: l = 2n   |   0k0: k = 2n
+    if sg == 15:
+        if k == 0 and l % 2 != 0: return False
+        if h == 0 and l == 0 and k % 2 != 0: return False
+
+    # P21 21 21 (#19, many organic/MOF crystals):
+    #   h00: h = 2n   |   0k0: k = 2n   |   00l: l = 2n
+    if sg == 19:
+        if k == 0 and l == 0 and h % 2 != 0: return False
+        if h == 0 and l == 0 and k % 2 != 0: return False
+        if h == 0 and k == 0 and l % 2 != 0: return False
+
+    # R-3m (#166) and R-3c (#167): R-centring (obverse) −h+k+l = 3n
+    if sg in (146, 148, 155, 160, 161, 166, 167):
+        if (-h + k + l) % 3 != 0: return False
+    # R-3c also has: h0l with l=2n, 00l with l=6n (screw)
+    if sg in (161, 167):
+        if k == 0 and l % 2 != 0: return False
+        if h == 0 and k == 0 and l % 6 != 0: return False
+
+    # Pa-3 (#205, pyrite structure):  a-glide
+    #   0kl: k = 2n   |   h0l: l = 2n (by cubic equivalence, also h00: h=2n)
+    if sg == 205:
+        if h == 0 and k % 2 != 0: return False
+        if k == 0 and l % 2 != 0: return False
+        if l == 0 and h % 2 != 0: return False
+        if k == 0 and l == 0 and h % 2 != 0: return False
+        if h == 0 and l == 0 and k % 2 != 0: return False
+        if h == 0 and k == 0 and l % 2 != 0: return False
+
+    # Fd-3m (#227, spinel, diamond):  F-centring already handled + d-glide
+    #   0kl: k+l = 4n   |   hhl: 2h+l = 4n
+    if sg == 227:
+        if h == 0 and (k + l) % 4 != 0: return False
+        if k == 0 and (h + l) % 4 != 0: return False
+        if l == 0 and (h + k) % 4 != 0: return False
+        ah, ak, al = abs(h), abs(k), abs(l)
+        if ah == ak and (2*ah + al) % 4 != 0: return False
+        if ah == al and (2*ah + ak) % 4 != 0: return False
+        if ak == al and (2*ak + ah) % 4 != 0: return False
+
     return True
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -484,13 +564,27 @@ def generate_reflections(a, b, c, al, be, ga, system, spacegroup_number,
                         F2 = structure_factor_sq(h, k, l, sites, s)
                     seen_d[d_key] = [two_theta, d, (abs(h), abs(k), abs(l)), 1, F2]
 
-    # Build final list with intensity weights
+    # Build final list with intensity weights.
+    # Use a two-pass filter: absolute threshold removes truly extinct peaks,
+    # then a relative threshold removes ghost reflections whose F² is
+    # negligible compared to the strongest peak (common in multi-element
+    # compounds like W2C where W-C cancellation produces near-zero F²).
+    entries = sorted(seen_d.values(), key=lambda x: x[0])
+
+    max_F2 = 0.0
+    if sites is not None:
+        for entry in entries:
+            F2 = entry[4]
+            if F2 is not None and F2 > max_F2:
+                max_F2 = F2
+    rel_threshold = max_F2 * 1e-3  # 0.1% of strongest reflection
+
     reflections = []
-    for entry in sorted(seen_d.values(), key=lambda x: x[0]):
+    for entry in entries:
         two_theta, d, hkl, mult, F2 = entry
         if sites is not None:
             # Skip reflections with negligible structure factor
-            if F2 is not None and F2 < 1e-4:
+            if F2 is not None and F2 < max(1e-4, rel_threshold):
                 continue
             # Intensity weight = mult × |F|² (LP applied later in compute_phase_pattern)
             weight = mult * (F2 if F2 is not None else 1.0)

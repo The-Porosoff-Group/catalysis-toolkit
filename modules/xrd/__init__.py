@@ -169,13 +169,11 @@ def _parse_generic(lines, ext):
 def _sg_symbol_to_number(symbol):
     """
     Map common space group symbol strings to International Tables numbers.
-    Handles common variations in formatting (with/without spaces, dashes,
-    subscript notation).
+    Handles common variations in formatting.
     """
     # Normalise: remove spaces, underscores around subscripts
     s = str(symbol).strip().replace(' ', '').replace('_', '')
-    # Direct lookup table — keys are SPACE-STRIPPED.
-    # Common catalysis phases + common orthorhombic/monoclinic/hexagonal SGs.
+    # Direct lookup table for phases common in catalysis research
     _MAP = {
         # Cubic
         'Im-3m': 229, 'Im3m': 229,
@@ -186,8 +184,10 @@ def _sg_symbol_to_number(symbol):
         'Ia-3':  206, 'Ia3':  206,
         'Ia-3d': 230, 'Ia3d': 230,
         'Fd-3m': 227, 'Fd3m': 227,
+        'Fm-3':  202, 'Fm3':  202,
         'F-43m': 216, 'F43m': 216,
-        'I-43d': 220, 'I43d': 220,
+        'Pn-3m': 224, 'Pn3m': 224,
+        'Im-3':  204, 'Im3':  204,
         # Hexagonal / Trigonal
         'P63/mmc': 194, 'P6_3/mmc': 194, 'P63mmc': 194,
         'P6/mmm': 191, 'P6mmm': 191,
@@ -195,40 +195,38 @@ def _sg_symbol_to_number(symbol):
         'P-6m2':  187, 'P6m2':  187,
         'P-62m':  189, 'P62m':  189,
         'P-6':    174,
-        'P63mc':  186, 'P6_3mc': 186,
-        'P6322':  182, 'P6_322': 182,
-        'P63':    173, 'P6_3': 173,
+        'P63mc':  186,
+        'P6322':  182,
+        'P63':    173,
         'R-3m':   166, 'R3m': 166,
         'R-3c':   167, 'R3c': 167,
         'R-3':    148, 'R3':  148,
-        # Orthorhombic — common catalyst/carbide/oxide phases
-        'Pbcn':    60,                     # W2C
-        'Pbca':    61,
-        'Pnma':    62, 'Pbnm': 62,        # Fe3C cementite
-        'Cmcm':    63,
-        'Cmce':    64, 'Cmca': 64,
-        'Cmmm':    65,
-        'Pna21':   33, 'Pna2_1': 33,
-        'Pban':    50,
-        'Pbcm':    57,
-        'Pmmn':    59,
-        'Pmma':    51,
-        'Pnnm':    58,
-        'Immm':    71,
-        'Ibam':    72,
-        'Fmmm':    69,
-        'Fddd':    70,
+        'R3':     146,
         # Tetragonal
-        'I4/mmm':  139, 'I4mmm': 139,
+        'I4/mmm': 139, 'I4mmm': 139,
         'I41/amd': 141, 'I41amd': 141,
-        'P42/mnm': 136, 'P42mnm': 136,    # rutile
-        'I4/mcm':  140, 'I4mcm': 140,
+        'P42/mnm': 136, 'P42mnm': 136,
+        'I4/mcm': 140,
+        'P4/mmm': 123,
+        # Orthorhombic — critical for carbides, oxides
+        'Pbcn':    60,
+        'Pbca':    61,
+        'Pnma':    62, 'Pbnm': 62,
+        'Cmcm':    63, 'Cmce': 64, 'Cmca': 64,
+        'Cmmm':    65,
+        'Fmmm':    69,
+        'Immm':    71,
+        'Imma':    74,
+        'P212121': 19,
+        'Pna21':   33,
+        'Pca21':   29,
+        'Pmc21':   26,
         # Monoclinic
         'P21/c':   14, 'P2_1/c': 14, 'P21c': 14,
-        'P21/n':   14, 'P2_1/n': 14, 'P21n': 14,  # alternate setting
-        'C2/m':    12, 'C2m': 12,
-        'C2/c':    15, 'C2c': 15,
-        'P21':      4, 'P2_1': 4,
+        'C2/c':    15, 'C2c':    15,
+        'C2/m':    12, 'C2m':    12,
+        'P21/m':   11, 'P21m':   11,
+        'P21':      4,
         # Triclinic
         'P-1':      2, 'P1':  1,
     }
@@ -298,29 +296,10 @@ def validate_phases(phases, fetch_missing=True):
             try:
                 parsed = parse_cif(cif_text)
                 # Only fill fields that are missing or None
-                for key in ['a','b','c','alpha','beta','gamma','Z']:
+                for key in ['a','b','c','alpha','beta','gamma',
+                            'spacegroup_number','system','Z']:
                     if ph.get(key) is None and parsed.get(key) is not None:
                         ph[key] = parsed[key]
-                # Space group: override default SG=1 with CIF value.
-                # The frontend defaults to 1 when the CIF tag is missing,
-                # but parse_cif checks both _symmetry_Int_Tables_number
-                # AND _space_group_IT_number, so it's more reliable.
-                parsed_sg = parsed.get('spacegroup_number')
-                if parsed_sg and parsed_sg > 1:
-                    cur_sg = ph.get('spacegroup_number')
-                    if cur_sg is None or cur_sg <= 1:
-                        ph['spacegroup_number'] = parsed_sg
-                # Also fill system from CIF if missing/default
-                parsed_sys = parsed.get('system')
-                if parsed_sys and parsed_sys != 'triclinic':
-                    cur_sys = ph.get('system')
-                    if not cur_sys or cur_sys == 'triclinic':
-                        ph['system'] = parsed_sys
-                # Fill spacegroup H-M symbol from CIF if missing
-                parsed_sg_name = parsed.get('spacegroup_name')
-                if parsed_sg_name and parsed_sg_name != 'P 1':
-                    if not ph.get('spacegroup'):
-                        ph['spacegroup'] = parsed_sg_name
                 if not ph.get('name'):
                     ph['name'] = parsed.get('formula', 'Phase')
                 if not ph.get('formula') and parsed.get('formula'):
@@ -362,39 +341,10 @@ def validate_phases(phases, fetch_missing=True):
         ph['name']   = ph.get('name') or ph.get('formula') or 'Phase'
 
         # If spacegroup_number is 1 (default/unknown), try to infer from symbol
-        if ph['spacegroup_number'] <= 1 and ph.get('spacegroup'):
+        if ph['spacegroup_number'] == 1 and ph.get('spacegroup'):
             inferred = _sg_symbol_to_number(ph['spacegroup'])
-            if inferred and inferred > 1:
+            if inferred:
                 ph['spacegroup_number'] = inferred
-                print(f"  Inferred SG {inferred} from H-M symbol "
-                      f"'{ph['spacegroup']}'", flush=True)
-
-        # Last resort: re-parse CIF text for the H-M symbol and try to
-        # convert it.  Some CIFs lack the numeric SG tag entirely.
-        if ph['spacegroup_number'] <= 1 and ph.get('cif_text'):
-            import re as _re
-            for pattern in [
-                r"_symmetry_space_group_name_H-M\s+['\"]?(.*?)['\"]?\s*$",
-                r"_space_group_name_H-M_alt\s+['\"]?(.*?)['\"]?\s*$",
-                r"_space_group\.name_H-M_full\s+['\"]?(.*?)['\"]?\s*$",
-            ]:
-                m = _re.search(pattern, ph['cif_text'], _re.MULTILINE)
-                if m:
-                    hm = m.group(1).strip().strip("'\"")
-                    inferred = _sg_symbol_to_number(hm)
-                    if inferred and inferred > 1:
-                        ph['spacegroup_number'] = inferred
-                        if not ph.get('spacegroup'):
-                            ph['spacegroup'] = hm
-                        print(f"  Inferred SG {inferred} from CIF H-M "
-                              f"'{hm}'", flush=True)
-                        break
-
-        # Diagnostic: warn if SG is still 1
-        if ph['spacegroup_number'] <= 1:
-            print(f"  WARNING: phase '{ph.get('name', '?')}' has "
-                  f"spacegroup_number=1 (P1). Check CIF for space group "
-                  f"tags.", flush=True)
 
         # If system is still triclinic but we have a real spacegroup number, fix it
         if ph['system'] == 'triclinic' and ph['spacegroup_number'] > 2:
@@ -676,6 +626,9 @@ def run(filepath, output_dir, metadata, params):
             tt, intensity, sigma, phases, wavelength,
             tt_min=tt_min, tt_max=tt_max,
             n_bg_coeffs=n_bg, max_cycles=max_outer * 3,
+            instprm_file=params.get('instprm_file'),
+            polariz=params.get('polariz'),
+            sh_l=params.get('sh_l'),
         )
     elif method == 'rietveld':
         # Check that all phases have atom sites (CIF text)

@@ -84,107 +84,82 @@ def import_error():
 # ─────────────────────────────────────────────────────────────────────────────
 
 _SG_HM = {
-    # Common catalyst phases — add entries as needed
-    1: 'P 1', 2: 'P -1', 4: 'P 21',
-    12: 'C 2/m', 14: 'P 21/c', 15: 'C 2/c',
-    33: 'P n a 21', 50: 'P b a n', 57: 'P b c m', 59: 'P m m n',
-    60: 'P b c n', 61: 'P b c a', 62: 'P n m a', 63: 'C m c m',
-    139: 'I 4/m m m', 141: 'I 41/a m d',
-    148: 'R -3', 166: 'R -3 m', 167: 'R -3 c',
-    173: 'P 63', 176: 'P 63/m', 186: 'P 63 m c', 187: 'P -6 m 2',
-    191: 'P 6/m m m', 194: 'P 63/m m c',
-    196: 'F 2 3', 202: 'F m -3', 216: 'F -4 3 m', 225: 'F m -3 m',
-    227: 'F d -3 m', 229: 'I m -3 m', 223: 'P m -3 n', 221: 'P m -3 m',
+    # Triclinic / Monoclinic
+    1: 'P 1', 2: 'P -1', 3: 'P 2', 4: 'P 21', 5: 'C 2',
+    6: 'P m', 7: 'P c', 8: 'C m', 9: 'C c', 10: 'P 2/m',
+    11: 'P 21/m', 12: 'C 2/m', 13: 'P 2/c', 14: 'P 21/c', 15: 'C 2/c',
+    # Orthorhombic (common catalyst phases)
+    16: 'P 2 2 2', 19: 'P 21 21 21', 26: 'P m c 21', 29: 'P c a 21',
+    31: 'P m n 21', 33: 'P n a 21', 36: 'C m c 21', 40: 'A m a 2',
+    44: 'I m m 2', 46: 'I m a 2',
+    47: 'P m m m', 51: 'P m m a', 55: 'P b a m', 57: 'P b c m',
+    58: 'P n n m', 59: 'P m m n', 60: 'P b c n', 61: 'P b c a',
+    62: 'P n m a', 63: 'C m c m', 64: 'C m c a', 65: 'C m m m',
+    66: 'C c c m', 69: 'F m m m', 70: 'F d d d', 71: 'I m m m',
+    72: 'I b a m', 74: 'I m m a',
+    # Tetragonal
+    75: 'P 4', 82: 'I -4', 83: 'P 4/m', 84: 'P 42/m',
+    85: 'P 4/n', 87: 'I 4/m', 88: 'I 41/a',
+    99: 'P 4 m m', 107: 'I 4 m m', 115: 'P -4 m 2',
+    119: 'I -4 m 2', 121: 'I -4 2 m', 122: 'I -4 2 d',
+    123: 'P 4/m m m', 129: 'P 4/n m m', 131: 'P 42/m m c',
+    136: 'P 42/m n m', 139: 'I 4/m m m', 140: 'I 4/m c m',
+    141: 'I 41/a m d', 142: 'I 41/a c d',
+    # Trigonal / Hexagonal
+    143: 'P 3', 146: 'R 3', 147: 'P -3', 148: 'R -3',
+    150: 'P 3 2 1', 152: 'P 31 2 1', 154: 'P 32 2 1',
+    155: 'R 3 2', 156: 'P 3 m 1', 157: 'P 3 1 m',
+    160: 'R 3 m', 161: 'R 3 c', 162: 'P -3 1 m', 163: 'P -3 1 c',
+    164: 'P -3 m 1', 165: 'P -3 c 1', 166: 'R -3 m', 167: 'R -3 c',
+    168: 'P 6', 173: 'P 63', 174: 'P -6', 175: 'P 6/m', 176: 'P 63/m',
+    183: 'P 6 m m', 186: 'P 63 m c', 187: 'P -6 m 2', 189: 'P -6 2 m',
+    191: 'P 6/m m m', 193: 'P 63/m c m', 194: 'P 63/m m c',
+    # Cubic
+    195: 'P 2 3', 196: 'F 2 3', 197: 'I 2 3', 198: 'P 21 3',
+    199: 'I 21 3', 200: 'P m -3', 201: 'P n -3', 202: 'F m -3',
+    203: 'F d -3', 204: 'I m -3', 205: 'P a -3', 206: 'I a -3',
+    207: 'P 4 3 2', 209: 'F 4 3 2', 211: 'I 4 3 2',
+    212: 'P 43 3 2', 213: 'P 41 3 2', 214: 'I 41 3 2',
+    215: 'P -4 3 m', 216: 'F -4 3 m', 217: 'I -4 3 m',
+    218: 'P -4 3 n', 219: 'F -4 3 c', 220: 'I -4 3 d',
+    221: 'P m -3 m', 222: 'P n -3 n', 223: 'P m -3 n',
+    224: 'P n -3 m', 225: 'F m -3 m', 226: 'F m -3 c',
+    227: 'F d -3 m', 228: 'F d -3 c', 229: 'I m -3 m',
     230: 'I a -3 d',
 }
 
 
-def _patch_cif_for_gsas(cif_text, spacegroup_number):
-    """Patch a CIF's space-group tags so GSAS-II reads them correctly.
+def _get_hm_symbol(sg_num):
+    """Get H-M symbol for a space group number.
 
-    GSAS-II's CIF reader requires H-M symbols with spaces between
-    symmetry elements (e.g. 'P b c n' not 'Pbcn').  COD CIFs often
-    use the compact notation which GSAS-II misreads as P 1.
-
-    This function:
-    1. Ensures _symmetry_Int_Tables_number is present
-    2. Ensures _symmetry_space_group_name_H-M has the spaced form
-    3. Adds _space_group_IT_number and _space_group_name_H-M_alt
+    Uses the static table first, then tries pymatgen as a fallback.
     """
-    import re
+    if sg_num in _SG_HM:
+        return _SG_HM[sg_num]
+    try:
+        from pymatgen.symmetry.groups import SpaceGroup
+        sg = SpaceGroup.from_int_number(sg_num)
+        return sg.symbol
+    except Exception:
+        pass
+    warnings.warn(f"Space group {sg_num} not in lookup table — using 'P 1'. "
+                  f"Add it to _SG_HM in gsasii_backend.py for correct results.")
+    return 'P 1'
 
-    if not cif_text or not spacegroup_number or spacegroup_number < 2:
-        return cif_text
 
-    hm_spaced = _SG_HM.get(spacegroup_number)
-    if not hm_spaced:
-        return cif_text  # unknown SG, leave CIF as-is
-
-    lines = cif_text.splitlines()
-    out = []
-    found_sg_num = False
-    found_sg_hm = False
-    found_sg2_num = False
-    found_sg2_hm = False
-
-    for line in lines:
-        stripped = line.strip()
-
-        # Replace or note existing SG number tags
-        if stripped.startswith('_symmetry_Int_Tables_number'):
-            out.append(f'_symmetry_Int_Tables_number {spacegroup_number}')
-            found_sg_num = True
-            continue
-        if stripped.startswith('_space_group_IT_number') or \
-           stripped.startswith('_space_group.IT_number'):
-            out.append(f'_space_group_IT_number {spacegroup_number}')
-            found_sg2_num = True
-            continue
-
-        # Replace existing H-M symbol tags with spaced form.
-        # Must check all variants: COD/ICSD CIFs use many different tag
-        # names for the same information.
-        if stripped.startswith('_symmetry_space_group_name_H-M'):
-            out.append(f"_symmetry_space_group_name_H-M '{hm_spaced}'")
-            found_sg_hm = True
-            continue
-        if stripped.startswith('_space_group_name_H-M_alt') or \
-           stripped.startswith('_space_group.name_H-M') or \
-           stripped.startswith('_space_group_name_H-M_full') or \
-           stripped.startswith('_space_group_name_H-M_ref') or \
-           stripped.startswith('_space_group_name_H-M '):
-            out.append(f"_space_group_name_H-M_alt '{hm_spaced}'")
-            found_sg2_hm = True
-            continue
-
-        out.append(line)
-
-    # Add missing tags after the data_ line
-    additions = []
-    if not found_sg_num:
-        additions.append(f'_symmetry_Int_Tables_number {spacegroup_number}')
-    if not found_sg_hm:
-        additions.append(f"_symmetry_space_group_name_H-M '{hm_spaced}'")
-    if not found_sg2_num:
-        additions.append(f'_space_group_IT_number {spacegroup_number}')
-    if not found_sg2_hm:
-        additions.append(f"_space_group_name_H-M_alt '{hm_spaced}'")
-
-    if additions:
-        # Insert after the first data_ line
-        result = []
-        inserted = False
-        for line in out:
-            result.append(line)
-            if not inserted and line.strip().startswith('data_'):
-                result.extend(additions)
-                inserted = True
-        if not inserted:
-            # No data_ line found — prepend
-            result = ['data_patched'] + additions + out
-        out = result
-
-    return '\n'.join(out) + '\n'
+# ── Default instrument / refinement parameters ────────────────────────────
+# These are used when the user does not provide their own .instprm file.
+# U, V, W, X, Y are initial guesses — GSAS-II refines them during fitting.
+# Polariz. and SH/L are NOT refined and directly affect calculated
+# intensities; users with known instrument profiles should override them.
+DEFAULT_POLARIZ = 0.99    # Monochromator polarization (0.99 for graphite)
+DEFAULT_SH_L = 0.002      # Finger-Cox-Jephcoat asymmetry parameter
+DEFAULT_U = 2.0            # Caglioti U initial guess (centideg²) — refined
+DEFAULT_V = -2.0           # Caglioti V initial guess (centideg²) — refined
+DEFAULT_W = 5.0            # Caglioti W initial guess (centideg²) — refined
+DEFAULT_X = 0.0            # Lorentzian X initial guess (centideg) — refined
+DEFAULT_Y = 0.0            # Lorentzian Y initial guess (centideg) — refined
+DEFAULT_B_ISO = 0.5        # Fallback B_iso (Å²) when GSAS-II extraction fails
 
 
 def _get_expanded_sites(cif_text, spacegroup_number=None):
@@ -215,9 +190,10 @@ def _reduce_to_asymmetric_unit(cif_text):
 
     Uses pymatgen's symmetrized structure to get the unique sites.
     Falls back to the raw sites if pymatgen is unavailable.
+
+    Validates the result by re-expanding and comparing site counts.
     """
     if not cif_text:
-        print("  _reduce_to_asymmetric_unit: no cif_text", flush=True)
         return []
 
     try:
@@ -234,33 +210,56 @@ def _reduce_to_asymmetric_unit(cif_text):
             _os.unlink(_tmp)
         structs = parser.parse_structures(primitive=False)
         if structs:
-            sga = SpacegroupAnalyzer(structs[0], symprec=0.1)
-            sym_struct = sga.get_symmetrized_structure()
-            sites = []
-            for equiv_sites in sym_struct.equivalent_sites:
-                site = equiv_sites[0]  # take first of each equivalent group
-                frac = site.frac_coords % 1.0
-                el = str(site.specie)
-                sites.append((el, float(frac[0]), float(frac[1]),
-                              float(frac[2]), 1.0))
-            if sites:
-                print(f"  _reduce_to_asymmetric_unit: pymatgen → "
-                      f"{len(sites)} unique sites", flush=True)
-                return sites
-    except Exception as e_pmg:
-        print(f"  _reduce_to_asymmetric_unit: pymatgen unavailable ({e_pmg})",
-              flush=True)
+            full_cell_n = len(structs[0])  # total sites in full unit cell
 
-    # Fallback: raw parse_cif — the CIF typically lists the asymmetric unit
-    # already (standard CIF convention), so raw sites should be OK.
+            # Try tight tolerance first (0.01 Å), fall back to looser (0.1 Å).
+            # Tight tolerance avoids merging non-equivalent sites in compact
+            # cells like W2C Pbcn where heavy atoms are close together.
+            sites = None
+            for symprec in (0.01, 0.05, 0.1):
+                try:
+                    sga = SpacegroupAnalyzer(structs[0], symprec=symprec)
+                    sym_struct = sga.get_symmetrized_structure()
+                    candidate = []
+                    for equiv_sites in sym_struct.equivalent_sites:
+                        site = equiv_sites[0]
+                        frac = site.frac_coords % 1.0
+                        el = str(site.specie)
+                        occ = 1.0
+                        if hasattr(site, 'species'):
+                            sp = site.species
+                            if hasattr(sp, 'num_atoms'):
+                                occ = float(sp.num_atoms)
+                        candidate.append((el, float(frac[0]), float(frac[1]),
+                                          float(frac[2]), occ))
+
+                    # Validate: the number of equivalent sites summed across
+                    # all groups should equal the full unit cell site count.
+                    # This catches bad equivalence groupings.
+                    expanded_n = sum(
+                        len(eq) for eq in sym_struct.equivalent_sites)
+                    if expanded_n == full_cell_n and candidate:
+                        sites = candidate
+                        break
+                    # If counts don't match, try a looser tolerance
+                except Exception:
+                    continue
+
+            if sites:
+                return sites
+    except Exception as e:
+        print(f"  Warning: pymatgen asymmetric-unit reduction failed: {e}",
+              flush=True)
+        print("  Falling back to raw CIF sites — if the CIF contains the "
+              "full unit cell, GSAS-II may over-expand.", flush=True)
+
+    # Fallback: raw parse_cif (usually fine for COD CIFs which list
+    # asymmetric unit; may cause over-expansion for MP/pymatgen CIFs
+    # which list the full unit cell).
     try:
         parsed = parse_cif(cif_text)
-        raw_sites = parsed.get('sites') or []
-        print(f"  _reduce_to_asymmetric_unit: raw CIF fallback → "
-              f"{len(raw_sites)} sites", flush=True)
-        return raw_sites
+        return parsed.get('sites') or []
     except Exception:
-        print("  _reduce_to_asymmetric_unit: parse_cif failed", flush=True)
         return []
 
 
@@ -284,10 +283,10 @@ def _build_conventional_cif(ph):
     formula = ph.get('formula', '')
     Z   = ph.get('Z', '')
 
-    # H-M symbol — try phase dict first, then lookup table
+    # H-M symbol — try phase dict first, then dynamic lookup
     hm = ph.get('spacegroup', '') or ph.get('spacegroup_name', '')
     if not hm:
-        hm = _SG_HM.get(sg, 'P 1')
+        hm = _get_hm_symbol(sg)
 
     # Get atom sites reduced to the asymmetric unit.
     # GSAS-II applies space-group symmetry itself, so we must NOT give
@@ -295,12 +294,6 @@ def _build_conventional_cif(ph):
     # reflections (e.g. ghost peaks at ~25° for A15-W).
     cif_text = ph.get('cif_text', '')
     sites = _reduce_to_asymmetric_unit(cif_text) if cif_text else []
-    print(f"  _build_conventional_cif: SG={sg}, HM='{hm}', "
-          f"cell=[{a:.4f}, {b:.4f}, {c:.4f}], "
-          f"{len(sites)} asymmetric-unit sites"
-          f"{', Z=' + str(Z) if Z else ''}", flush=True)
-    for s in sites:
-        print(f"    {s[0]}  ({s[1]:.6f}, {s[2]:.6f}, {s[3]:.6f})  occ={s[4]}", flush=True)
 
     lines = [
         'data_phase',
@@ -405,7 +398,7 @@ def _nnls(A, b):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _compute_raw_phase_profile(tt_arr, refs, U_deg, V_deg, W_deg,
-                                X_deg, Y_deg):
+                                X_deg, Y_deg, gaussian_only=False):
     """Compute a raw (unscaled) profile shape for one phase.
 
     Returns an array of the same length as *tt_arr* whose values are
@@ -413,6 +406,15 @@ def _compute_raw_phase_profile(tt_arr, refs, U_deg, V_deg, W_deg,
     absolute scale is arbitrary — what matters is the *relative* shape
     compared to other phases so that the proportional decomposition
     can correctly partition the total pattern.
+
+    Parameters
+    ----------
+    gaussian_only : bool
+        If True, use pure Gaussian profiles (eta=0) with a tighter
+        window (3×FWHM).  This eliminates the long Lorentzian tails
+        that cause cross-phase leakage artifacts in the proportional
+        decomposition, while preserving accurate peak localisation
+        for genuinely overlapping reflections.
 
     refs : list of [two_theta, d, (h,k,l), intensity_weight] from
            generate_reflections (with structure-factor filtering).
@@ -433,10 +435,14 @@ def _compute_raw_phase_profile(tt_arr, refs, U_deg, V_deg, W_deg,
             fwhm = max(caglioti_fwhm(tt_pos, U_deg, V_deg, W_deg), 0.005)
             eta = 0.5
 
+        if gaussian_only:
+            eta = 0.0
+
         sigma_g = fwhm / (2.0 * math.sqrt(2.0 * math.log(2.0)))
         gamma_l = fwhm / 2.0
-        # Tight window (3× FWHM) to prevent cross-phase bleed
-        window = 3.0 * fwhm
+        # Gaussian-only: 3×FWHM is sufficient (G ≈ 10⁻¹¹ at edge).
+        # Pseudo-Voigt: 6×FWHM captures Lorentzian tails.
+        window = 3.0 * fwhm if gaussian_only else 6.0 * fwhm
 
         msk = np.abs(tt_arr - tt_pos) < window
         if not msk.any():
@@ -444,8 +450,11 @@ def _compute_raw_phase_profile(tt_arr, refs, U_deg, V_deg, W_deg,
 
         dx = tt_arr[msk] - tt_pos
         G = np.exp(-0.5 * (dx / sigma_g) ** 2)
-        L = 1.0 / (1.0 + (dx / gamma_l) ** 2)
-        prof = eta * L + (1.0 - eta) * G
+        if eta > 0:
+            L = 1.0 / (1.0 + (dx / gamma_l) ** 2)
+            prof = eta * L + (1.0 - eta) * G
+        else:
+            prof = G
         # Normalise
         area = np.trapz(prof, tt_arr[msk]) if np.trapz(prof, tt_arr[msk]) > 0 else 1.0
         pattern[msk] += weight * prof / area
@@ -464,22 +473,230 @@ def _write_xye(path, tt, y_obs, sigma):
             f.write(f"{tt[i]:.6f}  {y_obs[i]:.4f}  {sigma[i]:.4f}\n")
 
 
-def _write_instprm(work_dir, wavelength):
-    """Write a minimal GSAS-II .instprm file. Returns path."""
+def _estimate_profile_params(tt, y_obs):
+    """Estimate initial Caglioti U, V, W from observed peak widths.
+
+    Finds the strongest peaks in the data, measures their approximate FWHM,
+    and fits the Caglioti equation FWHM² = U tan²θ + V tanθ + W to get
+    reasonable starting values.  Returns (U, V, W) in centidegrees² / centideg²
+    (GSAS-II internal units), or the module defaults if estimation fails.
+
+    This is critical for complex phases like W2C where the default U/V/W
+    may be far from the true broadening, causing GSAS-II to converge to
+    a local minimum.
+    """
+    try:
+        from scipy.signal import find_peaks
+
+        # Subtract a simple baseline (percentile)
+        baseline = np.percentile(y_obs, 10)
+        y_corr = y_obs - baseline
+
+        # Find prominent peaks (height > 10% of max, well separated)
+        height_thresh = 0.1 * y_corr.max()
+        step = float(tt[1] - tt[0]) if len(tt) > 1 else 0.02
+        distance = max(1, int(0.5 / step))  # at least 0.5° apart
+        peaks, props = find_peaks(y_corr, height=height_thresh, distance=distance)
+
+        if len(peaks) < 2:
+            return DEFAULT_U, DEFAULT_V, DEFAULT_W
+
+        # Measure FWHM for each peak
+        fwhm_data = []  # (tan_theta, fwhm_deg)
+        for pk in peaks:
+            half_max = y_corr[pk] / 2.0
+            # Walk left
+            left = pk
+            while left > 0 and y_corr[left] > half_max:
+                left -= 1
+            # Walk right
+            right = pk
+            while right < len(y_corr) - 1 and y_corr[right] > half_max:
+                right += 1
+            fwhm_deg = float(tt[right] - tt[left])
+            if 0.02 < fwhm_deg < 3.0:  # reasonable range
+                theta_rad = math.radians(float(tt[pk]) / 2.0)
+                tan_th = math.tan(theta_rad)
+                fwhm_data.append((tan_th, fwhm_deg))
+
+        if len(fwhm_data) < 2:
+            return DEFAULT_U, DEFAULT_V, DEFAULT_W
+
+        # Fit Caglioti: FWHM² = U tan²θ + V tanθ + W
+        # In GSAS-II, U/V/W are in centideg² so FWHM is in centideg.
+        # We work in degrees then convert.
+        tan_arr = np.array([d[0] for d in fwhm_data])
+        fwhm_sq = np.array([d[1] ** 2 for d in fwhm_data])
+
+        # Build design matrix [tan²θ, tanθ, 1]
+        A = np.column_stack([tan_arr ** 2, tan_arr, np.ones_like(tan_arr)])
+        try:
+            result, _, _, _ = np.linalg.lstsq(A, fwhm_sq, rcond=None)
+            U_deg2, V_deg2, W_deg2 = float(result[0]), float(result[1]), float(result[2])
+        except np.linalg.LinAlgError:
+            return DEFAULT_U, DEFAULT_V, DEFAULT_W
+
+        # Convert degrees² → centideg²  (multiply by 10000)
+        U_cdeg2 = U_deg2 * 10000.0
+        V_cdeg2 = V_deg2 * 10000.0
+        W_cdeg2 = W_deg2 * 10000.0
+
+        # Sanity clamp: U and W should be positive, V typically negative
+        U_cdeg2 = max(0.1, min(U_cdeg2, 500.0))
+        V_cdeg2 = max(-200.0, min(V_cdeg2, 200.0))
+        W_cdeg2 = max(0.1, min(W_cdeg2, 500.0))
+
+        return U_cdeg2, V_cdeg2, W_cdeg2
+
+    except Exception:
+        return DEFAULT_U, DEFAULT_V, DEFAULT_W
+
+
+def _estimate_lorentzian_params(tt, y_obs, U_cdeg2, V_cdeg2, W_cdeg2):
+    """Estimate initial Lorentzian profile parameters X and Y from peak shapes.
+
+    Measures the Lorentzian fraction of observed peaks by comparing their
+    half-max width to their quarter-max width (Gaussian ratio ~1.48,
+    Lorentzian ratio ~1.73).  Decomposes each peak's FWHM into Gaussian and
+    Lorentzian components using the Thompson-Cox-Hastings (TCH) relationship,
+    then fits H_L = X*tan(theta) + Y/cos(theta) across peaks.
+
+    Returns (X, Y) in centidegrees, or moderate defaults if estimation fails.
+    Critical for carbides/oxides with significant crystallite-size (Y) and
+    micro-strain (X) Lorentzian broadening.
+    """
+    try:
+        from scipy.signal import find_peaks
+
+        baseline = np.percentile(y_obs, 10)
+        y_corr = y_obs - baseline
+
+        height_thresh = 0.1 * y_corr.max()
+        step = float(tt[1] - tt[0]) if len(tt) > 1 else 0.02
+        distance = max(1, int(0.5 / step))
+        peaks, _ = find_peaks(y_corr, height=height_thresh, distance=distance)
+
+        if len(peaks) < 2:
+            return DEFAULT_X, DEFAULT_Y
+
+        lor_data = []  # (tan_theta, cos_theta, H_L_deg)
+        for pk in peaks:
+            half_max = y_corr[pk] / 2.0
+            quarter_max = y_corr[pk] / 4.0
+
+            # Measure half-max width
+            left_h, right_h = pk, pk
+            while left_h > 0 and y_corr[left_h] > half_max:
+                left_h -= 1
+            while right_h < len(y_corr) - 1 and y_corr[right_h] > half_max:
+                right_h += 1
+            fwhm_deg = float(tt[right_h] - tt[left_h])
+
+            # Measure quarter-max width
+            left_q, right_q = pk, pk
+            while left_q > 0 and y_corr[left_q] > quarter_max:
+                left_q -= 1
+            while right_q < len(y_corr) - 1 and y_corr[right_q] > quarter_max:
+                right_q += 1
+            fwqm_deg = float(tt[right_q] - tt[left_q])
+
+            if fwhm_deg < 0.02 or fwhm_deg > 3.0 or fwqm_deg <= fwhm_deg:
+                continue
+
+            # Estimate Lorentzian fraction eta from FWQM/FWHM ratio.
+            # Gaussian: FWQM/FWHM = sqrt(2) ≈ 1.414
+            # Lorentzian: FWQM/FWHM = sqrt(3) ≈ 1.732
+            # Linear interpolation gives eta (Lorentzian fraction).
+            ratio = fwqm_deg / fwhm_deg
+            # Linear interpolation for eta
+            eta = (ratio - 1.4142) / (1.7321 - 1.4142)
+            eta = max(0.0, min(eta, 1.0))
+
+            if eta < 0.01:
+                continue  # essentially pure Gaussian, no Lorentzian info
+
+            # TCH decomposition: total FWHM ≈ eta*H_L + (1-eta)*H_G (simplified)
+            # More precise: use the 5th-order TCH formula inverse.
+            # For a practical estimate, the pseudo-Voigt approximation gives:
+            #   H_L ≈ FWHM * eta (leading-order)
+            #   H_G ≈ FWHM * (1 - eta)
+            # Subtract the Gaussian Caglioti contribution to isolate Lorentzian.
+            theta_rad = math.radians(float(tt[pk]) / 2.0)
+            tan_th = math.tan(theta_rad)
+            cos_th = math.cos(theta_rad)
+
+            # Caglioti Gaussian FWHM² in deg² (convert from centideg²)
+            H_G_sq_deg2 = (U_cdeg2 * tan_th**2 + V_cdeg2 * tan_th
+                           + W_cdeg2) / 10000.0
+            H_G_deg = math.sqrt(max(H_G_sq_deg2, 0.001))
+
+            # Lorentzian FWHM: from total FWHM and Gaussian contribution
+            # Using TCH relation: H_total^5 ≈ H_G^5 + ... + H_L^5
+            # Simplified: H_L ≈ max(0, FWHM - H_G) when eta > 0
+            # More robust: H_L = FWHM * eta (pseudo-Voigt definition)
+            H_L_deg = fwhm_deg * eta
+            if H_L_deg > 0.005:
+                lor_data.append((tan_th, cos_th, H_L_deg))
+
+        if len(lor_data) < 2:
+            return DEFAULT_X, DEFAULT_Y
+
+        # Fit H_L = X*tan(theta) + Y/cos(theta)
+        # X and Y are in degrees here; convert to centideg at the end.
+        tan_arr = np.array([d[0] for d in lor_data])
+        inv_cos_arr = np.array([1.0 / d[1] for d in lor_data])
+        hl_arr = np.array([d[2] for d in lor_data])
+
+        A = np.column_stack([tan_arr, inv_cos_arr])
+        try:
+            result, _, _, _ = np.linalg.lstsq(A, hl_arr, rcond=None)
+            X_deg, Y_deg = float(result[0]), float(result[1])
+        except np.linalg.LinAlgError:
+            return DEFAULT_X, DEFAULT_Y
+
+        # Convert degrees → centidegrees (multiply by 100)
+        X_cdeg = X_deg * 100.0
+        Y_cdeg = Y_deg * 100.0
+
+        # Sanity clamp: both should be non-negative, moderate magnitude
+        X_cdeg = max(0.0, min(X_cdeg, 50.0))
+        Y_cdeg = max(0.0, min(Y_cdeg, 50.0))
+
+        return X_cdeg, Y_cdeg
+
+    except Exception:
+        return DEFAULT_X, DEFAULT_Y
+
+
+def _write_instprm(work_dir, wavelength, polariz=None, sh_l=None,
+                   u=None, v=None, w=None, x=None, y=None):
+    """Write a minimal GSAS-II .instprm file. Returns path.
+
+    Uses module-level DEFAULT_* constants unless overridden.
+    U, V, W, X, Y are initial guesses that GSAS-II will refine.
+    Polariz. and SH/L are NOT refined — they should match the instrument.
+    """
     path = os.path.join(work_dir, 'instrument.instprm')
+    pol = polariz if polariz is not None else DEFAULT_POLARIZ
+    shl = sh_l if sh_l is not None else DEFAULT_SH_L
+    _u = u if u is not None else DEFAULT_U
+    _v = v if v is not None else DEFAULT_V
+    _w = w if w is not None else DEFAULT_W
+    _x = x if x is not None else DEFAULT_X
+    _y = y if y is not None else DEFAULT_Y
     lines = [
         '#GSAS-II instrument parameter file; do not add/delete items!',
         'Type:PXC',
         f'Lam:{wavelength:.6f}',
         'Zero:0.0',
-        'Polariz.:0.99',
-        'U:2.0',
-        'V:-2.0',
-        'W:5.0',
-        'X:0.0',
-        'Y:2.0',
+        f'Polariz.:{pol}',
+        f'U:{_u}',
+        f'V:{_v}',
+        f'W:{_w}',
+        f'X:{_x}',
+        f'Y:{_y}',
         'Z:0.0',
-        'SH/L:0.002',
+        f'SH/L:{shl}',
         'Azimuth:0.0',
     ]
     with open(path, 'w', encoding='utf-8', newline='\n') as f:
@@ -560,7 +777,8 @@ def _extract_instrument_params(histogram):
 
 def run_gsas2(tt, y_obs, sigma, phases, wavelength,
               tt_min=None, tt_max=None, n_bg_coeffs=6,
-              max_cycles=10, progress_callback=None):
+              max_cycles=10, progress_callback=None,
+              instprm_file=None, polariz=None, sh_l=None):
     """
     Run GSAS-II Rietveld refinement via GSASIIscriptable.
 
@@ -572,6 +790,10 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
     tt_min/max : float — fitting range
     n_bg_coeffs : int — number of background coefficients
     max_cycles : int — max refinement cycles
+    instprm_file : str, optional — path to user-provided .instprm file;
+        if given, this is used INSTEAD of the auto-generated defaults
+    polariz : float, optional — monochromator polarization (default 0.99)
+    sh_l : float, optional — Finger-Cox-Jephcoat asymmetry (default 0.002)
 
     Returns dict compatible with Le Bail / Rietveld output (same keys).
     """
@@ -612,42 +834,34 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
     work_dir = tempfile.mkdtemp(prefix='gsas2_', dir=_app_tmp)
     gpx_path = os.path.join(work_dir, 'refine.gpx')
     data_path = os.path.join(work_dir, 'data.xye')
-    instprm_path = _write_instprm(work_dir, wavelength)
+    # Use user-provided .instprm if available; otherwise generate defaults
+    if instprm_file and os.path.isfile(instprm_file):
+        import shutil
+        instprm_path = os.path.join(work_dir, 'instrument.instprm')
+        shutil.copy2(instprm_file, instprm_path)
+        print(f"Using user-provided instrument parameters: {instprm_file}",
+              flush=True)
+    else:
+        # Estimate initial profile parameters from observed peak widths
+        est_u, est_v, est_w = _estimate_profile_params(tt_r, y_r)
+        est_x, est_y = _estimate_lorentzian_params(tt_r, y_r,
+                                                    est_u, est_v, est_w)
+        instprm_path = _write_instprm(work_dir, wavelength,
+                                       polariz=polariz, sh_l=sh_l,
+                                       u=est_u, v=est_v, w=est_w,
+                                       x=est_x, y=est_y)
     _write_xye(data_path, tt_r, y_r, sig_r)
 
     cif_paths = []
     for i, ph in enumerate(phases):
-        orig_cif = ph.get('cif_text', '')
-        sg_num = ph.get('spacegroup_number', 1)
-
-        # ── Strategy: try original CIF first, synthetic as fallback ──
-        # GSAS-II is designed to read standard CIF files from databases
-        # like COD.  Our synthetic CIF pipeline (_reduce_to_asymmetric_unit
-        # → _build_conventional_cif) can lose atom sites or produce wrong
-        # structure when pymatgen is unavailable.  The original CIF is
-        # more reliable for GSAS-II, which handles symmetry expansion
-        # internally.
-        #
-        # Only fall back to synthetic CIF for edge cases (e.g. Materials
-        # Project primitive cells that need conversion to conventional).
-        cif_for_gsas = None
-        cif_source = None
-
-        if orig_cif:
-            # Patch the CIF's space-group tags so GSAS-II reads the
-            # correct SG (COD CIFs often use compact H-M like 'Pbcn'
-            # which GSAS-II misreads as P 1).
-            cif_for_gsas = _patch_cif_for_gsas(orig_cif, sg_num)
-            cif_source = 'original+patched'
-        else:
-            cif_for_gsas = _build_conventional_cif(ph)
-            cif_source = 'synthetic'
-
+        # Build a synthetic CIF from the phase dict's (conventional) cell
+        # parameters.  This guarantees GSAS-II sees the correct space group
+        # and cell geometry even when the original CIF used a primitive
+        # setting (common with Materials Project data).
+        cif_for_gsas = _build_conventional_cif(ph)
         cif_path = _write_temp_cif(cif_for_gsas, ph.get('name', 'phase'),
                                    work_dir=work_dir, index=i)
         cif_paths.append(cif_path)
-        print(f"  Phase {i} CIF: source={cif_source}, SG={sg_num}, "
-              f"file={os.path.basename(cif_path)}", flush=True)
 
     try:
         # ── Build GSAS-II project ────────────────────────────────────────
@@ -672,10 +886,22 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # Set data range
         histogram.data['Limits'] = [[tt_min, tt_max], [tt_min, tt_max]]
 
+        # Fix histogram scale to 1.0 — NEVER refine it.
+        # GSAS-II has N+1 scale parameters (N phase scales + 1 histogram
+        # scale).  Only N are independent.  Refining all N+1 creates a
+        # perfect correlation (100%) that causes SVD singularity and the
+        # refinement gets stuck with zero peak intensity.
+        # Standard practice: fix histogram scale, refine only phase scales.
+        try:
+            histogram.data['Sample Parameters']['Scale'] = [1.0, False]
+        except (KeyError, TypeError):
+            pass
+
         # Set background
         bkg_data = histogram.data['Background']
+        bg_init = float(np.percentile(y_r, 2))
         bkg_data[0] = ['chebyschev-1', True, n_bg_coeffs,
-                        1.0] + [0.0] * (n_bg_coeffs - 1)
+                        bg_init] + [0.0] * (n_bg_coeffs - 1)
 
         # Add phases from CIF files — always embed the space group number in
         # the GSAS-II phasename so that two phases with the same formula
@@ -698,57 +924,51 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                     histograms=[histogram],
                 )
             except Exception as e1:
-                # Primary CIF failed — try the alternative
-                print(f"  Phase {i}: {cif_source} CIF failed ({e1}), "
-                      f"trying fallback...", flush=True)
-                fallback_cif = None
-                if cif_source == 'original':
-                    # Original failed → try synthetic
-                    fallback_cif = _build_conventional_cif(ph)
-                elif cif_source == 'synthetic' and orig_cif:
-                    # Synthetic failed → try original
-                    fallback_cif = orig_cif
-
-                if fallback_cif:
+                # Synthetic CIF failed — fall back to original CIF text
+                orig_cif = ph.get('cif_text', '')
+                if orig_cif:
                     try:
-                        fb_path = _write_temp_cif(
-                            fallback_cif, ph.get('name', 'phase'),
+                        orig_path = _write_temp_cif(
+                            orig_cif, ph.get('name', 'phase'),
                             work_dir=work_dir, index=100+i)
-                        cif_paths.append(fb_path)
+                        cif_paths.append(orig_path)  # for cleanup
                         phase_obj = gpx.add_phase(
-                            fb_path,
+                            orig_path,
                             phasename=phasename,
                             histograms=[histogram],
                         )
-                        fb_source = 'synthetic' if cif_source == 'original' else 'original'
-                        print(f"  Phase {i}: fallback {fb_source} CIF succeeded",
-                              flush=True)
+                        warnings.warn(
+                            f"Synthetic CIF failed for '{ph.get('name', '?')}', "
+                            f"using original CIF text (error: {e1})")
                     except Exception as e2:
+                        cif_size = os.path.getsize(cif_path) if os.path.exists(cif_path) else -1
                         cif_head = ''
                         if os.path.exists(cif_path):
                             with open(cif_path, 'r', encoding='utf-8') as _f:
                                 cif_head = _f.read(500)
                         raise RuntimeError(
-                            f"GSAS-II could not read any CIF for phase "
-                            f"'{ph.get('name', '?')}'.\n"
-                            f"Primary ({cif_source}) error: {e1}\n"
-                            f"Fallback error: {e2}\n"
-                            f"CIF preview:\n{cif_head}"
+                            f"GSAS-II could not read CIF for phase '{ph.get('name', '?')}' "
+                            f"(file: {cif_path}, size: {cif_size} bytes).\n"
+                            f"CIF preview:\n{cif_head}\n\n"
+                            f"Original error: {e2}"
                         ) from e2
                 else:
+                    cif_size = os.path.getsize(cif_path) if os.path.exists(cif_path) else -1
                     cif_head = ''
                     if os.path.exists(cif_path):
                         with open(cif_path, 'r', encoding='utf-8') as _f:
                             cif_head = _f.read(500)
                     raise RuntimeError(
-                        f"GSAS-II could not read CIF for phase "
-                        f"'{ph.get('name', '?')}'.\n"
-                        f"Error: {e1}\nCIF preview:\n{cif_head}"
+                        f"GSAS-II could not read CIF for phase '{ph.get('name', '?')}' "
+                        f"(file: {cif_path}, size: {cif_size} bytes).\n"
+                        f"CIF preview:\n{cif_head}\n\n"
+                        f"Original error: {e1}"
                     ) from e1
             gsas_phases.append(phase_obj)
 
         # Track which stage succeeded (for fallback on failure)
         last_good_stage = 0
+        _failed_stages = []
 
         # ── Helper to safely run a refinement stage ──────────────────────
         def _safe_refine(stage_name, refinement_dicts, stage_num):
@@ -756,154 +976,88 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             try:
                 gpx.do_refinements(refinement_dicts)
                 last_good_stage = stage_num
+                # Guard: ensure histogram scale stays fixed at 1.0.
+                # GSAS-II's do_refinements can re-enable it internally
+                # when 'Scale' appears in any refinement dict.
+                try:
+                    histogram.data['Sample Parameters']['Scale'] = [1.0, False]
+                except (KeyError, TypeError):
+                    pass
                 return True
             except Exception as e:
                 # GSAS-II internally restores from .bak0.gpx on failure,
                 # so the project state reverts to pre-refinement. Safe to continue.
+                _failed_stages.append(stage_name)
                 warnings.warn(f"GSAS-II: {stage_name} failed ({e}). "
                              f"Continuing with results from stage {last_good_stage}.")
                 return False
 
+        # Determine structural complexity → boost cycles for complex phases
+        max_asym_atoms = max(
+            (len(_reduce_to_asymmetric_unit(ph.get('cif_text', '')))
+             for ph in phases if ph.get('cif_text')),
+            default=1)
+        _complex = max_asym_atoms > 6  # W2C has ~6 asym sites
+        _cyc_mult = 2 if _complex else 1  # double cycles for complex phases
+
         if progress_callback:
             progress_callback('GSAS-II: stage 1 — refining background + scale...')
 
-        # ── Diagnostics: show what GSAS-II sees ─────────────────────────
-        # Also: fix space group if GSAS-II defaulted to P 1 despite our
-        # CIF patching.  GSAS-II's CIF reader is finicky about tag names
-        # and H-M symbol formatting — if it can't parse the SG, it silently
-        # falls back to P 1.  We detect this and force the correct SG using
-        # GSAS-II's own SpcGroup() function.
-        for i_ph, (phase_obj, ph_input) in enumerate(zip(gsas_phases, phases)):
-            try:
-                gen = phase_obj.data['General']
-                _cell = gen['Cell']
-                sg_data = gen.get('SGData', {})
-                gsas_sg = sg_data.get('SpGrp', 'P 1').strip()
-                target_sg_num = ph_input.get('spacegroup_number', 1)
-
-                print(f"  GSAS-II phase '{phase_obj.name}':", flush=True)
-                print(f"    SG='{gsas_sg}', "
-                      f"SG#={sg_data.get('SGNum', '?')}", flush=True)
-                print(f"    cell=[{_cell[1]:.4f}, {_cell[2]:.4f}, {_cell[3]:.4f}, "
-                      f"{_cell[4]:.2f}, {_cell[5]:.2f}, {_cell[6]:.2f}]", flush=True)
-                atoms = gen.get('NoAtoms', {})
-                print(f"    NoAtoms: {dict(atoms) if atoms else 'EMPTY!'}", flush=True)
-                atom_data = phase_obj.data.get('Atoms', [])
-                print(f"    Atom sites: {len(atom_data)} entries", flush=True)
-                for at in atom_data[:10]:
-                    if len(at) >= 6:
-                        print(f"      {at[0]:6s} {at[1]:3s}  "
-                              f"({at[3]:.5f}, {at[4]:.5f}, {at[5]:.5f})",
-                              flush=True)
-
-                # ── Force correct SG if GSAS-II defaulted to P 1 ────────
-                if gsas_sg in ('P 1', 'P1') and target_sg_num > 1:
-                    hm_spaced = _SG_HM.get(target_sg_num)
-                    if hm_spaced:
-                        try:
-                            import GSASIIspc as G2spc
-                        except ImportError:
-                            try:
-                                from GSASII import GSASIIspc as G2spc
-                            except ImportError:
-                                G2spc = None
-
-                        if G2spc:
-                            try:
-                                err_msg, sg_dict = G2spc.SpcGroup(hm_spaced)
-                                if not err_msg:
-                                    gen['SGData'] = sg_dict
-                                    print(f"    ** Forced SG to '{hm_spaced}' "
-                                          f"(was P 1)", flush=True)
-                                else:
-                                    print(f"    ** SpcGroup('{hm_spaced}') "
-                                          f"error: {err_msg}", flush=True)
-                            except Exception as e_sg:
-                                print(f"    ** SpcGroup failed: {e_sg}",
-                                      flush=True)
-                        else:
-                            print(f"    ** Cannot import GSASIIspc to fix SG",
-                                  flush=True)
-                    else:
-                        print(f"    ** SG {target_sg_num} not in _SG_HM table",
-                              flush=True)
-            except Exception as e_diag:
-                print(f"  GSAS-II phase diag error: {e_diag}", flush=True)
-
-        # ── Stage 1: Background + scale ──────────────────────────────────
-        # For single-phase: fix phase scale at 1.0, use ONLY histogram
-        # scale.  This is standard GSAS-II practice — the two scales are
-        # 100% correlated for a single phase and cause SVD singularity.
-        #
-        # For multi-phase: fix histogram scale, refine each phase scale
-        # one at a time, then together.
-        for phase_obj in gsas_phases:
+        # ── Stage 1: Background + scale (one phase at a time) ────────────
+        # Fix all scales first, then refine them one at a time to break
+        # the correlation that causes SVD singularities.
+        # Estimate a data-driven initial scale for each phase.
+        # With the histogram scale fixed at 1.0, the phase scale must absorb
+        # the full intensity.  A rough estimate based on peak height and
+        # structural complexity helps GSAS-II converge from the right region.
+        peak_height = float(np.max(y_r) - np.percentile(y_r, 5))
+        n_phases = len(gsas_phases)
+        for phase_obj, ph_input in zip(gsas_phases, phases):
             hapData = list(phase_obj.data['Histograms'].values())[0]
-            hapData['Scale'] = [1.0, False]  # start fixed
+            cif_text = ph_input.get('cif_text', '')
+            n_asym = len(_reduce_to_asymmetric_unit(cif_text)) if cif_text else 1
+            # Scale ∝ peak_height / (n_atoms² × n_phases).  The n_atoms²
+            # factor approximates how F² grows with atom count.
+            init_scale = peak_height / max(1.0, (n_asym ** 2) * n_phases * 10.0)
+            init_scale = max(init_scale, 0.001)  # floor to avoid zero
+            hapData['Scale'] = [init_scale, False]  # start fixed
 
-        if len(gsas_phases) == 1:
-            # ── Single-phase: histogram scale only ──────────────────────
-            # Explicitly turn OFF phase scale, ON histogram scale.
-            _safe_refine('background + histogram scale', [{
-                'set': {
-                    'Background': {'type': 'chebyschev-1', 'refine': True,
-                                    'no. coeffs': n_bg_coeffs},
-                    'Scale': True,
-                },
-                'cycles': min(max_cycles, 5),
-            }], 1)
-        else:
-            # ── Multi-phase: background first, then per-phase scales ────
-            # First: refine background only
-            _safe_refine('background', [{
-                'set': {
-                    'Background': {'type': 'chebyschev-1', 'refine': True,
-                                    'no. coeffs': n_bg_coeffs},
-                    'Scale': False,
-                },
-                'cycles': min(max_cycles, 5),
+        # First: refine background only
+        _safe_refine('background', [{
+            'set': {
+                'Background': {'type': 'chebyschev-1', 'refine': True,
+                                'no. coeffs': n_bg_coeffs},
+            },
+            'cycles': min(max_cycles, 5),
+        }], 1)
+
+        # Then: refine each phase's scale one at a time
+        for idx, phase_obj in enumerate(gsas_phases):
+            hapData = list(phase_obj.data['Histograms'].values())[0]
+            hapData['Scale'] = [hapData['Scale'][0], True]  # turn on
+            _safe_refine(f'scale (phase {idx})', [{
+                'set': {},
+                'cycles': 3,
             }], 1)
 
-            # Then: refine each phase's scale one at a time
-            for idx, phase_obj in enumerate(gsas_phases):
-                hapData = list(phase_obj.data['Histograms'].values())[0]
-                hapData['Scale'] = [hapData['Scale'][0], True]  # turn on
-                _safe_refine(f'scale (phase {idx})', [{
-                    'set': {},
-                    'cycles': 3,
-                }], 1)
-
-            # Now refine all phase scales + histogram scale together
-            _safe_refine('all scales', [{
-                'set': {'Scale': True},
-                'cycles': min(max_cycles, 5),
-            }], 1)
+        # Re-refine all phase scales together (they have good starting values).
+        # Do NOT use {'Scale': True} here — that enables the histogram scale
+        # refinement flag, which is degenerate with phase scales and causes
+        # 100% correlation / SVD singularity.
+        _safe_refine('all phase scales', [{
+            'set': {},
+            'cycles': min(max_cycles, 5),
+        }], 1)
 
         if progress_callback:
             progress_callback('GSAS-II: stage 2 — refining profile parameters...')
 
         # ── Stage 2: Profile parameters ──────────────────────────────────
-        # Refine Gaussian (U, V, W) first, then Lorentzian Y (size), then
-        # X (strain).  X and Y are highly correlated (~99%) when refined
-        # together, causing SVD problems.  Splitting them lets each settle
-        # before the other is freed.
-        _safe_refine('profile (Gaussian)', [{
+        _safe_refine('profile', [{
             'set': {
-                'Instrument Parameters': ['U', 'V', 'W'],
+                'Instrument Parameters': ['U', 'V', 'W', 'X', 'Y'],
             },
-            'cycles': min(max_cycles, 5),
-        }], 2)
-        _safe_refine('profile (Y – size)', [{
-            'set': {
-                'Instrument Parameters': ['Y'],
-            },
-            'cycles': min(max_cycles, 5),
-        }], 2)
-        _safe_refine('profile (X – strain)', [{
-            'set': {
-                'Instrument Parameters': ['X'],
-            },
-            'cycles': min(max_cycles, 5),
+            'cycles': min(max_cycles, 5 * _cyc_mult),
         }], 2)
 
         if progress_callback:
@@ -936,7 +1090,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             phase_obj.set_refinements({'Cell': True})
             ok = _safe_refine(f'cell (phase {idx})', [{
                 'set': {},
-                'cycles': min(max_cycles, 8),
+                'cycles': min(max_cycles, 8 * _cyc_mult),
             }], 3)
             if not ok:
                 # Turn cell refinement back off for this phase
@@ -953,8 +1107,84 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 pass
         _safe_refine('Uiso', [{
             'set': {},
-            'cycles': min(max_cycles, 5),
+            'cycles': min(max_cycles, 5 * _cyc_mult),
         }], 4)
+
+        if progress_callback:
+            progress_callback('GSAS-II: stage 5 — refining atom positions (XYZ)...')
+
+        # ── Stage 5: Atom positions (XYZ) ─────────────────────────────
+        # For complex structures (carbides, oxides) the COD database atom
+        # coordinates may not exactly match this sample.  Wrong positions →
+        # wrong structure factors F(hkl) → the Rietveld model cannot match
+        # observed peak intensity ratios → convergence failure.
+        # GSAS-II automatically constrains atoms on special positions, so
+        # this is safe for simple metals (no-op) while critical for W2C etc.
+        #
+        # Save atom positions before refinement for damping check.
+        saved_xyz = {}
+        for idx, phase_obj in enumerate(gsas_phases):
+            phase_atoms = phase_obj.data.get('Atoms', [])
+            saved_xyz[idx] = [(a[3], a[4], a[5]) if len(a) > 5 else None
+                              for a in phase_atoms]
+            try:
+                phase_obj.set_refinements({'Atoms': {'all': 'XU'}})
+            except Exception:
+                pass
+        xyz_ok = _safe_refine('atom XYZ', [{
+            'set': {},
+            'cycles': min(max_cycles, 3 * _cyc_mult),
+        }], 5)
+
+        # Damping check: if any atom jumped > 0.5 fractional units,
+        # it likely hopped to a symmetry-equivalent site — revert it.
+        if xyz_ok:
+            for idx, phase_obj in enumerate(gsas_phases):
+                phase_atoms = phase_obj.data.get('Atoms', [])
+                for j, atom in enumerate(phase_atoms):
+                    if (len(atom) > 5 and idx in saved_xyz
+                            and j < len(saved_xyz[idx])
+                            and saved_xyz[idx][j] is not None):
+                        ox, oy, oz = saved_xyz[idx][j]
+                        dx = abs(atom[3] - ox)
+                        dy = abs(atom[4] - oy)
+                        dz = abs(atom[5] - oz)
+                        if max(dx, dy, dz) > 0.5:
+                            warnings.warn(
+                                f"GSAS-II: atom {j} in phase {idx} jumped "
+                                f"by ({dx:.3f},{dy:.3f},{dz:.3f}) — "
+                                f"reverting to original position.")
+                            atom[3], atom[4], atom[5] = ox, oy, oz
+
+        # Turn off XYZ refinement flags, keep only Uiso for remaining stages
+        for phase_obj in gsas_phases:
+            try:
+                phase_obj.set_refinements({'Atoms': {'all': 'U'}})
+            except Exception:
+                pass
+
+        if progress_callback:
+            progress_callback('GSAS-II: stage 6 — final background + scale polish...')
+
+        # ── Stage 6: Final polish — re-refine background + scale ────────
+        # Background was first refined in Stage 1 when profile/cell/Uiso
+        # were still at initial values. Now that all structural parameters
+        # have converged, re-optimize background to remove systematic
+        # misfit (e.g. Chebyshev polynomial dipping on right side).
+        _safe_refine('final polish', [{
+            'set': {
+                'Background': {'type': 'chebyschev-1', 'refine': True,
+                                'no. coeffs': n_bg_coeffs},
+            },
+            'cycles': min(max_cycles, 5 * _cyc_mult),
+        }], 6)
+
+        # Warn if multiple refinement stages failed — result may be unreliable
+        if len(_failed_stages) >= 3:
+            warnings.warn(
+                f"GSAS-II: {len(_failed_stages)} stages failed "
+                f"({', '.join(_failed_stages)}). The refinement result may be "
+                f"unreliable — check CIF quality or try simpler fitting range.")
 
         if progress_callback:
             progress_callback('GSAS-II: extracting results...')
@@ -972,6 +1202,33 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         y_obs_out = y_obs_full[rmask]
         y_calc_out = y_calc_full[rmask]
         y_bg_out = y_bg_full[rmask]
+        _y_bg_gsas = y_bg_out.copy()   # preserve for unbiased phase isolation
+
+        # ── Background dip correction ──────────────────────────────────
+        # The Chebyshev polynomial can create local dips where the
+        # optimizer trades intensity with peak tails.  Fix: smooth
+        # and raise dips.  We detrend first (remove a low-order poly)
+        # so the Gaussian doesn't blur steep slopes at low 2θ into
+        # the 30-50° region.
+        if len(y_bg_out) >= 3:
+            try:
+                _trend_coeffs = np.polyfit(tt_out, y_bg_out, 2)
+                _trend = np.polyval(_trend_coeffs, tt_out)
+                _resid = y_bg_out - _trend
+
+                _step = float(tt_out[1] - tt_out[0]) if len(tt_out) > 1 else 0.02
+                _sig  = max(3, int(10.0 / _step))          # 10° Gaussian sigma
+                _k    = min(3 * _sig, len(_resid) // 2)
+                if _k >= 1:
+                    _kx   = np.arange(-_k, _k + 1, dtype=float)
+                    _kern = np.exp(-0.5 * (_kx / _sig) ** 2)
+                    _kern /= _kern.sum()
+                    _padded = np.pad(_resid, _k, mode='edge')
+                    _smooth_resid = np.convolve(_padded, _kern, mode='valid')
+                    y_bg_out = _trend + np.maximum(_resid, _smooth_resid)
+            except (np.linalg.LinAlgError, ValueError):
+                pass  # skip dip correction if polyfit fails
+
         diff_out = y_obs_out - y_calc_out
 
         # Weights for statistics
@@ -1119,38 +1376,29 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             zmv_val = zmv_values.get(phase_obj.name, scale_val)
             wt_pct = (zmv_val / total_zmv) * 100 if total_zmv > 0 else 0
 
-            # ── Generate reflections using our own crystallography code ──
-            # This is the same approach used by the in-house Rietveld and
-            # is independent of GSAS-II's internal data structures.
-            # Each phase gets its own reflection list based on its own
-            # space group, cell parameters, and atom sites from CIF.
-            sys_ = (ph.get('system') or 'triclinic').lower()
-            sg = ph.get('spacegroup_number', 1)
-            # Get symmetry-expanded sites for correct structure factors
-            sites = _get_expanded_sites(ph.get('cif_text', ''), sg)
-
-            phase_refs = generate_reflections(
-                a, b, c, alpha, beta, gamma, sys_, sg,
-                wavelength, tt_min, tt_max, hkl_max=12,
-                sites=sites)
-            # Filter tick positions by intensity weight — same approach
-            # as Le Bail / Rietveld.  This removes reflections that are
-            # technically allowed by lattice centering but have negligible
-            # structure factor (e.g. glide-extinct peaks whose F² didn't
-            # quite reach zero due to asymmetric-unit-only sites).
-            # This makes the tick marks robust for ALL space groups, not
-            # just those with hand-coded rules in is_allowed().
-            if phase_refs:
-                max_wt = max(r[3] for r in phase_refs)
-                wt_threshold = max_wt * 1e-3  # 0.1% of strongest
-                tick_positions = [round(r[0], 3) for r in phase_refs
-                                  if r[3] > wt_threshold]
+            # ── Generate tick positions / reflection list ─────────────────
+            # Prefer GSAS-II's refined Fc² values (gsas_refs) when available
+            # — they correctly account for all atoms and symmetry, so ghost
+            # reflections with Fc²≈0 are already excluded (filtered at
+            # extraction, line 1334).  Fall back to our generate_reflections
+            # with pre-refinement F² only when GSAS-II data is missing.
+            gsas_phase_refs = gsas_refs.get(phase_obj.name)
+            if gsas_phase_refs:
+                phase_refs = gsas_phase_refs
+                tick_positions = [round(r[0], 3) for r in phase_refs]
             else:
-                tick_positions = []
+                sys_ = (ph.get('system') or 'triclinic').lower()
+                sg = ph.get('spacegroup_number', 1)
+                sites = _get_expanded_sites(ph.get('cif_text', ''), sg)
+                phase_refs = generate_reflections(
+                    a, b, c, alpha, beta, gamma, sys_, sg,
+                    wavelength, tt_min, tt_max, hkl_max=12,
+                    sites=sites)
+                tick_positions = [round(r[0], 3) for r in phase_refs]
             all_phase_refs.append(phase_refs)
 
-            # B_iso (average over atoms)
-            b_iso_avg = 0.5
+            # B_iso (average over atoms; falls back to DEFAULT_B_ISO)
+            b_iso_avg = DEFAULT_B_ISO
             try:
                 atoms = list(phase_obj.atoms())
                 if atoms:
@@ -1198,149 +1446,227 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             })
 
         # ── Per-phase patterns ─────────────────────────────────────────
-        # Primary method: reconstruct per-phase profiles using GSAS-II's
-        # refined Fc² values from the Reflection Lists.  These are more
-        # accurate than our own structure factor calculations because
-        # they incorporate GSAS-II's refined thermal parameters,
-        # absorption corrections, and extinction effects.
+        # Primary method: GSAS-II phase isolation — zero all phases
+        # except one, let GSAS-II recompute (0 cycles), extract
+        # ycalc - background.  This uses GSAS-II's own profile
+        # functions (correct peak shapes, asymmetry, everything).
         #
-        # Fallback 1: use our own generate_reflections() output if the
-        # GSAS-II RefList is unavailable for any phase.
-        #
-        # Fallback 2: ask GSAS-II to compute each phase's contribution
-        # by temporarily zeroing every OTHER phase's scale and
-        # recomputing with 0 refinement cycles.
+        # Fallback: reconstruct per-phase profiles from reflection
+        # lists and refined instrument parameters (may not exactly
+        # match GSAS-II's profile shapes).
         #
         # Last resort: equal split (unreliable weight fractions).
         if len(gsas_phases) > 1:
             total_above_bg = np.maximum(y_calc_out - y_bg_out, 0.0)
-            fc2_ok = False
+            decomp_ok = False
 
-            # ── Primary: profile reconstruction from GSAS-II RefList Fc² ──
-            # Prefer GSAS-II's refined Fc² values when available for all
-            # phases; fall back to our generate_reflections() per phase
-            # when a phase's RefList is missing.
-            refs_for_decomp = []
-            refs_source = []
-            if gsas_refs:
-                for i_ph, phase_obj in enumerate(gsas_phases):
-                    if phase_obj.name in gsas_refs:
-                        refs_for_decomp.append(gsas_refs[phase_obj.name])
-                        refs_source.append('gsas-ii')
-                    elif i_ph < len(all_phase_refs) and all_phase_refs[i_ph]:
-                        refs_for_decomp.append(all_phase_refs[i_ph])
-                        refs_source.append('generate_reflections')
-                    else:
-                        refs_for_decomp = []
-                        break
-            if not refs_for_decomp and all_phase_refs and len(all_phase_refs) == len(gsas_phases):
-                refs_for_decomp = all_phase_refs
-                refs_source = ['generate_reflections'] * len(gsas_phases)
+            # ── Primary: GSAS-II phase isolation ─────────────────────
+            print("  Phase isolation: computing GSAS-II per-phase "
+                  "patterns...", flush=True)
 
-            if refs_for_decomp and len(refs_for_decomp) == len(gsas_phases):
-                try:
-                    # Convert GSAS-II centideg²/centideg to deg²/deg
-                    U_d = inst['U'] / 10000.0   # centideg² → deg²
-                    V_d = inst['V'] / 10000.0
-                    W_d = inst['W'] / 10000.0
-                    X_d = inst['X'] / 100.0     # centideg → deg
-                    Y_d = inst['Y'] / 100.0
+            # Save ALL refinement flags — the main refinement left many
+            # params refinable (background, U/V/W/X/Y, cell, Uiso).
+            # We must turn them ALL off before isolation, otherwise
+            # do_refinements will try to refine them with one phase
+            # zeroed, causing that phase's parameters to diverge.
+            orig_hap_scales = []
+            for phase_obj in gsas_phases:
+                hapData = list(phase_obj.data['Histograms'].values())[0]
+                orig_hap_scales.append(list(hapData['Scale']))
 
-                    raw_profiles = []
-                    for i_ph, refs in enumerate(refs_for_decomp):
-                        if not refs:
-                            raise ValueError(
-                                f"No reflections for phase {i_ph}")
-                        raw_profiles.append(
-                            _compute_raw_phase_profile(
-                                tt_out, refs, U_d, V_d, W_d, X_d, Y_d))
+            # Save & turn off background refinement flag
+            saved_bg_flag = histogram.data['Background'][0][1]
+            histogram.data['Background'][0][1] = False
 
-                    # Weight each profile by its refined scale factor
-                    scaled = []
-                    for phase_obj, prof in zip(gsas_phases, raw_profiles):
-                        s = raw_scales.get(phase_obj.name, 1.0)
-                        scaled.append(prof * s)
+            # Save & turn off instrument parameter refinement flags.
+            # GSAS-II stores refine flags in TWO possible locations:
+            # (a) inline: inst_params[0][key][2] (3-element lists)
+            # (b) separate dict: inst_params[1][key] (boolean)
+            inst_params_all = histogram.data['Instrument Parameters']
+            inst_params_raw = inst_params_all[0]
+            inst_refine_dict = (inst_params_all[1]
+                                if len(inst_params_all) > 1
+                                and isinstance(inst_params_all[1], dict)
+                                else {})
+            saved_inst_flags = {}
+            for key in ['U', 'V', 'W', 'X', 'Y', 'SH/L', 'Zero']:
+                # Location (a): inline in parameter list
+                if key in inst_params_raw and len(inst_params_raw[key]) >= 3:
+                    saved_inst_flags[(key, 'inline')] = \
+                        inst_params_raw[key][2]
+                    inst_params_raw[key][2] = False
+                # Location (b): separate refine-flags dict
+                if key in inst_refine_dict:
+                    saved_inst_flags[(key, 'dict')] = \
+                        inst_refine_dict[key]
+                    inst_refine_dict[key] = False
 
-                    # Normalise so the sum matches the GSAS-II total
-                    # above background (preserves relative proportions)
-                    sum_all = sum(scaled)
-                    denom = np.sum(sum_all)
-                    if denom > 0:
-                        norm = np.sum(total_above_bg) / denom
-                        for sp in scaled:
-                            phase_patterns.append(
-                                np.maximum(sp * norm, 0.0).tolist())
-                        fc2_ok = True
-                        src_summary = ', '.join(
-                            f"{ph.name}={s}"
-                            for ph, s in zip(gsas_phases, refs_source))
-                        print(f"  Per-phase profile decomposition succeeded "
-                              f"(sources: {src_summary}).",
-                              flush=True)
-                    else:
-                        raise ValueError(
-                            "Sum of scaled profiles is zero")
-                except Exception as e_fc2:
-                    print(f"  Fc²-based decomposition failed: {e_fc2}",
-                          flush=True)
-                    phase_patterns = []
+            # Save & turn off cell and atom refinement flags.
+            # atom[2] = refinement flags string ('XU', 'U', '' etc.)
+            # atom[9] = multiplicity — NOT the refinement flag.
+            saved_cell_flags = []
+            saved_atom_flags = []
+            for phase_obj in gsas_phases:
+                cell = phase_obj.data['General']['Cell']
+                saved_cell_flags.append(cell[0])
+                cell[0] = False
+                atom_flags = []
+                for atom in phase_obj.data['Atoms']:
+                    if len(atom) > 2:
+                        atom_flags.append(str(atom[2]))
+                        atom[2] = ''   # clear XYZ + Uiso flags
+                saved_atom_flags.append(atom_flags)
 
-            # ── Fallback: GSAS-II isolation ────────────────────────────
-            if not fc2_ok:
-                print("  Attempting GSAS-II phase isolation...", flush=True)
-                orig_hap_scales = []
-                for phase_obj in gsas_phases:
-                    hapData = list(phase_obj.data['Histograms'].values())[0]
-                    orig_hap_scales.append(list(hapData['Scale']))
+            # Belt-and-suspenders: force 0 cycles in Controls so GSAS-II
+            # cannot iterate even if a flag was somehow missed.
+            _controls = gpx.data.get('Controls', {}).get('data', {})
+            _saved_maxcyc = _controls.get('max cyc', 3)
+            _controls['max cyc'] = 0
 
-                try:
-                    phase_patterns = []
-                    for i in range(len(gsas_phases)):
-                        # Activate only phase i; zero all others
-                        for j, phase_obj in enumerate(gsas_phases):
-                            hapData = list(phase_obj.data['Histograms'].values())[0]
-                            if j == i:
-                                hapData['Scale'] = [orig_hap_scales[j][0], False]
-                            else:
-                                hapData['Scale'] = [0.0, False]
-
-                        # Persist zeroed scales to disk so that do_refinements
-                        # (which re-reads the GPX file) picks them up.
-                        gpx.save()
-
-                        # Recompute pattern (0 cycles = evaluate only)
-                        gpx.do_refinements([{'set': {}, 'cycles': 0}])
-
-                        y_calc_iso = np.array(histogram.getdata('ycalc'))
-                        y_bg_iso = np.array(histogram.getdata('background'))
-                        phase_pat = np.maximum(
-                            y_calc_iso[rmask] - y_bg_iso[rmask], 0.0)
-                        phase_patterns.append(phase_pat.tolist())
-
-                        ph_name = (phase_results[i]['name']
-                                   if i < len(phase_results) else f'Phase {i}')
-                        print(f"  Phase {i} ({ph_name}): "
-                              f"max={np.max(phase_pat):.1f}, "
-                              f"integrated={np.sum(phase_pat):.1f}", flush=True)
-                except Exception as e_iso:
-                    print(f"  Phase isolation failed: {e_iso}", flush=True)
-                    phase_patterns = []
-                finally:
-                    # Always restore original scales
+            try:
+                phase_patterns = []
+                for i in range(len(gsas_phases)):
+                    # Activate only phase i; zero all others
                     for j, phase_obj in enumerate(gsas_phases):
                         hapData = list(phase_obj.data['Histograms'].values())[0]
-                        hapData['Scale'] = orig_hap_scales[j]
+                        if j == i:
+                            hapData['Scale'] = [orig_hap_scales[j][0], False]
+                        else:
+                            hapData['Scale'] = [0.0, False]
+
+                    # Persist to disk so do_refinements picks up changes.
                     gpx.save()
 
-                if phase_patterns:
-                    fc2_ok = True
+                    # Evaluate only (cycles=0) — all refinement flags are
+                    # OFF, so nothing can diverge.
+                    gpx.do_refinements([{'set': {}, 'cycles': 0}])
+
+                    # Re-fetch histogram — do_refinements reloads the
+                    # project from disk, so the old reference may be stale.
+                    histogram = gpx.histograms()[0]
+
+                    y_calc_iso = np.array(histogram.getdata('ycalc'))
+                    # Use GSAS-II's original background (before our dip
+                    # correction) so the correction delta doesn't bias
+                    # phase ratios toward the dominant phase.
+                    phase_pat = np.maximum(
+                        y_calc_iso[rmask] - _y_bg_gsas, 0.0)
+                    phase_patterns.append(phase_pat.tolist())
+
+                    ph_name = (phase_results[i]['name']
+                               if i < len(phase_results) else f'Phase {i}')
+                    print(f"  Phase {i} ({ph_name}): "
+                          f"max={np.max(phase_pat):.1f}, "
+                          f"integrated={np.sum(phase_pat):.1f}", flush=True)
+
+                # Diagnostic: verify isolation produced correct patterns.
+                sum_iso = np.zeros_like(tt_out, dtype=np.float64)
+                for pp in phase_patterns:
+                    sum_iso += np.array(pp)
+                max_diff = float(np.max(np.abs(
+                    sum_iso - total_above_bg)))
+                sum_total = float(np.sum(total_above_bg))
+                sum_iso_total = float(np.sum(sum_iso))
+                print(f"  Diagnostic: sum(iso)={sum_iso_total:.1f}, "
+                      f"sum(above_bg)={sum_total:.1f}, "
+                      f"max_pointwise_diff={max_diff:.2f}", flush=True)
+
+                # Proportional normalization: ensure stacked fills sum
+                # exactly to total_above_bg at every point so that the
+                # fills match the I_calc line perfectly.
+                for i_pp, pp in enumerate(phase_patterns):
+                    pp_arr = np.array(pp)
+                    ratio = np.zeros_like(sum_iso)
+                    np.divide(pp_arr, sum_iso, out=ratio,
+                              where=sum_iso > 0)
+                    phase_patterns[i_pp] = np.maximum(
+                        ratio * total_above_bg, 0.0).tolist()
+
+                decomp_ok = True
+                print("  Phase isolation succeeded.", flush=True)
+            except Exception as e_iso:
+                print(f"  Phase isolation failed: {e_iso}", flush=True)
+                phase_patterns = []
+            finally:
+                # Always restore ALL original flags and scales
+                histogram.data['Background'][0][1] = saved_bg_flag
+                for (key, loc), flag in saved_inst_flags.items():
+                    if loc == 'inline':
+                        inst_params_raw[key][2] = flag
+                    else:
+                        inst_refine_dict[key] = flag
+                for idx_r, phase_obj in enumerate(gsas_phases):
+                    phase_obj.data['General']['Cell'][0] = \
+                        saved_cell_flags[idx_r]
+                    for j_a, atom in enumerate(phase_obj.data['Atoms']):
+                        if (len(atom) > 2
+                                and j_a < len(saved_atom_flags[idx_r])):
+                            atom[2] = saved_atom_flags[idx_r][j_a]
+                    hapData = list(phase_obj.data['Histograms'].values())[0]
+                    hapData['Scale'] = orig_hap_scales[idx_r]
+                # Restore max cycles to original value
+                _controls['max cyc'] = _saved_maxcyc
+                gpx.save()
+                histogram = gpx.histograms()[0]
+
+            # ── Fallback: profile reconstruction from reflections ────
+            if not decomp_ok:
+                print("  Falling back to profile reconstruction...",
+                      flush=True)
+                if all_phase_refs and len(all_phase_refs) == len(gsas_phases):
+                    try:
+                        U_d = inst['U'] / 10000.0
+                        V_d = inst['V'] / 10000.0
+                        W_d = inst['W'] / 10000.0
+                        X_d = inst['X'] / 100.0
+                        Y_d = inst['Y'] / 100.0
+
+                        raw_profiles = []
+                        for i_ph, (phase_obj_r, fallback_refs) in enumerate(
+                                zip(gsas_phases, all_phase_refs)):
+                            refs_to_use = gsas_refs.get(
+                                phase_obj_r.name, fallback_refs) or fallback_refs
+                            if not refs_to_use:
+                                raise ValueError(
+                                    f"No reflections for phase {i_ph}")
+                            raw_profiles.append(
+                                _compute_raw_phase_profile(
+                                    tt_out, refs_to_use,
+                                    U_d, V_d, W_d, X_d, Y_d,
+                                    gaussian_only=True))
+
+                        scaled = []
+                        for phase_obj, prof in zip(gsas_phases, raw_profiles):
+                            s = raw_scales.get(phase_obj.name, 1.0)
+                            scaled.append(prof * s)
+
+                        sum_raw = np.zeros_like(tt_out, dtype=np.float64)
+                        for sp in scaled:
+                            sum_raw += sp
+                        peak_max = (np.max(sum_raw)
+                                    if np.max(sum_raw) > 0 else 1.0)
+                        threshold = peak_max * 1e-10
+                        for sp in scaled:
+                            ratio = np.zeros_like(sum_raw)
+                            np.divide(sp, sum_raw, out=ratio,
+                                      where=sum_raw > threshold)
+                            phase_patterns.append(
+                                np.maximum(
+                                    ratio * total_above_bg, 0.0).tolist())
+                        decomp_ok = True
+                        print("  Profile reconstruction succeeded.",
+                              flush=True)
+                    except Exception as e_fc2:
+                        print(f"  Profile reconstruction failed: {e_fc2}",
+                              flush=True)
+                        phase_patterns = []
 
             # ── Last resort: equal split ───────────────────────────────
-            if not fc2_ok:
+            if not decomp_ok:
                 warnings.warn(
-                    "GSAS-II phase decomposition: both Fc²-reconstruction "
-                    "and isolation failed. Falling back to equal split — "
-                    "weight fractions will be UNRELIABLE.")
+                    "GSAS-II phase decomposition: both isolation and "
+                    "profile reconstruction failed. Falling back to "
+                    "equal split — weight fractions will be UNRELIABLE.")
                 phase_patterns = []
                 for _ in gsas_phases:
                     share = (total_above_bg / len(gsas_phases)).tolist()
