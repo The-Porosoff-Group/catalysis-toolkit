@@ -141,13 +141,18 @@ def _patch_cif_for_gsas(cif_text, spacegroup_number):
             found_sg2_num = True
             continue
 
-        # Replace existing H-M symbol tags with spaced form
+        # Replace existing H-M symbol tags with spaced form.
+        # Must check all variants: COD/ICSD CIFs use many different tag
+        # names for the same information.
         if stripped.startswith('_symmetry_space_group_name_H-M'):
             out.append(f"_symmetry_space_group_name_H-M '{hm_spaced}'")
             found_sg_hm = True
             continue
         if stripped.startswith('_space_group_name_H-M_alt') or \
-           stripped.startswith('_space_group.name_H-M'):
+           stripped.startswith('_space_group.name_H-M') or \
+           stripped.startswith('_space_group_name_H-M_full') or \
+           stripped.startswith('_space_group_name_H-M_ref') or \
+           stripped.startswith('_space_group_name_H-M '):
             out.append(f"_space_group_name_H-M_alt '{hm_spaced}'")
             found_sg2_hm = True
             continue
@@ -763,27 +768,64 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             progress_callback('GSAS-II: stage 1 — refining background + scale...')
 
         # ── Diagnostics: show what GSAS-II sees ─────────────────────────
-        for phase_obj in gsas_phases:
+        # Also: fix space group if GSAS-II defaulted to P 1 despite our
+        # CIF patching.  GSAS-II's CIF reader is finicky about tag names
+        # and H-M symbol formatting — if it can't parse the SG, it silently
+        # falls back to P 1.  We detect this and force the correct SG using
+        # GSAS-II's own SpcGroup() function.
+        for i_ph, (phase_obj, ph_input) in enumerate(zip(gsas_phases, phases)):
             try:
                 gen = phase_obj.data['General']
                 _cell = gen['Cell']
                 sg_data = gen.get('SGData', {})
+                gsas_sg = sg_data.get('SpGrp', 'P 1').strip()
+                target_sg_num = ph_input.get('spacegroup_number', 1)
+
                 print(f"  GSAS-II phase '{phase_obj.name}':", flush=True)
-                print(f"    SG='{sg_data.get('SpGrp', '?')}', "
+                print(f"    SG='{gsas_sg}', "
                       f"SG#={sg_data.get('SGNum', '?')}", flush=True)
                 print(f"    cell=[{_cell[1]:.4f}, {_cell[2]:.4f}, {_cell[3]:.4f}, "
                       f"{_cell[4]:.2f}, {_cell[5]:.2f}, {_cell[6]:.2f}]", flush=True)
-                # Show atom count per type
                 atoms = gen.get('NoAtoms', {})
                 print(f"    NoAtoms: {dict(atoms) if atoms else 'EMPTY!'}", flush=True)
-                # Show actual atom site list
                 atom_data = phase_obj.data.get('Atoms', [])
                 print(f"    Atom sites: {len(atom_data)} entries", flush=True)
-                for at in atom_data[:10]:  # show first 10
-                    # Atom list format: [label, type, mult, x, y, z, frac, ...]
+                for at in atom_data[:10]:
                     if len(at) >= 6:
                         print(f"      {at[0]:6s} {at[1]:3s}  "
                               f"({at[3]:.5f}, {at[4]:.5f}, {at[5]:.5f})",
+                              flush=True)
+
+                # ── Force correct SG if GSAS-II defaulted to P 1 ────────
+                if gsas_sg in ('P 1', 'P1') and target_sg_num > 1:
+                    hm_spaced = _SG_HM.get(target_sg_num)
+                    if hm_spaced:
+                        try:
+                            import GSASIIspc as G2spc
+                        except ImportError:
+                            try:
+                                from GSASII import GSASIIspc as G2spc
+                            except ImportError:
+                                G2spc = None
+
+                        if G2spc:
+                            try:
+                                err_msg, sg_dict = G2spc.SpcGroup(hm_spaced)
+                                if not err_msg:
+                                    gen['SGData'] = sg_dict
+                                    print(f"    ** Forced SG to '{hm_spaced}' "
+                                          f"(was P 1)", flush=True)
+                                else:
+                                    print(f"    ** SpcGroup('{hm_spaced}') "
+                                          f"error: {err_msg}", flush=True)
+                            except Exception as e_sg:
+                                print(f"    ** SpcGroup failed: {e_sg}",
+                                      flush=True)
+                        else:
+                            print(f"    ** Cannot import GSASIIspc to fix SG",
+                                  flush=True)
+                    else:
+                        print(f"    ** SG {target_sg_num} not in _SG_HM table",
                               flush=True)
             except Exception as e_diag:
                 print(f"  GSAS-II phase diag error: {e_diag}", flush=True)
