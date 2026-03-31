@@ -473,7 +473,7 @@ def generate_reflections(a, b, c, al, be, ga, system, spacegroup_number,
             F2 = entry[4]
             if F2 is not None and F2 > max_F2:
                 max_F2 = F2
-    rel_threshold = max_F2 * 1e-3  # 0.1% of strongest reflection
+    rel_threshold = max_F2 * 1e-2  # 1% of strongest reflection
 
     reflections = []
     for entry in entries:
