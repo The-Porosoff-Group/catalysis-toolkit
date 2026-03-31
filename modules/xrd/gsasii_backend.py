@@ -1323,7 +1323,10 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             for ph_name, refl_data in raw_refl_lists.items():
                 ref_arr = refl_data.get('RefList')
                 if ref_arr is not None and len(ref_arr) > 0 and ref_arr.shape[1] > 8:
-                    refs = []
+                    # First pass: collect all reflections and find max weight
+                    # for relative threshold filtering (matches preview behavior)
+                    raw_refs = []
+                    max_weight = 0.0
                     for row in ref_arr:
                         h, k, l = int(row[0]), int(row[1]), int(row[2])
                         mult      = float(row[3])
@@ -1332,7 +1335,13 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                         fc2       = float(row[8])   # Fc²
                         weight    = mult * fc2
                         if weight > 0 and tt_min <= two_theta <= tt_max:
-                            refs.append((two_theta, d_sp, (h, k, l), weight))
+                            raw_refs.append((two_theta, d_sp, (h, k, l), weight))
+                            if weight > max_weight:
+                                max_weight = weight
+                    # Second pass: apply relative F² threshold to remove
+                    # ghost reflections (Fc² near zero compared to strongest)
+                    rel_thresh = max_weight * 1e-3  # 0.1% of strongest
+                    refs = [r for r in raw_refs if r[3] >= max(1e-4, rel_thresh)]
                     if refs:
                         gsas_refs[ph_name] = refs
                         print(f"  Loaded GSAS-II RefList for '{ph_name}': "
@@ -1378,10 +1387,10 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
 
             # ── Generate tick positions / reflection list ─────────────────
             # Prefer GSAS-II's refined Fc² values (gsas_refs) when available
-            # — they correctly account for all atoms and symmetry, so ghost
-            # reflections with Fc²≈0 are already excluded (filtered at
-            # extraction, line 1334).  Fall back to our generate_reflections
-            # with pre-refinement F² only when GSAS-II data is missing.
+            # — they correctly account for all atoms and symmetry.  Ghost
+            # reflections with Fc²≈0 are removed by a relative threshold
+            # (0.1% of strongest) matching the preview stick filter.
+            # Fall back to generate_reflections when GSAS-II data is missing.
             gsas_phase_refs = gsas_refs.get(phase_obj.name)
             if gsas_phase_refs:
                 phase_refs = gsas_phase_refs
