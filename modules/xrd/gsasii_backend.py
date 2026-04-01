@@ -1066,30 +1066,8 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # ── Stage 3: Cell parameters (one phase at a time) ───────────────
         # Refining all cells at once with many atoms can cause arccos
         # errors when cell angles go unphysical. Do it per phase.
-        #
-        # CRITICAL: skip cell refinement for phases with negligible scale
-        # factors. When a minor phase (e.g. W2C at ~7%) gets pushed to
-        # near-zero scale in Stage 1, its cell parameters become
-        # underdetermined — any cell gives zero residual, so the
-        # Levenberg-Marquardt algorithm diverges (metric tensor → infinity).
-        phase_scales = []
-        for phase_obj in gsas_phases:
-            try:
-                hapData = list(phase_obj.data['Histograms'].values())[0]
-                phase_scales.append(hapData['Scale'][0])
-            except Exception:
-                phase_scales.append(0.0)
-        max_scale = max(phase_scales) if phase_scales else 1.0
-
+        # For cubic phases, lock angles to 90° to prevent arccos errors.
         for idx, (phase_obj, ph_input) in enumerate(zip(gsas_phases, phases)):
-            # Skip cell refinement if phase scale is negligible — cell params
-            # are underdetermined and will diverge causing metric tensor errors
-            if max_scale > 0 and phase_scales[idx] < max_scale * 1e-4:
-                warnings.warn(
-                    f"GSAS-II: skipping cell refinement for phase {idx} "
-                    f"(scale {phase_scales[idx]:.2e} << max {max_scale:.2e})")
-                continue
-
             sys_ = (ph_input.get('system') or 'triclinic').lower()
             # For high-symmetry systems, clamp angles before refining
             # to prevent them from drifting to unphysical values.
@@ -1122,18 +1100,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             progress_callback('GSAS-II: stage 4 — refining atomic displacement...')
 
         # ── Stage 4: Atomic displacement (Uiso) ─────────────────────────
-        # Re-read phase scales (may have changed after cell refinement)
         for idx, phase_obj in enumerate(gsas_phases):
-            try:
-                hapData = list(phase_obj.data['Histograms'].values())[0]
-                phase_scales[idx] = hapData['Scale'][0]
-            except Exception:
-                pass
-        max_scale = max(phase_scales) if phase_scales else 1.0
-
-        for idx, phase_obj in enumerate(gsas_phases):
-            if max_scale > 0 and phase_scales[idx] < max_scale * 1e-4:
-                continue  # skip Uiso for negligible phases
             try:
                 phase_obj.set_refinements({'Atoms': {'all': 'U'}})
             except Exception:
@@ -1160,8 +1127,6 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             phase_atoms = phase_obj.data.get('Atoms', [])
             saved_xyz[idx] = [(a[3], a[4], a[5]) if len(a) > 5 else None
                               for a in phase_atoms]
-            if max_scale > 0 and phase_scales[idx] < max_scale * 1e-4:
-                continue  # skip XYZ for negligible phases
             try:
                 phase_obj.set_refinements({'Atoms': {'all': 'XU'}})
             except Exception:
