@@ -181,7 +181,7 @@ def _get_expanded_sites(cif_text, spacegroup_number=None):
         return None
 
 
-def _reduce_to_asymmetric_unit(cif_text):
+def _reduce_to_asymmetric_unit(cif_text, declared_sg=None):
     """Reduce a full-unit-cell CIF to asymmetric unit for GSAS-II.
 
     GSAS-II applies symmetry operations itself, so it expects only the
@@ -191,7 +191,13 @@ def _reduce_to_asymmetric_unit(cif_text):
     Uses pymatgen's symmetrized structure to get the unique sites.
     Falls back to the raw sites if pymatgen is unavailable.
 
-    Validates the result by re-expanding and comparing site counts.
+    Validates the result by:
+      1. Re-expanding and comparing site counts
+      2. Checking the asymmetric unit is SMALLER than the full cell (SG>1)
+      3. Checking the detected space group is compatible with the declared one
+
+    declared_sg: expected space group number from phase dict (used for
+                 validation, not to override pymatgen's detection).
     """
     if not cif_text:
         return []
@@ -219,6 +225,7 @@ def _reduce_to_asymmetric_unit(cif_text):
             for symprec in (0.01, 0.05, 0.1):
                 try:
                     sga = SpacegroupAnalyzer(structs[0], symprec=symprec)
+                    detected_sg = sga.get_space_group_number()
                     sym_struct = sga.get_symmetrized_structure()
                     candidate = []
                     for equiv_sites in sym_struct.equivalent_sites:
@@ -235,32 +242,162 @@ def _reduce_to_asymmetric_unit(cif_text):
 
                     # Validate: the number of equivalent sites summed across
                     # all groups should equal the full unit cell site count.
-                    # This catches bad equivalence groupings.
                     expanded_n = sum(
                         len(eq) for eq in sym_struct.equivalent_sites)
+
+                    # CRITICAL: for SG > 1, the asymmetric unit must be
+                    # SMALLER than the full cell. If SpacegroupAnalyzer falls
+                    # back to P1, every atom is "unique" and len(candidate)
+                    # == full_cell_n — which gives GSAS-II the full cell
+                    # labeled as asymmetric unit, causing over-expansion.
+                    if declared_sg and declared_sg > 1:
+                        if len(candidate) >= full_cell_n:
+                            print(f"  symprec={symprec}: detected SG {detected_sg}, "
+                                  f"{len(candidate)} unique sites = full cell "
+                                  f"({full_cell_n}) — reduction failed, "
+                                  f"trying looser tolerance", flush=True)
+                            continue
+                        # Also check detected SG is compatible (same or higher
+                        # symmetry than declared)
+                        if detected_sg < declared_sg:
+                            print(f"  symprec={symprec}: detected SG {detected_sg} "
+                                  f"< declared SG {declared_sg} — trying "
+                                  f"looser tolerance", flush=True)
+                            continue
+
                     if expanded_n == full_cell_n and candidate:
+                        print(f"  Asymmetric unit reduction: {full_cell_n} → "
+                              f"{len(candidate)} sites (symprec={symprec}, "
+                              f"detected SG {detected_sg})", flush=True)
                         sites = candidate
                         break
-                    # If counts don't match, try a looser tolerance
-                except Exception:
+                except Exception as exc:
+                    print(f"  symprec={symprec}: failed ({exc})", flush=True)
                     continue
 
             if sites:
                 return sites
+
+            # All symprec values failed — try using declared SG directly
+            # with pymatgen's from_spacegroup to rebuild the asymmetric unit
+            if declared_sg and declared_sg > 1:
+                try:
+                    from pymatgen.core import Lattice, Structure as PmgStruct
+                    struct0 = structs[0]
+                    lat = struct0.lattice
+                    # Get unique elements and approximate positions by
+                    # clustering sites within the full cell
+                    unique_sites = _cluster_to_asymmetric(struct0, declared_sg)
+                    if unique_sites and len(unique_sites) < full_cell_n:
+                        # Validate by re-expanding
+                        test_struct = PmgStruct.from_spacegroup(
+                            declared_sg, lat,
+                            [s[0] for s in unique_sites],
+                            [[s[1], s[2], s[3]] for s in unique_sites])
+                        if abs(len(test_struct) - full_cell_n) <= 1:
+                            print(f"  Asymmetric unit via clustering: "
+                                  f"{full_cell_n} → {len(unique_sites)} sites "
+                                  f"(SG {declared_sg})", flush=True)
+                            return unique_sites
+                except Exception as exc:
+                    print(f"  Clustering fallback failed: {exc}", flush=True)
+
     except Exception as e:
         print(f"  Warning: pymatgen asymmetric-unit reduction failed: {e}",
               flush=True)
-        print("  Falling back to raw CIF sites — if the CIF contains the "
-              "full unit cell, GSAS-II may over-expand.", flush=True)
 
     # Fallback: raw parse_cif (usually fine for COD CIFs which list
     # asymmetric unit; may cause over-expansion for MP/pymatgen CIFs
     # which list the full unit cell).
     try:
         parsed = parse_cif(cif_text)
-        return parsed.get('sites') or []
+        raw_sites = parsed.get('sites') or []
+        # Safety check: if raw CIF has many sites and we know the SG,
+        # warn that this may cause over-expansion
+        if raw_sites and declared_sg and declared_sg > 1:
+            print(f"  WARNING: falling back to raw CIF sites "
+                  f"({len(raw_sites)} atoms) with SG {declared_sg} — "
+                  f"GSAS-II may over-expand!", flush=True)
+        return raw_sites
     except Exception:
         return []
+
+
+def _cluster_to_asymmetric(struct, sg_num):
+    """Cluster full-cell sites into asymmetric unit using the declared SG.
+
+    For each unique element, tries positions from the full cell one at a
+    time, expanding each with the declared space group. Keeps the position
+    that best reproduces the observed atom count for that element.
+
+    Returns list of (element, x, y, z, occupancy) or None on failure.
+    """
+    from pymatgen.core import Lattice, Structure as PmgStruct
+    import numpy as _np
+
+    lat = struct.lattice
+    # Group sites by element
+    element_sites = {}
+    for site in struct:
+        el = str(site.specie)
+        frac = tuple(float(c) % 1.0 for c in site.frac_coords)
+        element_sites.setdefault(el, []).append(frac)
+
+    result = []
+    used_positions = []  # track what's been accounted for
+
+    for el, positions in element_sites.items():
+        target_count = len(positions)
+        remaining = list(positions)
+        el_asym = []
+
+        while remaining:
+            # Try each remaining position as a candidate asymmetric site
+            best_pos = None
+            best_count = 0
+            for pos in remaining:
+                try:
+                    test = PmgStruct.from_spacegroup(
+                        sg_num, lat, [el], [list(pos)])
+                    count = sum(1 for s in test if str(s.specie) == el)
+                    if count > best_count and count <= len(remaining):
+                        best_count = count
+                        best_pos = pos
+                except Exception:
+                    continue
+
+            if best_pos is None or best_count == 0:
+                break
+
+            el_asym.append(best_pos)
+            # Remove the positions accounted for by this Wyckoff site
+            # (find closest matches to the expanded positions)
+            try:
+                expanded = PmgStruct.from_spacegroup(
+                    sg_num, lat, [el], [list(best_pos)])
+                for exp_site in expanded:
+                    exp_frac = tuple(float(c) % 1.0 for c in exp_site.frac_coords)
+                    # Remove the closest match from remaining
+                    closest_idx = None
+                    closest_dist = 999
+                    for i, rem in enumerate(remaining):
+                        dist = sum((a - b)**2 for a, b in zip(exp_frac, rem))**0.5
+                        # Also check wrapped distances
+                        dist_wrap = sum(min((a-b)%1, (b-a)%1)**2
+                                       for a, b in zip(exp_frac, rem))**0.5
+                        d = min(dist, dist_wrap)
+                        if d < closest_dist:
+                            closest_dist = d
+                            closest_idx = i
+                    if closest_idx is not None and closest_dist < 0.1:
+                        remaining.pop(closest_idx)
+            except Exception:
+                break
+
+        for pos in el_asym:
+            result.append((el, pos[0], pos[1], pos[2], 1.0))
+
+    return result if result else None
 
 
 def _build_conventional_cif(ph):
@@ -293,7 +430,7 @@ def _build_conventional_cif(ph):
     # it the full unit cell — that would cause double-counting and wrong
     # reflections (e.g. ghost peaks at ~25° for A15-W).
     cif_text = ph.get('cif_text', '')
-    sites = _reduce_to_asymmetric_unit(cif_text) if cif_text else []
+    sites = _reduce_to_asymmetric_unit(cif_text, declared_sg=sg) if cif_text else []
 
     lines = [
         'data_phase',
@@ -994,7 +1131,9 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
 
         # Determine structural complexity → boost cycles for complex phases
         max_asym_atoms = max(
-            (len(_reduce_to_asymmetric_unit(ph.get('cif_text', '')))
+            (len(_reduce_to_asymmetric_unit(
+                ph.get('cif_text', ''),
+                declared_sg=ph.get('spacegroup_number')))
              for ph in phases if ph.get('cif_text')),
             default=1)
         _complex = max_asym_atoms > 6  # W2C has ~6 asym sites
@@ -1015,7 +1154,9 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         for phase_obj, ph_input in zip(gsas_phases, phases):
             hapData = list(phase_obj.data['Histograms'].values())[0]
             cif_text = ph_input.get('cif_text', '')
-            n_asym = len(_reduce_to_asymmetric_unit(cif_text)) if cif_text else 1
+            n_asym = len(_reduce_to_asymmetric_unit(
+                cif_text,
+                declared_sg=ph_input.get('spacegroup_number'))) if cif_text else 1
             # Scale ∝ peak_height / (n_atoms² × n_phases).  The n_atoms²
             # factor approximates how F² grows with atom count.
             init_scale = peak_height / max(1.0, (n_asym ** 2) * n_phases * 10.0)
