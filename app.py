@@ -528,7 +528,7 @@ def process_xrd():
                 'wavelength_label': wl_label,
                 'tt_min':           tt_min,
                 'tt_max':           tt_max,
-                'n_bg_coeffs':      int(form.get('n_bg_coeffs', 6)),
+                'n_bg_coeffs':      form.get('n_bg_coeffs', 'auto'),
                 'max_outer':        MAX_OUTER,
                 'method':           form.get('method', 'lebail'),
                 'instprm_file':     instprm_file_path,

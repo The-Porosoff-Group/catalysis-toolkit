@@ -1,0 +1,1900 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Catalysis Data Toolkit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0d1117;
+    --surface:   #161b22;
+    --surface2:  #1c2128;
+    --border:    #2d333b;
+    --accent:    #58a6ff;
+    --accent2:   #39d353;
+    --warn:      #e3b341;
+    --danger:    #f78166;
+    --text:      #e6edf3;
+    --muted:     #7d8590;
+    --mono:      'JetBrains Mono', monospace;
+    --sans:      'Syne', sans-serif;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); overflow: hidden; }
+
+  /* ── Layout ── */
+  .app { display: grid; grid-template-columns: 220px 1fr; grid-template-rows: 56px 1fr; height: 100vh; }
+
+  /* ── Header ── */
+  header {
+    grid-column: 1 / -1;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; padding: 0 24px; gap: 12px;
+  }
+  header .logo { font-size: 18px; font-weight: 800; letter-spacing: -0.5px; color: var(--text); }
+  header .logo span { color: var(--accent); }
+  header .badge {
+    font-family: var(--mono); font-size: 10px; background: var(--surface2);
+    border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; color: var(--muted);
+  }
+
+  /* ── Sidebar ── */
+  aside {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 16px 0;
+    display: flex; flex-direction: column; gap: 2px;
+    overflow-y: auto;
+  }
+  .nav-section { padding: 8px 16px 4px; font-size: 10px; font-weight: 700; letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 16px; cursor: pointer; border-radius: 0;
+    font-size: 13px; font-weight: 600; color: var(--muted);
+    transition: all 0.15s; position: relative;
+  }
+  .nav-item:hover { background: var(--surface2); color: var(--text); }
+  .nav-item.active { background: rgba(88,166,255,0.1); color: var(--accent); }
+  .nav-item.active::before {
+    content: ''; position: absolute; left: 0; top: 0; bottom: 0;
+    width: 3px; background: var(--accent); border-radius: 0 2px 2px 0;
+  }
+  .nav-item .soon {
+    margin-left: auto; font-size: 9px; font-family: var(--mono);
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--muted); padding: 1px 5px; border-radius: 3px;
+  }
+  .nav-item.disabled { pointer-events: none; opacity: 0.5; }
+
+  /* ── Main area ── */
+  main { overflow-y: auto; padding: 24px 28px; display: flex; flex-direction: column; gap: 20px; }
+
+  /* ── Module panels ── */
+  .module-panel { display: none; flex-direction: column; gap: 24px; }
+  .module-panel.active { display: flex; }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .card-header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .card-header h2 { font-size: 14px; font-weight: 700; }
+  .card-header .step {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: rgba(88,166,255,0.15); color: var(--accent);
+    font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .card-body { padding: 20px; }
+
+  /* ── Drop zone ── */
+  .dropzone {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 40px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+  }
+  .dropzone:hover, .dropzone.dragover {
+    border-color: var(--accent);
+    background: rgba(88,166,255,0.05);
+  }
+  .dropzone.has-file { border-color: var(--accent2); background: rgba(57,211,83,0.05); }
+  .dropzone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+  .dropzone-icon { font-size: 32px; margin-bottom: 10px; }
+  .dropzone-text { font-size: 14px; font-weight: 600; color: var(--muted); }
+  .dropzone-text span { color: var(--accent); }
+  .dropzone-sub { font-size: 11px; color: var(--muted); margin-top: 4px; font-family: var(--mono); }
+  .file-name { font-size: 13px; color: var(--accent2); font-family: var(--mono); font-weight: 600; }
+
+  /* ── Reaction config selector ── */
+  .config-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+  .config-card {
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .config-card:hover { border-color: var(--accent); background: rgba(88,166,255,0.05); }
+  .config-card.selected { border-color: var(--accent); background: rgba(88,166,255,0.1); }
+  .config-card .cfg-name { font-size: 12px; font-weight: 700; margin-bottom: 3px; }
+  .config-card .cfg-desc { font-size: 11px; color: var(--muted); line-height: 1.4; }
+
+  /* ── Form fields ── */
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .form-grid.three { grid-template-columns: 1fr 1fr 1fr; }
+  .form-group { display: flex; flex-direction: column; gap: 5px; }
+  .form-group.full { grid-column: 1 / -1; }
+  label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; }
+  input[type=text], input[type=number], textarea, select {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 8px 12px;
+    transition: border-color 0.15s;
+    width: 100%;
+  }
+  input:focus, textarea:focus, select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  textarea { resize: vertical; min-height: 60px; }
+
+  /* ── Inlet flows table ── */
+  .flow-table { width: 100%; border-collapse: collapse; }
+  .flow-table th {
+    text-align: left; font-size: 10px; font-weight: 700;
+    color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px;
+    padding: 6px 10px; border-bottom: 1px solid var(--border);
+  }
+  .flow-table td { padding: 6px 10px; }
+  .flow-table td input { background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: var(--mono); font-size: 13px; padding: 5px 8px; width: 100px; }
+  .flow-table td input:focus { outline: none; border-color: var(--accent); }
+  .species-label { font-family: var(--mono); font-size: 13px; }
+
+  /* ── SS range ── */
+  .ss-row { display: flex; align-items: center; gap: 12px; }
+  .ss-row span { color: var(--muted); font-size: 13px; }
+  .ss-row input { width: 90px; }
+
+  /* ── Output dir picker ── */
+  .dir-row { display: flex; gap: 8px; }
+  .dir-row input { flex: 1; }
+
+  /* ── Process button ── */
+  .btn-process {
+    background: var(--accent);
+    color: #0d1117;
+    border: none;
+    border-radius: 8px;
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 800;
+    padding: 13px 32px;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex; align-items: center; gap: 8px;
+    letter-spacing: 0.3px;
+  }
+  .btn-process:hover { background: #79c0ff; transform: translateY(-1px); }
+  .btn-process:active { transform: translateY(0); }
+  .btn-process:disabled { opacity: 0.4; pointer-events: none; }
+  .btn-sm {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-sm:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm.green { border-color: var(--accent2); color: var(--accent2); }
+  .btn-sm.green:hover { background: rgba(57,211,83,0.1); }
+
+  /* ── Progress / spinner ── */
+  .progress-wrap { display: none; align-items: center; gap: 12px; padding: 14px 0; }
+  .progress-wrap.visible { display: flex; }
+  .spinner {
+    width: 20px; height: 20px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .progress-text { font-size: 13px; color: var(--muted); font-family: var(--mono); }
+
+  /* ── Results panel ── */
+  .results-panel { display: none; flex-direction: column; gap: 20px; }
+  .results-panel.visible { display: flex; }
+
+  .results-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .results-header h3 { font-size: 16px; font-weight: 800; }
+  .pill {
+    font-size: 11px; font-family: var(--mono); font-weight: 600;
+    padding: 3px 10px; border-radius: 20px;
+  }
+  .pill.green  { background: rgba(57,211,83,0.15);  color: var(--accent2); }
+  .pill.blue   { background: rgba(88,166,255,0.15); color: var(--accent); }
+  .pill.yellow { background: rgba(227,179,65,0.15); color: var(--warn); }
+
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+  .stat-box {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .stat-box .stat-label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
+  .stat-box .stat-val { font-size: 22px; font-weight: 800; font-family: var(--mono); color: var(--text); }
+  .stat-box .stat-unit { font-size: 12px; color: var(--muted); }
+
+  .sel-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  .sel-item {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 14px; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  }
+  .sel-item .sel-sp { font-size: 11px; font-family: var(--mono); color: var(--muted); }
+  .sel-item .sel-val { font-size: 16px; font-weight: 700; font-family: var(--mono); }
+
+  .plot-img { width: 100%; border-radius: 8px; border: 1px solid var(--border); display: block; }
+  .download-row { display: flex; gap: 10px; flex-wrap: wrap; }
+
+  /* ── Coming soon overlay ── */
+  .coming-soon {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 80px 20px; gap: 14px; text-align: center;
+  }
+  .coming-soon .cs-icon { font-size: 48px; }
+  .coming-soon h2 { font-size: 20px; font-weight: 800; }
+  .coming-soon p { color: var(--muted); font-size: 14px; max-width: 360px; line-height: 1.6; }
+  .coming-soon .cs-badge {
+    font-family: var(--mono); font-size: 11px;
+    background: rgba(227,179,65,0.1); border: 1px solid var(--warn);
+    color: var(--warn); padding: 4px 12px; border-radius: 20px;
+  }
+
+  /* ── Error box ── */
+  .error-box {
+    background: rgba(247,129,102,0.08);
+    border: 1px solid rgba(247,129,102,0.3);
+    border-radius: 8px;
+    padding: 14px 18px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--danger);
+    display: none;
+    white-space: pre-wrap;
+  }
+  .error-box.visible { display: block; }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+<script>
+  // Injected by server at page load
+  window.mpKeySet = {{ mp_key_set | tojson }};
+  window.pymatgenReady = {{ pymatgen_ready | tojson }};
+</script>
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <header>
+    <div class="logo">Catalysis<span>Toolkit</span></div>
+    <div class="badge">v1.0</div>
+  </header>
+
+  <!-- Sidebar -->
+  <aside>
+    <div class="nav-section">Modules</div>
+    {% for m in modules %}
+    <div class="nav-item {% if m.id == 'gc' %}active{% endif %} {% if m.status == 'coming_soon' %}disabled{% endif %}"
+         data-module="{{ m.id }}"
+         onclick="switchModule('{{ m.id }}')">
+      <span>{{ m.icon }}</span>
+      <span>{{ m.name }}</span>
+      {% if m.status == 'coming_soon' %}<span class="soon">soon</span>{% endif %}
+    </div>
+    {% endfor %}
+
+    <div class="nav-section" style="margin-top:auto">Help</div>
+    <div class="nav-item" onclick="window.open('https://github.com/your-repo/catalysis-toolkit','_blank')">
+      <span>📖</span><span>Docs / GitHub</span>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main>
+
+    <!-- ── GC Module ── -->
+    <div class="module-panel active" id="module-gc">
+
+      <!-- Step 1: Upload -->
+      <div class="card">
+        <div class="card-header">
+          <div class="step">1</div>
+          <h2>Upload GC Data File</h2>
+        </div>
+        <div class="card-body">
+          <div class="dropzone" id="dropzone" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+            <input type="file" id="fileInput" accept=".xlsx" onchange="onFileSelect(event)">
+            <div id="dropzone-content">
+              <div class="dropzone-icon">📂</div>
+              <div class="dropzone-text">Drag & drop your <span>.xlsx</span> file here</div>
+              <div class="dropzone-sub">or click to browse</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2: Reaction config -->
+      <div class="card">
+        <div class="card-header">
+          <div class="step">2</div>
+          <h2>Select Reaction Type</h2>
+        </div>
+        <div class="card-body">
+          <div class="config-grid" id="config-grid">
+            {% for cfg in reaction_configs %}
+            <div class="config-card {% if loop.first %}selected{% endif %}"
+                 data-file="{{ cfg.file }}"
+                 data-reactant="{{ cfg.reactant }}"
+                 data-inlets='{{ cfg.inlet_species | tojson }}'
+                 onclick="selectConfig(this)">
+              <div class="cfg-name">{{ cfg.name }}</div>
+              <div class="cfg-desc">{{ cfg.description }}</div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3: Metadata + flows -->
+      <div class="card">
+        <div class="card-header">
+          <div class="step">3</div>
+          <h2>Experiment Details</h2>
+        </div>
+        <div class="card-body" style="display:flex; flex-direction:column; gap:20px;">
+
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Catalyst ID</label>
+              <input type="text" id="catalyst_id" placeholder="e.g. Fe@ZSM-5_350C_50mg">
+            </div>
+            <div class="form-group">
+              <label>Temperature</label>
+              <input type="text" id="temperature" placeholder="e.g. 350 C">
+            </div>
+            <div class="form-group">
+              <label>Pressure</label>
+              <input type="text" id="pressure" placeholder="e.g. 300 psig">
+            </div>
+            <div class="form-group">
+              <label>GHSV</label>
+              <input type="text" id="ghsv" placeholder="e.g. 12000 mL/g/h">
+            </div>
+            <div class="form-group full">
+              <label>Notes</label>
+              <textarea id="notes" placeholder="Any additional notes..."></textarea>
+            </div>
+          </div>
+
+          <!-- Inlet flows -->
+          <div>
+            <label style="display:block; margin-bottom:10px;">Inlet MFC Flows (sccm)</label>
+            <table class="flow-table" id="flow-table">
+              <thead>
+                <tr>
+                  <th>Species</th>
+                  <th>Flow (sccm)</th>
+                </tr>
+              </thead>
+              <tbody id="flow-tbody"></tbody>
+            </table>
+          </div>
+
+          <!-- Steady-state range -->
+          <div>
+            <label style="display:block; margin-bottom:8px;">Steady-State Injection Range</label>
+            <div class="ss-row">
+              <span>From injection</span>
+              <input type="number" id="ss_start" value="20" min="1" style="width:80px">
+              <span>to</span>
+              <input type="number" id="ss_end" value="999" min="1" style="width:80px">
+              <span style="font-size:11px; color:var(--muted);">(use a large end number to include all)</span>
+            </div>
+          </div>
+
+          <!-- Output directory -->
+          <div>
+            <label style="display:block; margin-bottom:8px;">Output Folder</label>
+            <div class="dir-row">
+              <input type="text" id="output_dir" placeholder="Leave blank to save next to this app (results/)">
+            </div>
+            <div style="font-size:11px; color:var(--muted); margin-top:5px;">
+              A timestamped subfolder will be created automatically for each run.
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Step 4: Process -->
+      <div class="card">
+        <div class="card-header">
+          <div class="step">4</div>
+          <h2>Process Data</h2>
+        </div>
+        <div class="card-body" style="display:flex; flex-direction:column; gap:16px;">
+          <button class="btn-process" id="btn-process" onclick="processGC()">
+            <span>⚗️</span> Process GC Data
+          </button>
+          <div class="progress-wrap" id="progress-wrap">
+            <div class="spinner"></div>
+            <div class="progress-text" id="progress-text">Reading file...</div>
+          </div>
+          <div class="error-box" id="error-box"></div>
+
+          <!-- Results -->
+          <div class="results-panel" id="results-panel">
+            <div class="results-header">
+              <h3>Results</h3>
+              <div id="bridge-pill"></div>
+              <div id="cb-pill"></div>
+            </div>
+
+            <div class="stats-grid" id="stats-grid"></div>
+
+            <div>
+              <label style="display:block; margin-bottom:10px;">Carbon Selectivities (Steady State)</label>
+              <div class="sel-grid" id="sel-grid"></div>
+            </div>
+
+            <div>
+              <img class="plot-img" id="result-plot" src="" alt="Results plot">
+            </div>
+
+            <div class="download-row" id="download-row"></div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /gc module -->
+
+    <!-- ── Coming-soon modules ── -->
+    {% for m in modules %}
+    {% if m.status == 'coming_soon' and m.id != 'xrd' %}
+    <div class="module-panel" id="module-{{ m.id }}">
+      <div class="card">
+        <div class="coming-soon">
+          <div class="cs-icon">{{ m.icon }}</div>
+          <h2>{{ m.name }}</h2>
+          <p>This module is planned for a future release.</p>
+          <div class="cs-badge">Coming Soon</div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+    <!-- ── XRD Module ── -->
+    <div class="module-panel" id="module-xrd">
+
+      <!-- Step 1: Upload + Settings row -->
+      <div style="display:grid;grid-template-columns:1.2fr 0.8fr;gap:16px;">
+
+        <div class="card">
+          <div class="card-header"><div class="step">1</div><h2>Upload XRD File</h2></div>
+          <div class="card-body" style="display:flex;flex-direction:column;gap:12px;">
+            <div class="dropzone" id="xrd-dropzone" ondragover="onDragOver2(event)" ondragleave="onDragLeave2(event)" ondrop="onDrop2(event)"
+                 style="padding:20px;min-height:90px;transition:all 0.35s ease;">
+              <input type="file" id="xrdFileInput" accept=".dat,.xy,.xye,.csv,.txt" onchange="onXrdFileSelect(event)">
+              <div id="xrd-dropzone-content" style="display:flex;flex-direction:column;align-items:center;gap:8px;justify-content:center;padding:10px 0;">
+                <span style="font-size:40px;">📊</span>
+                <div class="dropzone-text" style="font-size:14px;font-weight:600;">Drag &amp; drop XRD data file</div>
+                <div class="dropzone-sub">.dat · .xy · .xye · .csv · .txt · or click to browse</div>
+              </div>
+            </div>
+            <!-- Live preview plot — shown after file upload -->
+            <div id="xrd-preview-wrap" style="display:none;">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+                <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;">Data Preview</span>
+                <span id="xrd-preview-hint" style="font-size:10px;color:var(--muted);">Scroll to zoom · drag to pan · double-click to reset</span>
+              </div>
+              <div style="position:relative;">
+                <canvas id="xrd-preview-canvas"
+                        style="width:100%;height:280px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;cursor:crosshair;"
+                        onwheel="previewZoom(event)"
+                        onmousedown="previewPanStart(event)"
+                        onmousemove="previewPanMove(event)"
+                        onmouseup="previewPanEnd()"
+                        onmouseleave="previewPanEnd()"
+                        ondblclick="previewResetZoom()">
+                </canvas>
+                <div id="xrd-preview-overlay"
+                     style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+                            background:var(--surface2);border:1px solid var(--border);border-radius:6px;
+                            font-size:13px;color:var(--muted);pointer-events:none;">
+                  Loading preview…
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div class="step">2</div><h2>Instrument Settings</h2></div>
+          <div class="card-body" style="display:flex;flex-direction:column;gap:12px;">
+            <div class="form-group">
+              <label>X-ray Source</label>
+              <select id="xrd-source" onchange="updateWavelength()">
+                <option value="1.54056">Cu Kα  (1.54056 Å)</option>
+                <option value="1.54439">Cu Kα2 (1.54439 Å)</option>
+                <option value="0.71073">Mo Kα  (0.71073 Å)</option>
+                <option value="1.78897">Co Kα  (1.78897 Å)</option>
+                <option value="1.93604">Fe Kα  (1.93604 Å)</option>
+                <option value="2.28970">Cr Kα  (2.28970 Å)</option>
+                <option value="custom">Custom...</option>
+              </select>
+            </div>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Wavelength (Å)</label>
+                <input type="number" id="xrd-wavelength" value="1.54056" step="0.00001">
+              </div>
+              <div class="form-group">
+                <label>Sample ID</label>
+                <input type="text" id="xrd-sample-id" placeholder="e.g. β-Mo₂C_350C">
+              </div>
+              <div class="form-group">
+                <label>2θ Min (°)</label>
+                <input type="number" id="xrd-tt-min" value="10" step="0.5">
+              </div>
+              <div class="form-group">
+                <label>2θ Max (°)</label>
+                <input type="number" id="xrd-tt-max" value="90" step="0.5">
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Output Folder</label>
+              <input type="text" id="xrd-output-dir" placeholder="Leave blank → results/ next to app">
+            </div>
+            <div class="form-group">
+              <label title="Auto mode analyzes your data to pick the right number of background terms. Override manually for samples with known amorphous backgrounds.">
+                Background terms
+                <span style="color:var(--muted);font-weight:400;"> — auto-selected by default</span>
+              </label>
+              <select id="xrd-bg-coeffs">
+                <option value="auto" selected>Auto — data-driven selection</option>
+                <option value="6">6 — clean baseline</option>
+                <option value="8">8 — standard crystalline (recommended)</option>
+                <option value="10">10 — moderate amorphous background</option>
+                <option value="14">14 — supported catalyst (SiO₂, Al₂O₃)</option>
+                <option value="20">20 — heavy amorphous background</option>
+              </select>
+            </div>
+            <div class="form-group" id="instprm-group" style="display:none;">
+              <label title="Upload a GSAS-II .instprm file from your instrument calibration. If not provided, default profile parameters will be used as starting guesses (U=2, V=−2, W=5) and refined during fitting.">
+                Instrument Parameters <span style="color:var(--muted);font-weight:400;"> — optional, GSAS-II only</span>
+              </label>
+              <input type="file" id="xrd-instprm-file" accept=".instprm,.prm,.inst"
+                     style="font-size:12px;">
+              <span style="font-size:11px;color:var(--muted);">
+                Upload your GSAS-II .instprm file for accurate profile parameters.
+                Without this, default values are used as initial guesses and refined.
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3: Phase Identification -->
+      <div class="card">
+        <div class="card-header">
+          <div class="step">3</div>
+          <h2>Phase Identification</h2>
+          <span style="margin-left:auto;font-size:11px;color:var(--muted);">Searches the Crystallography Open Database (COD)</span>
+        </div>
+        <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
+
+          <!-- Search inputs -->
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto auto;gap:10px;align-items:flex-end;min-width:0;">
+            <div class="form-group">
+              <label>Elements (space-separated)</label>
+              <input type="text" id="xrd-elements" placeholder="e.g.  Mo  C"
+                     onkeydown="if(event.key==='Enter') searchPhases(false)">
+            </div>
+            <div class="form-group">
+              <label>Phase / keyword search</label>
+              <input type="text" id="xrd-phase-name" placeholder="e.g. molybdenum carbide"
+                     onkeydown="if(event.key==='Enter') searchPhases(false)">
+            </div>
+            <div class="form-group">
+              <label>Exact formula</label>
+              <input type="text" id="xrd-formula" placeholder="e.g. Mo2C"
+                     onkeydown="if(event.key==='Enter') searchPhases(false)">
+            </div>
+            <div class="form-group">
+              <label>Sort by</label>
+              <select id="xrd-sort">
+                <option value="formula">Formula</option>
+                <option value="spacegroup">Space group</option>
+                <option value="year_desc">Year (newest)</option>
+                <option value="year_asc">Year (oldest)</option>
+                <option value="cell_a">Cell a</option>
+              </select>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <div style="display:flex;gap:6px;">
+                <button class="btn-sm" onclick="searchPhases(false)" title="Exact element search">🔍 Search</button>
+                <button class="btn-sm" onclick="searchPhases(true)" title="Allow extra elements">+ Loose</button>
+              </div>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <span style="font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.6px;">Source:</span>
+                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;">
+                  <input type="radio" name="xrd-source-db" value="both" checked onchange="updateSourceBadge()"> Both
+                </label>
+                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;">
+                  <input type="radio" name="xrd-source-db" value="cod" onchange="updateSourceBadge()"> COD only
+                </label>
+                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;" id="mp-radio-wrap">
+                  <input type="radio" name="xrd-source-db" value="mp" onchange="updateSourceBadge()"> MP only
+                </label>
+                <span id="mp-key-badge"></span>
+              </div>
+            </div>
+          </div>
+
+          <div id="xrd-search-status" style="font-size:12px;font-family:var(--mono);color:var(--muted);min-height:16px;"></div>
+
+          <!-- Candidate list — scrollable -->
+          <div id="xrd-candidates-wrap" style="display:none;">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+              <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;">
+                Candidates <span id="xrd-count-badge" class="pill blue" style="margin-left:4px;"></span>
+                <span id="xrd-mp-badge" class="pill green" style="margin-left:4px;display:none;"></span>
+                <span id="xrd-cod-badge" class="pill yellow" style="margin-left:4px;display:none;"></span>
+              </label>
+              <input type="text" id="xrd-filter" placeholder="Filter results..."
+                     oninput="filterCandidates()"
+                     style="width:200px;font-size:12px;padding:4px 8px;">
+              <span style="font-size:11px;color:var(--muted);margin-left:auto;">Click a row to add to refinement</span>
+            </div>
+            <!-- Table header -->
+            <div style="display:grid;grid-template-columns:60px 1fr 90px 55px 70px 70px 70px 60px;gap:0;
+                        padding:5px 10px;background:var(--surface2);border:1px solid var(--border);
+                        border-radius:6px 6px 0 0;font-size:10px;font-weight:700;color:var(--muted);
+                        text-transform:uppercase;letter-spacing:.8px;">
+              <span>COD ID</span><span>Formula / Name</span><span>Space group</span>
+              <span>a (Å)</span><span>b (Å)</span><span>c (Å)</span><span>Year</span><span></span>
+            </div>
+            <div id="xrd-candidate-list"
+                 style="max-height:420px;overflow-y:auto;border:1px solid var(--border);
+                        border-top:none;border-radius:0 0 6px 6px;"></div>
+            <div id="xrd-load-more-wrap" style="display:none;margin-top:8px;">
+              <button class="btn-sm" onclick="loadMoreCOD()">Load 100 more results...</button>
+            </div>
+          </div>
+
+          <!-- Manual CIF upload -->
+          <div style="display:flex;align-items:center;gap:12px;">
+            <span style="font-size:12px;color:var(--muted);">or upload a CIF directly:</span>
+            <label class="btn-sm" style="cursor:pointer;">
+              📎 Upload .cif file
+              <input type="file" accept=".cif" onchange="uploadCIF(event)" style="display:none;">
+            </label>
+          </div>
+
+          <!-- Selected phases for refinement -->
+          <div id="xrd-selected-wrap" style="display:none;">
+            <label style="display:block;margin-bottom:8px;font-size:11px;font-weight:700;
+                          color:var(--muted);text-transform:uppercase;letter-spacing:.8px;">
+              Phases queued for refinement
+            </label>
+            <div id="xrd-selected-phases" style="display:flex;flex-direction:column;gap:6px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 4: Run -->
+      <div class="card">
+        <div class="card-header"><div class="step">4</div><h2>Run Refinement</h2></div>
+        <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
+
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <button class="btn-process" id="btn-xrd" onclick="runXRD('lebail')">
+              <span>🔬</span> Le Bail Refinement
+            </button>
+            <button class="btn-process" id="btn-xrd-rietveld" onclick="runXRD('rietveld')" style="background:linear-gradient(135deg,#238636,#2ea043);">
+              <span>🔬</span> Rietveld Refinement
+            </button>
+            <button class="btn-process" id="btn-xrd-gsas2" onclick="runXRD('gsas2')" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);display:none;" title="Requires GSAS-II installation">
+              <span>🔬</span> GSAS-II Refinement
+            </button>
+            <button class="btn-sm" onclick="resetXRD()" title="Clear everything and start fresh">↺ Reset</button>
+          </div>
+          <div style="font-size:11px;color:var(--muted);line-height:1.4;">
+            <b>Le Bail</b> — free peak intensities, good for phase ID and cell params.<br>
+            <b>Rietveld</b> — structure-constrained intensities (requires CIF with atom positions), better intensity balance.<br>
+            <b>GSAS-II</b> — full-featured Rietveld via GSAS-II engine (requires separate install).
+          </div>
+
+          <div class="progress-wrap" id="xrd-progress-wrap">
+            <div class="spinner"></div>
+            <div class="progress-text" id="xrd-progress-text">Initialising...</div>
+          </div>
+
+          <!-- Error box — stays visible even after errors, doesn't require page refresh -->
+          <div class="error-box" id="xrd-error-box"></div>
+
+          <!-- Results panel — only hidden, not destroyed, so results persist -->
+          <div class="results-panel" id="xrd-results-panel">
+            <div class="results-header" style="flex-wrap:wrap;gap:8px;">
+              <h3>Refinement Results</h3>
+              <div id="xrd-stats-pills"></div>
+              <div id="xrd-pymatgen-pill"></div>
+            </div>
+            <div class="stats-grid" id="xrd-stats-grid"></div>
+            <div id="xrd-phase-results"></div>
+            <img class="plot-img" id="xrd-result-plot" src="" alt="XRD refinement plot"
+                 style="display:none;">
+            <div class="download-row" id="xrd-download-row"></div>
+          </div>
+
+        </div>
+      </div>
+
+    </div><!-- /xrd module -->
+
+  </main>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let selectedFile   = null;
+let selectedConfig = null;
+
+// ── Init: select first config ─────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  const first = document.querySelector('.config-card');
+  if (first) selectConfig(first);
+});
+
+// ── Module switching ──────────────────────────────────────────────────────
+function switchModule(id) {
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.module-panel').forEach(el => el.classList.remove('active'));
+  document.querySelector(`[data-module="${id}"]`).classList.add('active');
+  document.getElementById(`module-${id}`).classList.add('active');
+}
+
+// ── Drag-and-drop ─────────────────────────────────────────────────────────
+function onDragOver(e) { e.preventDefault(); document.getElementById('dropzone').classList.add('dragover'); }
+function onDragLeave()  { document.getElementById('dropzone').classList.remove('dragover'); }
+function onDrop(e) {
+  e.preventDefault();
+  document.getElementById('dropzone').classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) setFile(file);
+}
+function onFileSelect(e) { if (e.target.files[0]) setFile(e.target.files[0]); }
+
+function setFile(file) {
+  if (!file.name.endsWith('.xlsx')) {
+    showError('Please select an .xlsx file.');
+    return;
+  }
+  selectedFile = file;
+  const dz = document.getElementById('dropzone');
+  dz.classList.add('has-file');
+  document.getElementById('dropzone-content').innerHTML = `
+    <div class="dropzone-icon">✅</div>
+    <div class="file-name">${file.name}</div>
+    <div class="dropzone-sub">${(file.size/1024).toFixed(1)} KB · click to change</div>
+  `;
+}
+
+// ── Reaction config selection ─────────────────────────────────────────────
+function selectConfig(el) {
+  document.querySelectorAll('.config-card').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+  selectedConfig = el.dataset.file;
+
+  // Build inlet flows table
+  let inlets = [];
+  try { inlets = JSON.parse(el.dataset.inlets); } catch(e) {}
+  const tbody = document.getElementById('flow-tbody');
+  tbody.innerHTML = '';
+  inlets.forEach(sp => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><span class="species-label">${sp.label}</span></td>
+      <td><input type="number" step="0.1" min="0" value="${sp.default_sccm}"
+                 id="flow_${sp.label}" placeholder="sccm"></td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+// ── Process ───────────────────────────────────────────────────────────────
+async function processGC() {
+  hideError();
+  if (!selectedFile)   { showError('Please upload a .xlsx file first.'); return; }
+  if (!selectedConfig) { showError('Please select a reaction type.'); return; }
+
+  const catalystId = document.getElementById('catalyst_id').value.trim();
+  if (!catalystId)     { showError('Please enter a Catalyst ID.'); return; }
+
+  // Build inlet flows JSON
+  const inlets = {};
+  document.querySelectorAll('[id^="flow_"]').forEach(inp => {
+    const sp = inp.id.replace('flow_', '');
+    if (inp.value) inlets[sp] = inp.value;
+  });
+
+  const formData = new FormData();
+  formData.append('file',            selectedFile);
+  formData.append('reaction_config', selectedConfig);
+  formData.append('catalyst_id',     catalystId);
+  formData.append('temperature',     document.getElementById('temperature').value);
+  formData.append('pressure',        document.getElementById('pressure').value);
+  formData.append('ghsv',            document.getElementById('ghsv').value);
+  formData.append('notes',           document.getElementById('notes').value);
+  formData.append('inlet_flows',     JSON.stringify(inlets));
+  formData.append('ss_start',        document.getElementById('ss_start').value);
+  formData.append('ss_end',          document.getElementById('ss_end').value);
+  formData.append('output_dir',      document.getElementById('output_dir').value);
+
+  // Show progress
+  document.getElementById('btn-process').disabled = true;
+  showProgress('Reading and parsing GC file...');
+  document.getElementById('results-panel').classList.remove('visible');
+
+  const steps = [
+    'Calculating molar flows via Ar normalisation...',
+    'Computing conversion and selectivities...',
+    'Generating plots...',
+    'Saving outputs...',
+  ];
+  let si = 0;
+  const stepTimer = setInterval(() => {
+    si = (si + 1) % steps.length;
+    document.getElementById('progress-text').textContent = steps[si];
+  }, 1800);
+
+  try {
+    const resp = await fetch('/api/process_gc', { method: 'POST', body: formData });
+    const data = await resp.json();
+    clearInterval(stepTimer);
+
+    if (data.error) {
+      hideProgress();
+      showError(data.error + (data.trace ? '\n\n' + data.trace : ''));
+      document.getElementById('btn-process').disabled = false;
+      return;
+    }
+
+    hideProgress();
+    showResults(data);
+  } catch(e) {
+    clearInterval(stepTimer);
+    hideProgress();
+    showError('Unexpected error: ' + e.message);
+  }
+  document.getElementById('btn-process').disabled = false;
+}
+
+function showResults(data) {
+  const panel = document.getElementById('results-panel');
+  panel.classList.add('visible');
+
+  // Pills
+  document.getElementById('bridge-pill').innerHTML = data.fid_bridge
+    ? '<span class="pill blue">CH4 bridge ✓</span>'
+    : '<span class="pill yellow">Direct Ar norm.</span>';
+
+  const cb = data.carbon_balance;
+  if (cb !== undefined) {
+    const ok = cb >= 90 && cb <= 110;
+    document.getElementById('cb-pill').innerHTML =
+      `<span class="pill ${ok ? 'green' : 'yellow'}">C balance: ${cb}%</span>`;
+  }
+
+  // Stats
+  const statsEl = document.getElementById('stats-grid');
+  statsEl.innerHTML = '';
+  const stats = [
+    { label: 'Sequence',    val: data.sequence_name,  unit: '' },
+    { label: 'Bypass inj.', val: data.n_bypass,       unit: '' },
+    { label: 'Rxn inj.',    val: data.n_reaction,     unit: '' },
+    { label: 'SS inj.',     val: data.n_ss,            unit: '' },
+  ];
+  if (data.conversion !== undefined)
+    stats.push({ label: 'Conversion', val: data.conversion, unit: `± ${data.conversion_std}%` });
+  stats.forEach(s => {
+    statsEl.innerHTML += `
+      <div class="stat-box">
+        <div class="stat-label">${s.label}</div>
+        <div class="stat-val">${s.val}<span class="stat-unit"> ${s.unit}</span></div>
+      </div>`;
+  });
+
+  // Selectivities
+  const selEl = document.getElementById('sel-grid');
+  selEl.innerHTML = '';
+  const sels = data.selectivities || {};
+  Object.entries(sels).sort((a,b) => b[1]-a[1]).forEach(([sp, val]) => {
+    if (val > 0.05)
+      selEl.innerHTML += `
+        <div class="sel-item">
+          <div class="sel-sp">${sp}</div>
+          <div class="sel-val">${val.toFixed(1)}%</div>
+        </div>`;
+  });
+
+  // Plot
+  if (data.plot_b64) {
+    document.getElementById('result-plot').src = `data:image/png;base64,${data.plot_b64}`;
+  }
+
+  // Download buttons
+  const dlRow = document.getElementById('download-row');
+  dlRow.innerHTML = `
+    <button class="btn-sm green" onclick="openFolder('${escPath(data.output_dir)}')">📁 Open Output Folder</button>
+    <button class="btn-sm" onclick="downloadFile('${escPath(data.summary_path)}')">⬇ Summary Excel</button>
+    <button class="btn-sm" onclick="downloadFile('${escPath(data.flows_path)}')">⬇ Flow Data CSV</button>
+  `;
+
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function openFolder(path) {
+  fetch('/api/open_folder?path=' + encodeURIComponent(path));
+}
+function downloadFile(path) {
+  window.location = '/api/download?path=' + encodeURIComponent(path);
+}
+function escPath(p) { return (p || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+
+// ── UI helpers ────────────────────────────────────────────────────────────
+function showProgress(msg) {
+  document.getElementById('progress-text').textContent = msg;
+  document.getElementById('progress-wrap').classList.add('visible');
+}
+function hideProgress() { document.getElementById('progress-wrap').classList.remove('visible'); }
+function showError(msg) {
+  const el = document.getElementById('error-box');
+  el.textContent = msg; el.classList.add('visible');
+}
+function hideError() { document.getElementById('error-box').classList.remove('visible'); }
+
+
+
+// ── XRD Preview Plot ───────────────────────────────────────────────────────
+let _previewData  = null;   // {tt, intensity, y_max, tt_min, tt_max}
+let _previewView  = null;   // {xMin, xMax, yMin, yMax} — current viewport
+let _previewPan   = null;   // pan state
+let _stickPhases  = [];     // [{name, color, sticks:[{two_theta,rel_int,hkl}]}]
+
+const PHASE_COLORS = ['#f78166','#56d364','#e3b341','#bc8cff','#79c0ff','#ffa657'];
+
+async function loadXrdPreview(file) {
+  const wrap    = document.getElementById('xrd-preview-wrap');
+  const overlay = document.getElementById('xrd-preview-overlay');
+  const hint    = document.getElementById('xrd-preview-hint');
+
+  // Show wrapper immediately with loading state
+  wrap.style.display = 'block';
+  overlay.style.display = 'flex';
+  overlay.textContent   = 'Loading preview…';
+  overlay.style.color   = 'var(--muted)';
+  hint.textContent      = '';
+
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const resp = await fetch('/api/xrd/preview', {method:'POST', body:fd});
+    const data = await resp.json();
+    if (data.error) {
+      console.error('XRD preview error:', data.error);
+      overlay.textContent = 'Preview unavailable: ' + data.error;
+      overlay.style.color = '#f78166';
+      return;
+    }
+    _previewData = data;
+    _previewView = {
+      xMin: data.tt_min, xMax: data.tt_max,
+      yMin: 0,           yMax: data.y_max * 1.15,
+    };
+    _stickPhases = [];
+    // Hide overlay and show controls hint
+    overlay.style.display = 'none';
+    hint.textContent      = 'Scroll to zoom · drag to pan · double-click to reset';
+    // Delay draw until browser has reflowed (getBoundingClientRect returns 0 otherwise)
+    requestAnimationFrame(() => { requestAnimationFrame(() => { drawPreview(); }); });
+  } catch(e) {
+    console.error('XRD preview fetch failed:', e);
+    overlay.textContent = 'Could not load preview — check console for details.';
+    overlay.style.color = '#f78166';
+  }
+}
+
+function drawPreview() {
+  const canvas = document.getElementById('xrd-preview-canvas');
+  if (!canvas || !_previewData) return;
+
+  // Resize canvas to match CSS size (for sharp rendering)
+  const rect = canvas.getBoundingClientRect();
+  canvas.width  = rect.width  * window.devicePixelRatio;
+  canvas.height = rect.height * window.devicePixelRatio;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+  const W = rect.width, H = rect.height;
+  const PAD = {l:48, r:12, t:10, b:32};
+  const pw = W - PAD.l - PAD.r;
+  const ph = H - PAD.t - PAD.b;
+
+  const {xMin, xMax, yMin, yMax} = _previewView;
+  const xScale = x => PAD.l + (x - xMin) / (xMax - xMin) * pw;
+  const yScale = y => PAD.t + ph - (y - yMin) / (yMax - yMin) * ph;
+
+  // Background
+  ctx.fillStyle = getComputedStyle(document.documentElement)
+                    .getPropertyValue('--surface2').trim() || '#161b22';
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth   = 1;
+  const nGridX = 8, nGridY = 5;
+  for (let i = 0; i <= nGridX; i++) {
+    const x = PAD.l + i * pw / nGridX;
+    ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, PAD.t+ph); ctx.stroke();
+  }
+  for (let i = 0; i <= nGridY; i++) {
+    const y = PAD.t + i * ph / nGridY;
+    ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(PAD.l+pw, y); ctx.stroke();
+  }
+
+  // Axis labels
+  ctx.fillStyle  = 'rgba(125,133,144,0.9)';
+  ctx.font       = `${10 * window.devicePixelRatio / window.devicePixelRatio}px monospace`;
+  ctx.textAlign  = 'center';
+  for (let i = 0; i <= nGridX; i++) {
+    const val = xMin + i * (xMax - xMin) / nGridX;
+    ctx.fillText(val.toFixed(0) + '°', PAD.l + i * pw / nGridX, H - 8);
+  }
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= nGridY; i++) {
+    const val = yMax - i * (yMax - yMin) / nGridY;
+    ctx.fillText(val.toFixed(0), PAD.l - 4, PAD.t + i * ph / nGridY + 3);
+  }
+
+  // Data trace
+  const tt = _previewData.tt;
+  const iy = _previewData.intensity;
+  ctx.strokeStyle = '#58a6ff';
+  ctx.lineWidth   = 1.2;
+  ctx.beginPath();
+  let first = true;
+  for (let i = 0; i < tt.length; i++) {
+    if (tt[i] < xMin || tt[i] > xMax) continue;
+    const px = xScale(tt[i]);
+    const py = yScale(Math.min(iy[i], yMax));
+    first ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    first = false;
+  }
+  ctx.stroke();
+
+  // Stick patterns per phase
+  for (const phase of _stickPhases) {
+    ctx.strokeStyle = phase.color;
+    ctx.lineWidth   = 1.5;
+    const maxH = ph * 0.25;  // ticks are 25% of plot height
+
+    for (const stick of phase.sticks) {
+      const tx = stick.two_theta;
+      if (tx < xMin || tx > xMax) continue;
+      const px  = xScale(tx);
+      const tickH = maxH * stick.rel_int;
+      const yBot  = PAD.t + ph;
+      const yTop  = yBot - tickH;
+
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      ctx.moveTo(px, yBot);
+      ctx.lineTo(px, yTop);
+      ctx.stroke();
+
+      // Tick cap
+      ctx.beginPath();
+      ctx.arc(px, yTop, 2, 0, Math.PI * 2);
+      ctx.fillStyle = phase.color;
+      ctx.fill();
+      ctx.globalAlpha = 1.0;
+    }
+
+  }
+
+  // ── Fixed legend for stick phases (top-right corner) ──────────────
+  if (_stickPhases.length > 0) {
+    const legendX = PAD.l + pw - 6;
+    const legendY0 = PAD.t + 6;
+    const lineH = 14;
+    ctx.textAlign  = 'right';
+    ctx.font       = '10px sans-serif';
+    for (let pi = 0; pi < _stickPhases.length; pi++) {
+      const p = _stickPhases[pi];
+      const ly = legendY0 + pi * lineH;
+      // Small colored line
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth   = 2;
+      ctx.globalAlpha = 0.9;
+      ctx.beginPath();
+      ctx.moveTo(legendX - ctx.measureText(p.name).width - 14, ly);
+      ctx.lineTo(legendX - ctx.measureText(p.name).width - 4, ly);
+      ctx.stroke();
+      // Label
+      ctx.fillStyle   = p.color;
+      ctx.fillText(p.name, legendX, ly + 3);
+      ctx.globalAlpha = 1.0;
+    }
+  }
+
+  // Axis border
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth   = 1;
+  ctx.strokeRect(PAD.l, PAD.t, pw, ph);
+}
+
+function addStickPhase(phase) {
+  const wl     = parseFloat(document.getElementById('xrd-wavelength').value) || 1.54056;
+  const sticks = computeSticks(phase, wl);
+  const phaseId = phase.mp_id || phase.cod_id;
+  // Remove old entry for this phase if present
+  _stickPhases = _stickPhases.filter(p => p.cod_id !== phaseId);
+  // Color index matches position in xrdPhases array for consistency
+  const colorIdx = (xrdPhases.findIndex(p => (p.mp_id||p.cod_id) === phaseId));
+  const ci = colorIdx >= 0 ? colorIdx : _stickPhases.length;
+  // Build label: formula + space group (disambiguates same-formula phases)
+  let label = phase.name || phase.formula || phaseId;
+  const sg = phase.spacegroup || '';
+  if (sg && !label.includes(sg)) label += ' ' + sg;
+  _stickPhases.push({
+    name:   label,
+    cod_id: phaseId,
+    color:  PHASE_COLORS[ci % PHASE_COLORS.length],
+    sticks: sticks,
+  });
+  if (_previewData) drawPreview();
+}
+
+function removeStickPhase(cod_id) {
+  _stickPhases = _stickPhases.filter(p => p.cod_id !== cod_id);
+  if (_previewData) drawPreview();
+}
+
+function computeSticks(phase, wavelength) {
+  // Priority 1: tick positions computed server-side after refinement
+  if (phase.tick_positions && phase.tick_positions.length > 0) {
+    return phase.tick_positions.map(tt => ({two_theta: tt, rel_int: 1.0, hkl: ''}));
+  }
+  // Priority 2: stick_pattern from COD search (already has rel_int)
+  if (phase.stick_pattern && phase.stick_pattern.length > 0) {
+    return phase.stick_pattern;
+  }
+  // Priority 3: compute from cell params client-side (simple cubic/hex/tetragonal)
+  const a = parseFloat(phase.a) || 4.0;
+  const c = parseFloat(phase.c) || a;
+  const sys = (phase.system || 'cubic').toLowerCase();
+  const sticks = [];
+  const ttMin = parseFloat(document.getElementById('xrd-tt-min').value) || 10;
+  const ttMax = parseFloat(document.getElementById('xrd-tt-max').value) || 90;
+
+  // Generate hkl up to order 6
+  for (let h = 0; h <= 6; h++) for (let k = 0; k <= 6; k++) for (let l = 0; l <= 6; l++) {
+    if (h+k+l === 0) continue;
+    let dInv2;
+    if (sys === 'cubic') {
+      dInv2 = (h*h + k*k + l*l) / (a*a);
+    } else if (sys === 'hexagonal' || sys === 'trigonal') {
+      dInv2 = (4/3) * (h*h + h*k + k*k) / (a*a) + (l*l)/(c*c);
+    } else if (sys === 'tetragonal') {
+      dInv2 = (h*h + k*k) / (a*a) + (l*l)/(c*c);
+    } else {
+      dInv2 = (h*h + k*k + l*l) / (a*a); // ortho/mono approx
+    }
+    if (dInv2 <= 0) continue;
+    const sinTheta = wavelength * Math.sqrt(dInv2) / 2;
+    if (sinTheta >= 1) continue;
+    const tt = 2 * (180/Math.PI) * Math.asin(sinTheta);
+    if (tt >= ttMin && tt <= ttMax) {
+      sticks.push({two_theta: parseFloat(tt.toFixed(3)), rel_int: 1.0,
+                   hkl: `(${h}${k}${l})`});
+    }
+  }
+  // Deduplicate and sort
+  const seen = new Set();
+  return sticks
+    .filter(s => { const k = s.two_theta.toFixed(2); if(seen.has(k)) return false; seen.add(k); return true; })
+    .sort((a,b) => a.two_theta - b.two_theta);
+}
+
+// ── Auto-scale Y to visible data range ─────────────────────────────────────
+function autoScaleY() {
+  if (!_previewData || !_previewView) return;
+  const tt = _previewData.tt;
+  const iy = _previewData.intensity;
+  let yMax = 0;
+  for (let i = 0; i < tt.length; i++) {
+    if (tt[i] >= _previewView.xMin && tt[i] <= _previewView.xMax) {
+      if (iy[i] > yMax) yMax = iy[i];
+    }
+  }
+  _previewView.yMin = 0;
+  _previewView.yMax = Math.max(yMax * 1.15, 1);
+}
+
+// ── Zoom & Pan ──────────────────────────────────────────────────────────────
+function previewZoom(e) {
+  if (!_previewView) return;
+  e.preventDefault();
+  const canvas = e.currentTarget;
+  const rect   = canvas.getBoundingClientRect();
+  const mouseX = e.clientX - rect.left;
+  const PAD_L  = 48, pw = rect.width - PAD_L - 12;
+  const frac   = Math.max(0, Math.min(1, (mouseX - PAD_L) / pw));
+
+  const {xMin, xMax} = _previewView;
+  const range = xMax - xMin;
+  const factor = e.deltaY > 0 ? 1.15 : 0.87;
+  const newRange = Math.max(2, Math.min(range * factor, _previewData.tt_max - _previewData.tt_min));
+  const centre = xMin + frac * range;
+  _previewView.xMin = Math.max(_previewData.tt_min, centre - frac * newRange);
+  _previewView.xMax = Math.min(_previewData.tt_max, _previewView.xMin + newRange);
+  autoScaleY();
+  drawPreview();
+}
+
+function previewResetZoom() {
+  if (!_previewData) return;
+  _previewView = {
+    xMin: _previewData.tt_min, xMax: _previewData.tt_max,
+    yMin: 0,                   yMax: _previewData.y_max * 1.15,
+  };
+  drawPreview();
+}
+
+function previewPanStart(e) {
+  if (!_previewView) return;
+  _previewPan = {x: e.clientX, xMin: _previewView.xMin, xMax: _previewView.xMax};
+}
+function previewPanMove(e) {
+  if (!_previewPan || !_previewData) return;
+  const canvas = document.getElementById('xrd-preview-canvas');
+  const rect   = canvas.getBoundingClientRect();
+  const pw     = rect.width - 48 - 12;
+  const range  = _previewView.xMax - _previewView.xMin;
+  const dx     = (e.clientX - _previewPan.x) / pw * range;
+  let newMin   = _previewPan.xMin - dx;
+  let newMax   = _previewPan.xMax - dx;
+  if (newMin < _previewData.tt_min) { newMin = _previewData.tt_min; newMax = newMin + range; }
+  if (newMax > _previewData.tt_max) { newMax = _previewData.tt_max; newMin = newMax - range; }
+  _previewView.xMin = newMin;
+  _previewView.xMax = newMax;
+  autoScaleY();
+  drawPreview();
+}
+function previewPanEnd() { _previewPan = null; }
+
+// Redraw on window resize
+window.addEventListener('resize', () => { if (_previewData) drawPreview(); });
+
+// ── XRD Module ────────────────────────────────────────────────────────────
+let xrdFile       = null;
+let xrdCandidates = [];   // full result list from last search
+let xrdFiltered   = [];   // after client-side filter
+let xrdPhases     = [];   // phases queued for refinement
+let xrdSearchOffset = 0;  // for pagination
+
+// Drag-and-drop
+function onDragOver2(e)  { e.preventDefault(); document.getElementById('xrd-dropzone').classList.add('dragover'); }
+function onDragLeave2()  { document.getElementById('xrd-dropzone').classList.remove('dragover'); }
+function onDrop2(e) {
+  e.preventDefault();
+  document.getElementById('xrd-dropzone').classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) setXrdFile(file);
+}
+function onXrdFileSelect(e) { if (e.target.files[0]) setXrdFile(e.target.files[0]); }
+function setXrdFile(file) {
+  xrdFile = file;
+  const dz = document.getElementById('xrd-dropzone');
+  dz.classList.add('has-file');
+  // Shrink dropzone after file selected
+  const dz2 = document.getElementById('xrd-dropzone');
+  dz2.style.padding = '10px 16px';
+  dz2.style.minHeight = 'unset';
+  document.getElementById('xrd-dropzone-content').innerHTML =
+    `<div style="display:flex;align-items:center;gap:10px;justify-content:center;">
+       <span style="font-size:18px;">✅</span>
+       <div><div class="file-name" style="font-size:13px;">${file.name}</div>
+       <div class="dropzone-sub">${(file.size/1024).toFixed(1)} KB · click to change</div></div>
+     </div>`;
+  loadXrdPreview(file);
+}
+
+function updateWavelength() {
+  const val = document.getElementById('xrd-source').value;
+  if (val !== 'custom') document.getElementById('xrd-wavelength').value = val;
+}
+
+function updateSourceBadge() {
+  const src = document.querySelector('input[name="xrd-source-db"]:checked')?.value || 'both';
+  const badge = document.getElementById('mp-key-badge');
+  if (src === 'mp' || src === 'both') {
+    badge.innerHTML = window.mpKeySet
+      ? '<span class="pill green" style="font-size:10px;padding:2px 7px;">MP key ✓</span>'
+      : '<span class="pill yellow" style="font-size:10px;padding:2px 7px;" title="Add Materials Project API key to config.yaml">MP: no key</span>';
+  } else {
+    badge.innerHTML = '';
+  }
+}
+
+// Set initial badge state
+document.addEventListener('DOMContentLoaded', () => {
+  updateSourceBadge();
+
+  // Check GSAS-II availability and show/hide button
+  fetch('/api/xrd/gsas2_status')
+    .then(r => r.json())
+    .then(data => {
+      if (data.available) {
+        const btn = document.getElementById('btn-xrd-gsas2');
+        if (btn) btn.style.display = '';
+        // Show instrument parameter file upload (GSAS-II only)
+        const instGrp = document.getElementById('instprm-group');
+        if (instGrp) instGrp.style.display = '';
+      }
+    })
+    .catch(() => {});  // silently ignore if endpoint not available
+});
+
+// ── COD Search ─────────────────────────────────────────────────────────────
+async function searchPhases(allowExtra = false) {
+  const elements = document.getElementById('xrd-elements').value.trim().split(/\s+/).filter(Boolean);
+  const name     = document.getElementById('xrd-phase-name').value.trim();
+  const formula  = document.getElementById('xrd-formula').value.trim();
+  const sort_by  = document.getElementById('xrd-sort').value;
+  const wl       = parseFloat(document.getElementById('xrd-wavelength').value);
+
+  if (!elements.length && !name && !formula) {
+    setXrdStatus('⚠ Enter elements, a keyword, or a formula first.', 'warn');
+    return;
+  }
+
+  setXrdStatus('🔍 Querying Crystallography Open Database...', 'info');
+  document.getElementById('xrd-candidates-wrap').style.display = 'none';
+  xrdSearchOffset = 0;
+
+  const source = document.querySelector('input[name="xrd-source-db"]:checked')?.value || 'both';
+
+  try {
+    const resp = await fetch('/api/xrd/search', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        elements, name, formula,
+        sort_by, strict: !allowExtra,
+        limit: 100, wavelength: wl, source
+      })
+    });
+    const data = await resp.json();
+    if (data.error) { setXrdStatus('✗ ' + data.error, 'error'); return; }
+
+    xrdCandidates = data.results || [];
+    xrdFiltered   = [...xrdCandidates];
+
+    const n   = xrdCandidates.length;
+    const nmp = data.mp_count  || 0;
+    const nco = data.cod_count || 0;
+
+    let statusMsg = `Found ${n} candidate${n!==1?'s':''}.`;
+    if (n === 100) statusMsg += ' (showing first 100 — try a more specific search)';
+    setXrdStatus(statusMsg, 'ok');
+
+    document.getElementById('xrd-count-badge').textContent = n;
+    // Source breakdown badges
+    const mpBadge  = document.getElementById('xrd-mp-badge');
+    const codBadge = document.getElementById('xrd-cod-badge');
+    if (nmp > 0) { mpBadge.textContent  = `${nmp} MP`;  mpBadge.style.display  = 'inline-flex'; }
+    else           mpBadge.style.display  = 'none';
+    if (nco > 0) { codBadge.textContent = `${nco} COD`; codBadge.style.display = 'inline-flex'; }
+    else           codBadge.style.display = 'none';
+
+    document.getElementById('xrd-filter').value = '';
+    renderCandidates();
+
+  } catch(e) {
+    setXrdStatus('✗ Network error: ' + e.message, 'error');
+  }
+}
+
+async function loadMoreCOD() {
+  xrdSearchOffset += 100;
+  const elements = document.getElementById('xrd-elements').value.trim().split(/\s+/).filter(Boolean);
+  const name     = document.getElementById('xrd-phase-name').value.trim();
+  const formula  = document.getElementById('xrd-formula').value.trim();
+  const sort_by  = document.getElementById('xrd-sort').value;
+  const wl       = parseFloat(document.getElementById('xrd-wavelength').value);
+
+  setXrdStatus('🔍 Loading more results...', 'info');
+  try {
+    const resp = await fetch('/api/xrd/search', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({elements, name, formula, sort_by, strict:false,
+                            limit:100, wavelength:wl, offset:xrdSearchOffset})
+    });
+    const data = await resp.json();
+    if (data.error) { setXrdStatus('✗ '+data.error,'error'); return; }
+    const more = data.results||[];
+    xrdCandidates = [...xrdCandidates, ...more];
+    xrdFiltered   = [...xrdCandidates];
+    document.getElementById('xrd-count-badge').textContent = xrdCandidates.length;
+    document.getElementById('xrd-filter').value = '';
+    setXrdStatus(`Showing ${xrdCandidates.length} results total.`,'ok');
+    renderCandidates();
+  } catch(e) { setXrdStatus('✗ '+e.message,'error'); }
+}
+
+function filterCandidates() {
+  const q = document.getElementById('xrd-filter').value.toLowerCase();
+  xrdFiltered = q
+    ? xrdCandidates.filter(c =>
+        (c.formula||'').toLowerCase().includes(q) ||
+        (c.name||'').toLowerCase().includes(q) ||
+        (c.spacegroup||'').toLowerCase().includes(q) ||
+        (c.cod_id||'').includes(q) ||
+        (c.mineral||'').toLowerCase().includes(q))
+    : [...xrdCandidates];
+  renderCandidates();
+}
+
+function renderCandidates() {
+  const wrap = document.getElementById('xrd-candidates-wrap');
+  const list = document.getElementById('xrd-candidate-list');
+  wrap.style.display = 'block';
+  list.innerHTML = '';
+
+  const alreadyAdded = new Set(xrdPhases.map(p => p.cod_id));
+  const BG='#161b22'; GRID='#2d333b'; TEXT='#e6edf3'; MUT='#7d8590'; ACC='#58a6ff';
+
+  xrdFiltered.forEach((c, i) => {
+    const added = alreadyAdded.has(c.cod_id);
+    const row = document.createElement('div');
+    row.style.cssText = `display:grid;grid-template-columns:60px 1fr 90px 55px 70px 70px 70px 60px;
+      gap:0;padding:7px 10px;border-bottom:1px solid ${GRID};cursor:pointer;
+      background:${added ? 'rgba(57,211,83,0.06)' : BG};
+      transition:background 0.1s;font-size:12px;`;
+    row.onmouseover = () => { if(!added) row.style.background='rgba(88,166,255,0.07)'; };
+    row.onmouseout  = () => { row.style.background = added?'rgba(57,211,83,0.06)':BG; };
+
+    const fmt   = (v,d=3) => v!=null ? parseFloat(v).toFixed(d) : '—';
+    const nameStr = (c.mineral||c.name||c.formula||'').slice(0,35);
+    const srcBadge = c.source === 'mp'
+      ? `<span style="font-size:9px;background:rgba(57,211,83,.15);color:#39d353;
+              border:1px solid #39d353;border-radius:3px;padding:0 4px;margin-left:4px;">MP</span>`
+      : `<span style="font-size:9px;background:rgba(88,166,255,.15);color:#58a6ff;
+              border:1px solid #58a6ff;border-radius:3px;padding:0 4px;margin-left:4px;">COD</span>`;
+    const fmtStr  = c.formula ? `<span style="color:${ACC};font-family:var(--mono)">${c.formula}</span>${srcBadge}` : '';
+    const stabStr = c.stability ? `<span style="color:${MUT};font-size:9px;">${c.stability}</span>` : '';
+
+    row.innerHTML = `
+      <span style="color:${MUT};font-family:var(--mono);font-size:11px;">${c.cod_id||c.mp_id||''}</span>
+      <span style="display:flex;flex-direction:column;gap:1px;">${fmtStr}
+        <span style="color:${MUT};font-size:10px;">${nameStr}</span>
+        ${stabStr}</span>
+      <span style="color:${MUT};font-size:11px;">${(c.spacegroup||'').slice(0,12)}</span>
+      <span style="font-family:var(--mono);font-size:11px;">${fmt(c.a)}</span>
+      <span style="font-family:var(--mono);font-size:11px;">${fmt(c.b)}</span>
+      <span style="font-family:var(--mono);font-size:11px;">${fmt(c.c)}</span>
+      <span style="color:${MUT};font-size:11px;">${c.year||''}</span>
+      <span>${added
+        ? '<span style="color:#39d353;font-size:11px;">✓ added</span>'
+        : `<button class="btn-sm" style="padding:2px 8px;font-size:10px;"
+             onclick="addPhaseFromRow(${i},event)">+ Add</button>`
+      }</span>`;
+
+    list.appendChild(row);
+  });
+
+  // Show load more if we hit the 100 limit
+  const lmw = document.getElementById('xrd-load-more-wrap');
+  lmw.style.display = xrdCandidates.length >= 100 ? 'block' : 'none';
+}
+
+async function addPhaseFromRow(idx, e) {
+  if (e) e.stopPropagation();
+  const c = xrdFiltered[idx];
+  if (!c || xrdPhases.find(p => p.cod_id === c.cod_id)) return;
+
+  // Fetch full CIF so the server can use pymatgen for structure factors
+  const entryId  = c.mp_id || c.cod_id;
+  const entrySrc = c.source || 'cod';
+  setXrdStatus(`📥 Fetching CIF for ${c.formula} [${entryId}] from ${entrySrc.toUpperCase()}...`, 'info');
+  try {
+    const resp = await fetch('/api/xrd/fetch_cif', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({cod_id: entryId, source: entrySrc, wavelength: parseFloat(document.getElementById('xrd-wavelength').value)||1.54056})
+    });
+    const data = await resp.json();
+    if (data.error) {
+      // Still add the phase — just without pymatgen seeding
+      setXrdStatus(`⚠ CIF fetch failed: ${data.error} — using fallback seeding.`, 'warn');
+      xrdPhases.push({...c});
+      addStickPhase({...c});
+    } else {
+      // Merge any better cell params from parsed CIF
+      xrdPhases.push({...c, ...data, cod_id: c.cod_id, name: c.name||c.formula});
+      setXrdStatus(`✓ Added ${c.formula} (CIF loaded, structure factors available).`, 'ok');
+      addStickPhase({...c, ...data, cod_id: c.cod_id, name: c.name||c.formula});
+    }
+  } catch(_) {
+    xrdPhases.push({...c});
+    setXrdStatus(`⚠ Network error — added ${c.formula} without CIF.`, 'warn');
+  }
+
+  renderCandidates();
+  renderSelectedPhases();
+}
+
+async function uploadCIF(e) {
+  const file = e.target.files[0]; if (!file) return;
+  const text = await file.text();
+  const getVal = (key) => {
+    const m = text.match(new RegExp(key + '\\s+([\\d\\.\\(\\)]+)'));
+    return m ? parseFloat(m[1]) : null;
+  };
+  const sgm = text.match(/_symmetry_Int_Tables_number\s+(\d+)/)
+           || text.match(/_space_group_IT_number\s+(\d+)/);
+  const sg  = sgm ? parseInt(sgm[1]) : 1;
+  // Also extract H-M symbol for display
+  const sgHM = text.match(/_symmetry_space_group_name_H-M\s+['"](.*?)['"]/)
+            || text.match(/_space_group_name_H-M_alt\s+['"](.*?)['"]/);
+  const spacegroup = sgHM ? sgHM[1].trim() : '';
+  const fm  = text.match(/_chemical_formula_sum\s+['"](.*?)['"]/);
+  const formula = fm ? fm[1].trim() : file.name.replace('.cif','');
+
+  const phase = {
+    name:              file.name.replace('.cif',''),
+    formula,
+    a: getVal('_cell_length_a') || 4.0,
+    b: getVal('_cell_length_b'),
+    c: getVal('_cell_length_c'),
+    alpha: getVal('_cell_angle_alpha') || 90.0,
+    beta:  getVal('_cell_angle_beta')  || 90.0,
+    gamma: getVal('_cell_angle_gamma') || 90.0,
+    spacegroup_number: sg,
+    spacegroup,
+    cod_id: 'manual',
+    cif_text: text,
+  };
+  xrdPhases.push(phase);
+  addStickPhase(phase);
+  renderSelectedPhases();
+  setXrdStatus(`✓ Added ${formula} from uploaded CIF.`, 'ok');
+}
+
+function removePhase(idx) {
+  const removed = xrdPhases[idx];
+  if (removed) removeStickPhase(removed.mp_id || removed.cod_id);
+  xrdPhases.splice(idx, 1);
+  renderSelectedPhases();
+  renderCandidates();
+}
+
+function renderSelectedPhases() {
+  const wrap = document.getElementById('xrd-selected-wrap');
+  const cont = document.getElementById('xrd-selected-phases');
+  wrap.style.display = xrdPhases.length ? 'block' : 'none';
+  cont.innerHTML = '';
+  const COLORS = ['#f78166','#56d364','#e3b341','#bc8cff','#79c0ff','#ffa657'];
+  xrdPhases.forEach((ph, i) => {
+    const c = COLORS[i % COLORS.length];
+    const div = document.createElement('div');
+    div.style.cssText = `display:flex;align-items:center;gap:10px;padding:8px 14px;
+      background:var(--surface2);border:1px solid ${c};border-radius:6px;`;
+    const zVal = ph.Z || '';
+    div.innerHTML = `
+      <span style="width:10px;height:10px;border-radius:50%;background:${c};flex-shrink:0;"></span>
+      <span style="font-family:var(--mono);font-size:13px;font-weight:700;">${ph.formula||ph.name}</span>
+      <span style="font-size:11px;color:var(--muted);">${ph.spacegroup||''}</span>
+      <span style="font-size:11px;color:var(--muted);font-family:var(--mono);">
+        a=${parseFloat(ph.a||0).toFixed(3)} c=${parseFloat(ph.c||0).toFixed(3)} Å
+      </span>
+      ${ph.cif_text ? '<span class="pill green" style="font-size:10px;padding:2px 8px;">CIF ✓</span>' : ''}
+      <label style="font-size:10px;color:var(--muted);display:flex;align-items:center;gap:4px;" title="Formula units per unit cell (Z) — needed for accurate weight fractions via Hill & Howard method">
+        Z=<input type="number" min="1" max="200" value="${zVal}" placeholder="?" style="width:40px;font-size:11px;padding:1px 4px;background:var(--surface);border:1px solid var(--border);color:var(--fg);border-radius:3px;"
+          onchange="xrdPhases[${i}].Z=parseInt(this.value)||null">
+      </label>
+      <span style="margin-left:auto;font-size:11px;color:var(--muted);">COD ${ph.cod_id}</span>
+      <button class="btn-sm" style="padding:3px 8px;font-size:11px;" onclick="removePhase(${i})">✕</button>`;
+    cont.appendChild(div);
+  });
+}
+
+// ── Run Refinement ──────────────────────────────────────────────────────────
+async function runXRD(method) {
+  method = method || 'lebail';
+  const errEl = document.getElementById('xrd-error-box');
+  errEl.classList.remove('visible');
+
+  if (!xrdFile)        { showXrdError('Upload an XRD data file first.'); return; }
+  if (!xrdPhases.length){ showXrdError('Add at least one phase to refine.'); return; }
+
+  document.getElementById('btn-xrd').disabled = true;
+  document.getElementById('btn-xrd-rietveld').disabled = true;
+  const gsas2Btn = document.getElementById('btn-xrd-gsas2');
+  if (gsas2Btn) gsas2Btn.disabled = true;
+  document.getElementById('xrd-progress-wrap').classList.add('visible');
+
+  const methodLabel = {rietveld:'Rietveld', gsas2:'GSAS-II'}[method] || 'Le Bail';
+  const steps = method === 'gsas2' ? [
+    'Parsing data file...',
+    'Validating CIF structures...',
+    'GSAS-II: building project...',
+    'GSAS-II: refining background + scale...',
+    'GSAS-II: refining profile parameters...',
+    'GSAS-II: refining cell + atoms...',
+    'Extracting results and generating plots...',
+  ] : method === 'rietveld' ? [
+    'Parsing data file...',
+    'Validating phase structures...',
+    'Computing structure factors from CIF...',
+    'Running Rietveld refinement (cell + profile + B_iso)...',
+    'Optimising per-phase scale factors...',
+    'Computing Rwp, Rp, χ², crystallite sizes...',
+    'Generating plots...',
+  ] : [
+    'Parsing data file...',
+    'Validating phase structures...',
+    'Computing structure factors with pymatgen...',
+    'Running Le Bail intensity partitioning...',
+    'Refining cell parameters and peak shape...',
+    'Computing Rwp, Rp, χ², crystallite sizes...',
+    'Generating plots...',
+  ];
+  let si = 0;
+  document.getElementById('xrd-progress-text').textContent = `${methodLabel}: ${steps[0]}`;
+  const timer = setInterval(() => {
+    si = (si+1) % steps.length;
+    document.getElementById('xrd-progress-text').textContent = `${methodLabel}: ${steps[si]}`;
+  }, 3000);
+
+  try {
+    const fd = new FormData();
+    fd.append('file',        xrdFile);
+    fd.append('wavelength',  document.getElementById('xrd-wavelength').value);
+    fd.append('wavelength_label',
+      document.getElementById('xrd-source').options[
+        document.getElementById('xrd-source').selectedIndex].text);
+    fd.append('sample_id',   document.getElementById('xrd-sample-id').value || xrdFile.name);
+    fd.append('tt_min',      document.getElementById('xrd-tt-min').value);
+    fd.append('tt_max',      document.getElementById('xrd-tt-max').value);
+    fd.append('n_bg_coeffs', document.getElementById('xrd-bg-coeffs').value || 'auto');
+    fd.append('output_dir',  document.getElementById('xrd-output-dir').value);
+    fd.append('method',      method);
+    // Include instrument parameter file if provided (GSAS-II only)
+    const instprmInput = document.getElementById('xrd-instprm-file');
+    if (instprmInput && instprmInput.files.length > 0) {
+      fd.append('instprm_file', instprmInput.files[0]);
+    }
+    // Send phases WITHOUT cif_text (server pulls from cache)
+    const phases_stripped = xrdPhases.map(p => {
+      const {cif_text, ...rest} = p; return rest;
+    });
+    fd.append('phases', JSON.stringify(phases_stripped));
+
+    // 5-minute timeout — refinements can be slow, especially without MKL numpy
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 300000);
+
+    const resp = await fetch('/api/process_xrd', {method:'POST', body:fd, signal: controller.signal});
+    clearTimeout(timeout);
+    const data = await resp.json();
+    clearInterval(timer);
+    document.getElementById('xrd-progress-wrap').classList.remove('visible');
+
+    if (data.error) {
+      showXrdError(data.error + (data.trace ? '\n\n' + data.trace : ''));
+      document.getElementById('btn-xrd').disabled = false;
+      document.getElementById('btn-xrd-rietveld').disabled = false;
+      if (document.getElementById('btn-xrd-gsas2')) document.getElementById('btn-xrd-gsas2').disabled = false;
+      return;
+    }
+    showXRDResults(data);
+  } catch(e) {
+    clearInterval(timer);
+    document.getElementById('xrd-progress-wrap').classList.remove('visible');
+    if (e.name === 'AbortError') {
+      showXrdError('Refinement timed out after 5 minutes.\n\n'
+        + 'Try reducing the 2θ range, using fewer phases, or using Le Bail instead of Rietveld.\n'
+        + 'If running via "python app.py", use run.bat instead — it sets up an optimised environment.');
+    } else if (e.message === 'Failed to fetch') {
+      showXrdError('Connection to server lost during refinement.\n\n'
+        + 'The server may have crashed or restarted. Check the terminal/command prompt for error details.\n\n'
+        + 'If you ran "python app.py" directly, try using run.bat instead — it ensures all dependencies '
+        + 'are correctly installed in an isolated environment.');
+    } else {
+      showXrdError('Unexpected error: ' + e.message);
+    }
+  }
+  document.getElementById('btn-xrd').disabled = false;
+  document.getElementById('btn-xrd-rietveld').disabled = false;
+  if (document.getElementById('btn-xrd-gsas2')) document.getElementById('btn-xrd-gsas2').disabled = false;
+}
+
+function showXRDResults(data) {
+  const panel = document.getElementById('xrd-results-panel');
+  panel.classList.add('visible');
+
+  const st = data.statistics || {};
+  const gof = parseFloat(st.GoF || 0);
+  const gofClass = gof < 3 ? 'green' : gof < 6 ? 'blue' : 'yellow';
+  document.getElementById('xrd-stats-pills').innerHTML =
+    `<span class="pill ${gofClass}">GoF = ${st.GoF}</span>
+     <span class="pill blue">Rwp = ${st.Rwp}%</span>
+     <span class="pill blue">Rp = ${st.Rp}%</span>`;
+
+  document.getElementById('xrd-pymatgen-pill').innerHTML = data.pymatgen_used
+    ? '<span class="pill green" title="Structure factors computed with pymatgen XRDCalculator">pymatgen ✓</span>'
+    : '<span class="pill yellow" title="Pymatgen unavailable — used observed peak heights for seeding">fallback seeding</span>';
+
+  // Stats grid
+  const sg = document.getElementById('xrd-stats-grid');
+  sg.innerHTML = '';
+  [{l:'Rwp',v:st.Rwp+'%'},{l:'Rp',v:st.Rp+'%'},{l:'χ²',v:st.chi2},
+   {l:'GoF',v:st.GoF},{l:'Zero shift',v:data.zero_shift+'°'}].forEach(s => {
+    sg.innerHTML += `<div class="stat-box">
+      <div class="stat-label">${s.l}</div>
+      <div class="stat-val" style="font-size:18px;">${s.v}</div></div>`;
+  });
+
+  // Phase results
+  const pr = document.getElementById('xrd-phase-results');
+  pr.innerHTML = '';
+  const COLORS = ['#f78166','#56d364','#e3b341','#bc8cff','#79c0ff','#ffa657'];
+  (data.phase_results || []).forEach((ph, i) => {
+    const c = COLORS[i % COLORS.length];
+    pr.innerHTML += `
+      <div style="background:var(--surface2);border:1px solid ${c};
+                  border-radius:8px;padding:14px 16px;margin-bottom:8px;">
+        <div style="font-weight:800;font-size:14px;color:${c};margin-bottom:10px;">
+          ${ph.name}
+          <span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:8px;">
+            ${ph.spacegroup||''} · COD ${ph.cod_id||'manual'}
+          </span>
+          ${ph.seeded_by==='pymatgen'
+            ? '<span class="pill green" style="font-size:10px;padding:2px 8px;margin-left:8px;">SF ✓</span>'
+            : ''}
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;
+                    font-family:var(--mono);font-size:12px;">
+          <div><span style="color:var(--muted);">a = </span>${ph.a} Å</div>
+          <div><span style="color:var(--muted);">b = </span>${ph.b} Å</div>
+          <div><span style="color:var(--muted);">c = </span>${ph.c} Å</div>
+          <div><span style="color:var(--muted);">α = </span>${ph.alpha}°</div>
+          <div><span style="color:var(--muted);">β = </span>${ph.beta}°</div>
+          <div><span style="color:var(--muted);">γ = </span>${ph.gamma}°</div>
+          <div><span style="color:var(--muted);">Size = </span>${ph.crystallite_size_nm ?? '—'} nm</div>
+          <div><span style="color:var(--muted);">FWHM = </span>${ph.fwhm_deg}°</div>
+          <div><span style="color:var(--muted);">η = </span>${ph.eta_at_strongest ?? ph.eta ?? '—'}</div>
+          ${ph.Y != null ? `<div><span style="color:var(--muted);">Y = </span>${ph.Y} (size)</div>` : ''}
+          ${ph.X != null ? `<div><span style="color:var(--muted);">X = </span>${ph.X} (strain)</div>` : ''}
+          <div><span style="color:var(--muted);">Wt% = </span>${ph['weight_fraction_%']}${ph['weight_fraction_err_%'] != null ? ' ± ' + ph['weight_fraction_err_%'] : ''}%</div>
+        </div>
+      </div>`;
+  });
+
+  // Plot
+  const plotEl = document.getElementById('xrd-result-plot');
+  if (data.plot_b64) {
+    plotEl.src = 'data:image/png;base64,' + data.plot_b64;
+    plotEl.style.display = 'block';
+  }
+
+  // Downloads
+  document.getElementById('xrd-download-row').innerHTML = `
+    <button class="btn-sm green" onclick="openFolder('${escPath(data.output_dir)}')">📁 Open Folder</button>
+    <button class="btn-sm" onclick="downloadFile('${escPath(data.summary_path)}')">⬇ Summary Excel</button>`;
+
+  panel.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+// ── Reset ───────────────────────────────────────────────────────────────────
+function resetXRD() {
+  xrdFile = null; xrdCandidates = []; xrdFiltered = []; xrdPhases = [];
+
+  // Reset preview plot
+  _previewData = null; _stickPhases = [];
+  document.getElementById('xrd-preview-wrap').style.display = 'none';
+  document.getElementById('xrd-preview-overlay').style.display = 'flex';
+  document.getElementById('xrd-preview-overlay').textContent   = 'Loading preview…';
+  const canvas = document.getElementById('xrd-preview-canvas');
+  if (canvas) { const ctx = canvas.getContext('2d'); ctx.clearRect(0,0,canvas.width,canvas.height); }
+
+  // Reset dropzone
+  const dz = document.getElementById('xrd-dropzone');
+  dz.classList.remove('has-file', 'dragover');
+  dz.style.padding = '20px';
+  dz.style.minHeight = '90px';
+  document.getElementById('xrd-dropzone-content').innerHTML = `
+    <div style="display:flex;flex-direction:column;align-items:center;gap:8px;justify-content:center;padding:10px 0;">
+      <span style="font-size:40px;">📊</span>
+      <div class="dropzone-text" style="font-size:14px;font-weight:600;">Drag &amp; drop XRD data file</div>
+      <div class="dropzone-sub">.dat · .xy · .xye · .csv · .txt · or click to browse</div>
+    </div>`;
+  document.getElementById('xrdFileInput').value = '';
+
+  // Reset search UI
+  ['xrd-elements','xrd-phase-name','xrd-formula','xrd-filter',
+   'xrd-sample-id','xrd-output-dir'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  document.getElementById('xrd-candidates-wrap').style.display = 'none';
+  document.getElementById('xrd-selected-wrap').style.display = 'none';
+  document.getElementById('xrd-candidate-list').innerHTML = '';
+  document.getElementById('xrd-selected-phases').innerHTML = '';
+
+  // Hide results and errors
+  document.getElementById('xrd-results-panel').classList.remove('visible');
+  document.getElementById('xrd-error-box').classList.remove('visible');
+  document.getElementById('xrd-progress-wrap').classList.remove('visible');
+
+  setXrdStatus('Reset complete.', 'ok');
+  setTimeout(() => setXrdStatus('', 'ok'), 2000);
+}
+
+// ── UI helpers ──────────────────────────────────────────────────────────────
+function setXrdStatus(msg, type='info') {
+  const el = document.getElementById('xrd-search-status');
+  const colors = {info:'var(--muted)', ok:'var(--accent2)', warn:'var(--warn)', error:'var(--danger)'};
+  el.textContent = msg;
+  el.style.color = colors[type] || 'var(--muted)';
+}
+
+function showXrdError(msg) {
+  const el = document.getElementById('xrd-error-box');
+  el.textContent = msg;
+  el.classList.add('visible');
+  el.scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+
+</script>
+</body>
+</html>
