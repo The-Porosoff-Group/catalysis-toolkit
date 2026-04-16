@@ -584,13 +584,15 @@
               <input type="text" id="xrd-output-dir" placeholder="Leave blank → results/ next to app">
             </div>
             <div class="form-group">
-              <label title="More coefficients = better fit for broad amorphous backgrounds (e.g. SiO2 support). Use 6 for clean samples, 12+ for supported catalysts.">
+              <label title="Auto mode analyzes your data to pick the right number of background terms. Override manually for samples with known amorphous backgrounds.">
                 Background terms
-                <span style="color:var(--muted);font-weight:400;"> — increase for amorphous supports</span>
+                <span style="color:var(--muted);font-weight:400;"> — auto-selected by default</span>
               </label>
               <select id="xrd-bg-coeffs">
-                <option value="6">6 — clean/unsupported</option>
-                <option value="10" selected>10 — default</option>
+                <option value="auto" selected>Auto — data-driven selection</option>
+                <option value="6">6 — clean baseline</option>
+                <option value="8">8 — standard crystalline (recommended)</option>
+                <option value="10">10 — moderate amorphous background</option>
                 <option value="14">14 — supported catalyst (SiO₂, Al₂O₃)</option>
                 <option value="20">20 — heavy amorphous background</option>
               </select>
@@ -1576,8 +1578,13 @@ async function uploadCIF(e) {
     const m = text.match(new RegExp(key + '\\s+([\\d\\.\\(\\)]+)'));
     return m ? parseFloat(m[1]) : null;
   };
-  const sgm = text.match(/_symmetry_Int_Tables_number\s+(\d+)/);
+  const sgm = text.match(/_symmetry_Int_Tables_number\s+(\d+)/)
+           || text.match(/_space_group_IT_number\s+(\d+)/);
   const sg  = sgm ? parseInt(sgm[1]) : 1;
+  // Also extract H-M symbol for display
+  const sgHM = text.match(/_symmetry_space_group_name_H-M\s+['"](.*?)['"]/)
+            || text.match(/_space_group_name_H-M_alt\s+['"](.*?)['"]/);
+  const spacegroup = sgHM ? sgHM[1].trim() : '';
   const fm  = text.match(/_chemical_formula_sum\s+['"](.*?)['"]/);
   const formula = fm ? fm[1].trim() : file.name.replace('.cif','');
 
@@ -1591,6 +1598,7 @@ async function uploadCIF(e) {
     beta:  getVal('_cell_angle_beta')  || 90.0,
     gamma: getVal('_cell_angle_gamma') || 90.0,
     spacegroup_number: sg,
+    spacegroup,
     cod_id: 'manual',
     cif_text: text,
   };
@@ -1696,7 +1704,7 @@ async function runXRD(method) {
     fd.append('sample_id',   document.getElementById('xrd-sample-id').value || xrdFile.name);
     fd.append('tt_min',      document.getElementById('xrd-tt-min').value);
     fd.append('tt_max',      document.getElementById('xrd-tt-max').value);
-    fd.append('n_bg_coeffs', document.getElementById('xrd-bg-coeffs').value || '10');
+    fd.append('n_bg_coeffs', document.getElementById('xrd-bg-coeffs').value || 'auto');
     fd.append('output_dir',  document.getElementById('xrd-output-dir').value);
     fd.append('method',      method);
     // Include instrument parameter file if provided (GSAS-II only)
@@ -1806,7 +1814,7 @@ function showXRDResults(data) {
           <div><span style="color:var(--muted);">η = </span>${ph.eta_at_strongest ?? ph.eta ?? '—'}</div>
           ${ph.Y != null ? `<div><span style="color:var(--muted);">Y = </span>${ph.Y} (size)</div>` : ''}
           ${ph.X != null ? `<div><span style="color:var(--muted);">X = </span>${ph.X} (strain)</div>` : ''}
-          <div><span style="color:var(--muted);">Wt% ≈ </span>${ph['weight_fraction_%']}%</div>
+          <div><span style="color:var(--muted);">Wt% = </span>${ph['weight_fraction_%']}${ph['weight_fraction_err_%'] != null ? ' ± ' + ph['weight_fraction_err_%'] : ''}%</div>
         </div>
       </div>`;
   });
