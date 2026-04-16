@@ -299,38 +299,98 @@ def _structure_dict_to_cif(struct_dict, mp_id, formula, sym):
     """
     Convert a pymatgen structure JSON dict to CIF text.
     Tries pymatgen first; falls back to hand-building minimal CIF.
+
+    CRITICAL: The CIF must be self-consistent — the atom sites and the
+    declared space group must match.  If CifWriter detects a different
+    space group than MP declares, we must NOT patch the SG tags because
+    that would create a mismatch (asymmetric unit reduced for SG_detected
+    but declared as SG_MP → GSAS-II expands with wrong symmetry).
+
+    Similarly, if CifWriter falls back to P1 (full cell), we must NOT
+    patch in the real SG because that would cause double-expansion
+    (full-cell sites + non-P1 SG → GSAS-II expands all atoms again).
     """
     # Try pymatgen CifWriter with symmetry detection so the CIF
     # contains the correct space group (not P1).
     try:
         from pymatgen.core import Structure
-        from pymatgen.io.cif import CifWriter
+        from pymatgen.io.cif import CifWriter, CifParser
         struct = Structure.from_dict(struct_dict)
-        # Use symprec to detect symmetry; fall back to plain write
         sg_num = sym.get("number", 1)
+        full_cell_n = len(struct)  # total atoms in the structure
+
+        # Try multiple symprec values — tight first (preserves distinct
+        # Wyckoff sites in compact cells like W2C), then looser.
+        for symprec in (0.01, 0.05, 0.1, 0.2):
+            try:
+                writer = CifWriter(struct, symprec=symprec)
+                import tempfile, os
+                with tempfile.NamedTemporaryFile(
+                        suffix=".cif", delete=False, mode="w") as f:
+                    tmp = f.name
+                writer.write_file(tmp)
+                with open(tmp) as f:
+                    cif_text = f.read()
+                os.unlink(tmp)
+
+                # Parse what CifWriter produced to check consistency
+                from .crystallography import parse_cif as _pc
+                written_parsed = _pc(cif_text)
+                written_sg = written_parsed.get('spacegroup_number', 1)
+                written_sites = written_parsed.get('sites') or []
+
+                # Check if CifWriter actually reduced the structure
+                if written_sg > 1 and len(written_sites) < full_cell_n:
+                    # CifWriter succeeded in finding symmetry and reducing.
+                    # Check if the detected SG matches what MP declares.
+                    if written_sg == sg_num:
+                        # Perfect match — use as-is
+                        return cif_text
+                    else:
+                        # Different SG detected.  DO NOT keep this CIF — the
+                        # sites are reduced for SG_detected, but downstream
+                        # code (_build_conventional_cif) will declare them as
+                        # SG_declared (from the phase dict), causing GSAS-II
+                        # to expand with the WRONG symmetry operations.
+                        # Instead, let it fall through to the P1 fallback,
+                        # which _build_conventional_cif handles safely.
+                        print(f"  MP CIF ({mp_id}): CifWriter detected "
+                              f"SG {written_sg} (MP declares {sg_num}) "
+                              f"at symprec={symprec} — DISCARDING to avoid "
+                              f"SG mismatch", flush=True)
+                        continue
+                elif written_sg <= 1 or len(written_sites) >= full_cell_n:
+                    # CifWriter fell back to P1 (no symmetry detected) or
+                    # didn't reduce the sites.  DO NOT patch in the real SG
+                    # — that would cause GSAS-II to double-expand.
+                    continue
+
+            except Exception:
+                continue
+
+        # No symprec produced a matching-SG reduction — try plain CifWriter (no symprec).
+        # This writes P1 with all atoms, which is the safest fallback:
+        # GSAS-II's _build_conventional_cif will detect the P1 + full cell
+        # and handle it appropriately.
         try:
-            writer = CifWriter(struct, symprec=0.1)
-        except Exception:
             writer = CifWriter(struct)
-        import tempfile, os
-        with tempfile.NamedTemporaryFile(suffix=".cif", delete=False, mode="w") as f:
-            tmp = f.name
-        writer.write_file(tmp)
-        with open(tmp) as f:
-            cif_text = f.read()
-        os.unlink(tmp)
-        # If pymatgen still wrote P1 but MP knows the real SG, patch the tags
-        if sg_num > 1 and ("_symmetry_Int_Tables_number 1" in cif_text
-                           or "'P 1'" in cif_text):
-            sg_sym = sym.get("symbol", "P 1")
-            import re
-            cif_text = re.sub(
-                r"_symmetry_Int_Tables_number\s+\d+",
-                f"_symmetry_Int_Tables_number {sg_num}", cif_text)
-            cif_text = re.sub(
-                r"_symmetry_space_group_name_H-M\s+'[^']*'",
-                f"_symmetry_space_group_name_H-M '{sg_sym}'", cif_text)
-        return cif_text
+            import tempfile, os
+            with tempfile.NamedTemporaryFile(
+                    suffix=".cif", delete=False, mode="w") as f:
+                tmp = f.name
+            writer.write_file(tmp)
+            with open(tmp) as f:
+                cif_text = f.read()
+            os.unlink(tmp)
+            # DO NOT patch P1 to the declared SG — the sites are the full cell
+            print(f"  MP CIF ({mp_id}): CifWriter wrote P1 (full cell, "
+                  f"{full_cell_n} atoms). NOT patching to SG {sg_num} — "
+                  f"_build_conventional_cif will handle reduction.",
+                  flush=True)
+            return cif_text
+        except Exception:
+            pass
+
     except Exception:
         pass
 
