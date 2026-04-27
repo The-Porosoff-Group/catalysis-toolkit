@@ -11,86 +11,6 @@ A local web app for processing heterogeneous catalysis data. Drag-and-drop inter
 
 ---
 
-## Quick Start (macOS)
-
-### 1. Install Miniforge (one time)
-
-Miniforge gives you conda and is required for GSAS-II support. It also includes the `conda-forge` channel by default, which provides pre-compiled binaries for scientific packages with Fortran/C++ backends (like numpy, scipy, and pymatgen) — making installs faster and more reliable on Mac than standard pip.
-
-Download from https://github.com/conda-forge/miniforge and run the installer, or install via Homebrew:
-
-```bash
-brew install miniforge
-```
-
-After installing, initialize conda for your shell:
-
-```bash
-conda init zsh
-```
-
-Then close and reopen your terminal.
-
-### 2. Clone the repo
-
-```bash
-git clone https://github.com/YOUR-USERNAME/catalysis-toolkit.git
-cd catalysis-toolkit
-```
-
-### 3. Create and activate a conda environment
-
-```bash
-conda create -n catalysis python=3.11 -y
-conda activate catalysis
-```
-
-> You'll need to run `conda activate catalysis` each time you open a new terminal session.
-
-### 4. Install dependencies
-
-Install the scientific packages via conda-forge first (handles compiled Fortran/C++ extensions cleanly), then the rest via pip:
-
-```bash
-conda install -c conda-forge numpy scipy matplotlib pandas pymatgen -y
-python -m pip install flask pyyaml requests pycifrw xmltodict openpyxl
-```
-
-> **First run:** pymatgen is ~500 MB — this will take a few minutes.
-
-### 5. (Optional) Enable GSAS-II refinement
-
-```bash
-conda install gsas2pkg -c briantoby -y
-```
-
-The purple **GSAS-II Refinement** button will appear in the XRD panel once it's detected.
-
-> **GSAS-II is optional.** Le Bail and Rietveld work without it.
-
-### 6. (Optional) Configure Materials Project API
-
-Add your free Materials Project API key to `config.yaml`:
-
-```yaml
-materials_project:
-  api_key: "your_32_char_key_here"
-```
-
-Get a free key at https://materialsproject.org → sign in → dashboard → API key.
-
-> **Important:** `config.yaml` is listed in `.gitignore` — your key will never be committed to GitHub.
-
-### 7. Run the app
-
-```bash
-python app.py
-```
-
-Then open your browser at **http://localhost:5000**
-
----
-
 ## Quick Start (Windows)
 
 ### 1. Install Python (one time)
@@ -127,6 +47,8 @@ The purple **GSAS-II Refinement** button will appear in the XRD panel once it's 
 
 > **Spaces in paths:** GSAS-II does not fully support paths with spaces. If your toolkit folder is under e.g. `C:\Users\Marc Porosoff\...`, consider moving it to `C:\catalysis-toolkit` to avoid issues.
 
+> **Note:** If your folder path contains spaces (e.g. `C:\Users\Marc Porosoff\...`), conda may warn about this. It usually still works, but moving the toolkit to `C:\catalysis-toolkit` avoids the issue entirely.
+
 > **GSAS-II is optional.** Le Bail and Rietveld work without it. If conda is not installed, `run.bat` falls back to a standard Python venv automatically.
 
 ### 4. Run it
@@ -141,7 +63,8 @@ materials_project:
 ```
 Get a free key at https://materialsproject.org → sign in → dashboard → API key.
 
-> **Important:** `config.yaml` is listed in `.gitignore` — your key will never be committed to GitHub.
+> **Important:** `config.yaml` is listed in `.gitignore` — your key will never
+> be committed to GitHub.
 
 That's it. The browser opens automatically at `http://localhost:5000`.
 
@@ -252,12 +175,11 @@ catalysis-toolkit/
 | Problem | Fix |
 |---|---|
 | `python not found` | Re-install Python, check "Add to PATH" |
-| `conda: command not found` | Run `conda init zsh`, close and reopen terminal (macOS) |
-| `CondaError: Run 'conda init'` | Open Command Prompt, run `C:\miniforge\condabin\conda init cmd.exe`, restart (Windows) |
 | Browser doesn't open | Manually go to `http://localhost:5000` |
 | Port 5000 in use | Edit `app.py`, change `port=5000` to `port=5001` |
 | File won't upload | Check it's a `.xlsx` (not `.xls` or `.csv`) |
 | FID flows all zero | CH4 TCD bridge unavailable — see GC_SKILL.md |
-| New `.yaml` not showing | Restart the app |
-| GSAS-II button not appearing | Run `conda init cmd.exe` in Command Prompt, restart, re-run `run.bat` (Windows); confirm `gsas2pkg` is installed in active env (macOS) |
-| Conda warns about spaces in path | Move toolkit folder to `C:\catalysis-toolkit` to avoid spaces (Windows only) |
+| New `.yaml` not showing | Restart the app (close and re-run `run.bat`) |
+| GSAS-II button not appearing | Run `conda init cmd.exe` in Command Prompt, restart, re-run `run.bat` |
+| `CondaError: Run 'conda init'` | Open Command Prompt, run `C:\miniforge\condabin\conda init cmd.exe`, restart |
+| Conda warns about spaces in path | Move toolkit folder to `C:\catalysis-toolkit` to avoid spaces |
