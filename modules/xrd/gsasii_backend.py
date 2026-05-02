@@ -29,7 +29,7 @@ SEPARATION RULE (refinement vs. display):
   Catalysis-Toolkit_Architecture_v1.md.
 """
 
-import math, os, sys, tempfile, warnings
+import math, os, re, sys, tempfile, warnings
 import numpy as np
 
 
@@ -173,6 +173,30 @@ def _get_hm_symbol(sg_num):
     return 'P 1'
 
 
+def _hm_symbol_to_number(symbol):
+    """Best-effort H-M symbol to International Tables number."""
+    text = str(symbol or '').strip().strip("'\"")
+    if not text:
+        return 0
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        pass
+
+    def _norm(s):
+        return re.sub(r'[\s_]+', '', str(s)).lower()
+
+    target = _norm(text)
+    for num, hm in _SG_HM.items():
+        if _norm(hm) == target:
+            return int(num)
+    try:
+        from pymatgen.symmetry.groups import SpaceGroup
+        return int(SpaceGroup(text).int_number)
+    except Exception:
+        return 0
+
+
 # ── Instrument profiles ─────────────────────────────────────────────────
 # Named profiles bundle geometry, displacement model, polarization, SH/L,
 # preferred-orientation default, and zero seed for each known instrument.
@@ -283,10 +307,11 @@ def _cif_already_has_asymmetric_unit(cif_text, declared_sg=None):
     detection list the full unit cell with space group P1.
 
     Detection strategy:
-      1. Parse sites from the raw CIF text (what's literally written)
-      2. Expand using pymatgen CifParser(primitive=False) to get full cell
-      3. If raw site count < full cell count AND the CIF declares a SG > 1
-         with symmetry operations, the CIF already has the asymmetric unit.
+      1. Parse sites from the raw CIF text (what is literally written)
+      2. Require matching SG plus symmetry-operation tags
+      3. Treat that atom loop as the asymmetric unit without asking
+         pymatgen to re-expand it; CifParser can exit the interpreter for
+         some otherwise valid CIFs.
 
     Returns (True, raw_sites) if already asymmetric, (False, None) otherwise.
     """
@@ -321,27 +346,12 @@ def _cif_already_has_asymmetric_unit(cif_text, declared_sg=None):
                   f"(SG mismatch)", flush=True)
             return False, None
 
-        # Expand to full cell to compare site counts
-        from pymatgen.io.cif import CifParser
-        try:
-            parser = CifParser.from_str(cif_text, occupancy_tolerance=100.0)
-        except (AttributeError, TypeError):
-            import tempfile as _tf, os as _os
-            _fd, _tmp = _tf.mkstemp(suffix='.cif')
-            with _os.fdopen(_fd, 'w') as _f:
-                _f.write(cif_text)
-            parser = CifParser(_tmp, occupancy_tolerance=100.0)
-            _os.unlink(_tmp)
-        structs = parser.parse_structures(primitive=False)
-        if structs:
-            full_cell_n = len(structs[0])
-            if len(raw_sites) < full_cell_n:
-                print(f"  CIF already contains asymmetric unit: "
-                      f"{len(raw_sites)} sites (full cell = {full_cell_n}, "
-                      f"SG {raw_sg}, has symops)", flush=True)
-                return True, raw_sites
+        print(f"  CIF already contains symmetry operations: "
+              f"{len(raw_sites)} atom site(s), SG {raw_sg}. Treating "
+              f"the atom loop as the asymmetric unit.", flush=True)
+        return True, raw_sites
 
-    except Exception as e:
+    except BaseException as e:
         print(f"  Warning: asymmetric-unit detection failed: {e}", flush=True)
 
     return False, None
@@ -465,7 +475,7 @@ def _cifwriter_asymmetric_unit(cif_text, declared_sg=None,
                       flush=True)
                 continue
 
-    except Exception as e:
+    except BaseException as e:
         print(f"  Warning: CifWriter fallback failed: {e}", flush=True)
 
     if return_full_cif:
@@ -663,7 +673,7 @@ def _reduce_to_asymmetric_unit(cif_text, declared_sg=None):
                 except Exception as exc:
                     print(f"  Clustering fallback failed: {exc}", flush=True)
 
-    except Exception as e:
+    except BaseException as e:
         print(f"  Warning: pymatgen asymmetric-unit reduction failed: {e}",
               flush=True)
 
@@ -839,6 +849,14 @@ def _build_conventional_cif(ph):
     # it the full unit cell — that would cause double-counting and wrong
     # reflections (e.g. ghost peaks at ~25° for A15-W).
     cif_text = ph.get('cif_text', '')
+    if cif_text:
+        already_asym, _asym_sites = _cif_already_has_asymmetric_unit(
+            cif_text, declared_sg=sg)
+        if already_asym:
+            print(f"  _build_conventional_cif [{formula or '?'}]: using "
+                  f"source CIF directly (matching SG/cell/sites).",
+                  flush=True)
+            return cif_text
     sites = _reduce_to_asymmetric_unit(cif_text, declared_sg=sg) if cif_text else []
 
     # ── CifWriter full CIF passthrough ────────────────────────────────
@@ -919,28 +937,17 @@ def _build_conventional_cif(ph):
                                     print(f"  CifWriter rescue succeeded: "
                                           f"SG {_rsg}, {len(_rsites)} sites "
                                           f"(symprec={_symprec})", flush=True)
-                                    # Patch cell params to match phase dict
-                                    import re as _re
-                                    _rescued_cif = _re.sub(
-                                        r'_cell_length_a\s+[\d.]+',
-                                        f'_cell_length_a {a:.5f}',
-                                        _rescued_cif)
-                                    _rescued_cif = _re.sub(
-                                        r'_cell_length_b\s+[\d.]+',
-                                        f'_cell_length_b {b:.5f}',
-                                        _rescued_cif)
-                                    _rescued_cif = _re.sub(
-                                        r'_cell_length_c\s+[\d.]+',
-                                        f'_cell_length_c {c:.5f}',
-                                        _rescued_cif)
+                                    # Keep CifWriter's cell and positions
+                                    # together; patching only the cell axes
+                                    # recreates the mixed-setting CIF bug.
                                     return _rescued_cif
-                            except Exception:
+                            except BaseException:
                                 pass
-                    except Exception:
+                    except BaseException:
                         continue
                 print(f"  CifWriter rescue failed — will use synthetic CIF "
                       f"(may have wrong atom positions)", flush=True)
-        except Exception as _e:
+        except BaseException as _e:
             print(f"  from_spacegroup validation error: {_e}", flush=True)
 
     # ── Safety check: detect if "reduction" actually returned full-cell sites ──
@@ -1010,25 +1017,12 @@ def _build_conventional_cif(ph):
                                               f"SG {rescued_sg}, "
                                               f"{len(rescued_sites)} asym sites "
                                               f"(symprec={symprec})", flush=True)
-                                        # Patch cell parameters to match the
-                                        # phase dict's conventional cell
-                                        # (CifWriter may use slightly different
-                                        # lattice params from DFT relaxation)
-                                        import re as _re
-                                        rescued_cif = _re.sub(
-                                            r'_cell_length_a\s+[\d.]+',
-                                            f'_cell_length_a {a:.5f}',
-                                            rescued_cif)
-                                        rescued_cif = _re.sub(
-                                            r'_cell_length_b\s+[\d.]+',
-                                            f'_cell_length_b {b:.5f}',
-                                            rescued_cif)
-                                        rescued_cif = _re.sub(
-                                            r'_cell_length_c\s+[\d.]+',
-                                            f'_cell_length_c {c:.5f}',
-                                            rescued_cif)
+                                        # Keep CifWriter's cell and positions
+                                        # together. If CifWriter standardized
+                                        # axes, patching only the cell lengths
+                                        # makes an inconsistent refinement CIF.
                                         return rescued_cif
-                                except Exception:
+                                except BaseException:
                                     continue
                         except Exception as e_cw:
                             print(f"  CifWriter rescue failed: {e_cw}",
@@ -1043,7 +1037,7 @@ def _build_conventional_cif(ph):
                               f"not apply symmetry constraints.", flush=True)
                         sg = 1
                         hm = 'P 1'
-            except Exception:
+            except BaseException:
                 pass
 
     # ── Diagnostic: print what GSAS-II will actually receive ──────────
@@ -1737,17 +1731,31 @@ def _write_temp_cif(cif_text, phase_name='phase', work_dir=None, index=0):
     The *index* parameter ensures unique filenames when multiple phases
     share the same name.
     """
+    # GSAS-II's CIF validator opens files through the Windows default text
+    # codec in some installs (cp1252), so UTF-8-only punctuation in comments
+    # can make an otherwise valid CIF unreadable. Keep the file handed to
+    # GSAS-II strictly ASCII; crystallographic tags/values are ASCII anyway.
+    _ascii_map = {
+        '\u2192': '->', '\u2013': '-', '\u2014': '-',
+        '\u2018': "'", '\u2019': "'", '\u201c': '"', '\u201d': '"',
+        '\u03b1': 'alpha', '\u03b2': 'beta', '\u03b3': 'gamma',
+        '\u00b5': 'u', '\u00b0': ' deg', '\u00b2': '^2',
+        '\u00b3': '^3', '\u00c5': 'A',
+    }
+    cif_text = ''.join(_ascii_map.get(ch, ch) for ch in str(cif_text))
+    cif_text = cif_text.encode('ascii', 'replace').decode('ascii')
+
     if work_dir is not None:
         # Sanitise phase_name for use as a filename component
         safe = "".join(c if c.isalnum() or c in ('_', '-') else '_'
                        for c in phase_name)
         path = os.path.join(work_dir, f'gsas_{index}_{safe}.cif')
-        with open(path, 'w', encoding='utf-8', newline='\n') as f:
+        with open(path, 'w', encoding='ascii', newline='\n') as f:
             f.write(cif_text)
         return path
     # Fallback: system temp
     fd, path = tempfile.mkstemp(suffix='.cif', prefix=f'gsas_{index}_{phase_name}_')
-    with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as f:
+    with os.fdopen(fd, 'w', encoding='ascii', newline='\n') as f:
         f.write(cif_text)
     return path
 
@@ -2485,6 +2493,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # This is non-fatal — we log a clear warning and continue, leaving
         # the user to abort if the mismatch matters for their fit.
         _validation_warnings = []
+        _validation_failures = []
         for _pi, (_po, _ph_input) in enumerate(zip(gsas_phases, phases)):
             _expected_sg = int(_ph_input.get('spacegroup_number', 0) or 0)
             _expected_a  = float(_ph_input.get('a', 0) or 0)
@@ -2497,20 +2506,20 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 _imported_sg_str = (_imported_sgdata.get('SpGrp')
                                     or _imported_sgdata.get('SpcGrp')
                                     or '?').strip()
-                _imported_sg_num = int(_imported_sgdata.get('SGuniq', 0) or 0)
-                if not _imported_sg_num:
-                    # Try to infer from the H-M symbol via pymatgen.
-                    try:
-                        from pymatgen.symmetry.groups import SpaceGroup
-                        _imported_sg_num = int(
-                            SpaceGroup(_imported_sg_str).int_number)
-                    except Exception:
-                        pass
+                _imported_sg_num = _hm_symbol_to_number(_imported_sg_str)
                 _imported_atoms = len(_po.data.get('Atoms', []))
                 _imported_cell  = _po.data['General']['Cell']
                 _ia = float(_imported_cell[1])
                 _ib = float(_imported_cell[2])
                 _ic = float(_imported_cell[3])
+                _expected_atoms = None
+                try:
+                    _gsas_cif_text = (gsas_cif_texts[_pi]
+                                      if _pi < len(gsas_cif_texts) else '')
+                    _expected_atoms = len(
+                        parse_cif(_gsas_cif_text).get('sites') or [])
+                except Exception:
+                    _expected_atoms = None
             except Exception as _e:
                 print(f"  ⚠ Validation [{_pi} {_name}]: could not read "
                       f"GSAS-II state: {_e}", flush=True)
@@ -2526,6 +2535,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                         f"symmetry — refinement model is NOT what "
                         f"the search row indicated.")
                 _validation_warnings.append(_msg)
+                _validation_failures.append(_msg)
                 print(f"  ⚠ VALIDATION FAIL: {_msg}", flush=True)
             elif _expected_sg > 1 and _imported_sg_num != _expected_sg:
                 _msg = (f"phase {_pi} ({_name}): expected SG "
@@ -2540,6 +2550,18 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             # PERMUTATION of (a, b, c) within ±5%.  Permutation is
             # legal for orthorhombic CifWriter standardization but
             # worth flagging.
+            if (_expected_atoms is not None and _expected_atoms > 0
+                    and _imported_atoms != _expected_atoms):
+                _msg = (f"phase {_pi} ({_name}): expected "
+                        f"{_expected_atoms} CIF atom site(s), but GSAS-II "
+                        f"imported {_imported_atoms}.")
+                if _expected_sg > 1 and _imported_atoms > _expected_atoms:
+                    _validation_failures.append(_msg)
+                    print(f"  âš  VALIDATION FAIL: {_msg}", flush=True)
+                else:
+                    _validation_warnings.append(_msg)
+                    print(f"  âš  VALIDATION WARN: {_msg}", flush=True)
+
             def _close(x, y, tol=0.05):
                 if x <= 0 or y <= 0:
                     return False
@@ -2569,7 +2591,16 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                             f"{_expected_b:.4f}, {_expected_c:.4f}), "
                             f"got ({_ia:.4f}, {_ib:.4f}, {_ic:.4f}).")
                     _validation_warnings.append(_msg)
+                    _validation_failures.append(_msg)
                     print(f"  ⚠ VALIDATION FAIL: {_msg}", flush=True)
+
+        if _validation_failures:
+            detail = "\n".join(f"  - {m}" for m in _validation_failures)
+            raise RuntimeError(
+                "GSAS-II CIF import validation failed before refinement.\n"
+                f"{detail}\n"
+                "The phase model imported by GSAS-II does not match the "
+                "selected CIF/metadata, so refinement was aborted.")
 
         if _validation_warnings:
             print(f"  ⚠ {len(_validation_warnings)} validation issue(s) "

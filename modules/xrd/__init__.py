@@ -647,7 +647,18 @@ def run(filepath, output_dir, metadata, params):
             if not ph.get('cif_text'):
                 cid = ph.get('cod_id') or ph.get('mp_id')
                 if cid:
-                    ph['cif_text'] = get_cif(cid)
+                    source = ph.get('source') or (
+                        'mp' if str(cid).startswith('mp-') else 'cod')
+                    for key in (f'{source}:{cid}:gsas:v1',
+                                f'{source}:{cid}',
+                                f'mp:{cid}:gsas:v1',
+                                f'mp:{cid}',
+                                f'cod:{cid}',
+                                str(cid)):
+                        text = get_cif(key)
+                        if text:
+                            ph['cif_text'] = text
+                            break
         missing = [ph.get('name', '?') for ph in phases
                    if not ph.get('cif_text')]
         if missing:

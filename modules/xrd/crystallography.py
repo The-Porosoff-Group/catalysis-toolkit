@@ -948,7 +948,7 @@ def expand_sites_from_cif(cif_text):
                               float(frac[2]), occ))
             if sites:
                 return sites
-    except Exception:
+    except BaseException:
         pass
 
     # ── Fallback: expand using built-in symmetry operations ─────────────

@@ -360,6 +360,31 @@ def get_stick_pattern(structure, wavelength, tt_min=5.0, tt_max=90.0):
                 except Exception:
                     sites = None
 
+    if structure.get('cif_text'):
+        cif_text = structure['cif_text']
+        try:
+            parsed = parse_cif(cif_text)
+            raw_sites = parsed.get('sites') or []
+            raw_sg = int(parsed.get('spacegroup_number', 1) or 1)
+        except Exception:
+            raw_sites = []
+            raw_sg = 1
+
+        if _sp == 'legacy_direct_sites':
+            sites = raw_sites or sites
+        elif raw_sg > 1:
+            # Symmetry-bearing CIFs list the asymmetric unit. Let the
+            # reflection generator expand it exactly once.
+            sites = raw_sites or None
+            _sp = 'auto'
+        else:
+            # P1/no-symmetry CIFs from MP/CifWriter usually contain the
+            # full unit cell. Use those positions directly while keeping
+            # the selected phase SG for reflection-condition filtering.
+            sites = expand_sites_from_cif(cif_text) or raw_sites or None
+            if sites:
+                _sp = 'legacy_direct_sites'
+
     # If we still have no sites, try building from formula + cell.
     # BUT: refuse to fabricate approximate sites for W2C Pbcn —
     # invented positions produce the wrong dense stick pattern.
@@ -419,3 +444,12 @@ def get_stick_pattern(structure, wavelength, tt_min=5.0, tt_max=90.0):
              'hkl':       f'({r[2][0]}{r[2][1]}{r[2][2]})',
              'rel_int':   round(r[3] / max_w, 3)}
             for r in refs if r[3] / max_w >= 0.01]  # drop sticks < 1% rel intensity
+
+
+def get_preview_reflections(phase, wavelength, tt_min=5.0, tt_max=90.0):
+    """Display-only reflection list for the UI preview.
+
+    This wrapper intentionally works on a copy so callers cannot
+    accidentally mutate the CIF or phase metadata used for refinement.
+    """
+    return get_stick_pattern(dict(phase or {}), wavelength, tt_min, tt_max)
