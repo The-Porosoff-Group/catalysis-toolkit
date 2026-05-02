@@ -5,6 +5,16 @@ Then open:  http://localhost:5000
 """
 
 import os, sys, re, json, base64, webbrowser
+
+# Force unbuffered/line-buffered stdout so GSAS-II refinement progress
+# appears in terminal immediately.  os.environ alone doesn't work because
+# Python's IO is already initialized by the time app.py runs.
+os.environ['PYTHONUNBUFFERED'] = '1'
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except AttributeError:
+    pass  # Python < 3.7
 from datetime import datetime
 from threading import Timer
 
@@ -325,13 +335,23 @@ def xrd_search():
 
         for entry in combined[:20]:
             try:
+                ph_seed = dict(entry)
+                # MP search results carry inline CIF as _cif_text;
+                # get_stick_pattern expects cif_text.
+                if ph_seed.get('_cif_text') and not ph_seed.get('cif_text'):
+                    ph_seed['cif_text'] = ph_seed['_cif_text']
                 if _vp:
-                    validated = _vp([dict(entry)], fetch_missing=False)
-                    ph = validated[0] if validated else entry
+                    validated = _vp([dict(ph_seed)], fetch_missing=False)
+                    ph = validated[0] if validated else ph_seed
                 else:
-                    ph = entry
+                    ph = ph_seed
+                # Preserve CIF if validate_phases dropped it
+                if ph_seed.get('cif_text') and not ph.get('cif_text'):
+                    ph['cif_text'] = ph_seed['cif_text']
                 entry['stick_pattern'] = get_stick_pattern(ph, wavelength)
-            except Exception:
+            except Exception as _e:
+                print(f"  Stick pattern failed for "
+                      f"{entry.get('formula', '?')}: {_e}", flush=True)
                 entry['stick_pattern'] = []
 
         # Cache any CIF text that came back inline with MP results
@@ -365,10 +385,62 @@ def xrd_fetch_cif():
         source     = data.get('source', 'cod')
         wavelength = float(data.get('wavelength', 1.54056))
 
+        phase_hint = data.get('phase_hint') or {}
+
         if source == 'mp' or cod_id.startswith('mp-'):
             result = cached_fetch_mp(cod_id, MP_API_KEY, mp_fetch_cif)
         else:
             result = cached_fetch_cod(cod_id, cod_fetch_cif)
+
+        # ── Diagnostic: confirm W2C mp-2034 is using the Pbcn fixture ──
+        if str(cod_id) == 'mp-2034':
+            _ct = result.get('cif_text', '') or ''
+            _p1_marker = "_symmetry_space_group_name_H-M   'P 1'"
+            _has_pbcn = ('Pbcn' in _ct)
+            _has_p1   = (_p1_marker in _ct) or ("'P 1'" in _ct and not _has_pbcn)
+            print(f"  W2C mp-2034 CIF source check: "
+                  f"SG={result.get('spacegroup_number')} "
+                  f"formula={result.get('formula')} "
+                  f"has_Pbcn={_has_pbcn} has_P1={_has_p1}",
+                  flush=True)
+
+        # Merge search-row metadata into fetched result.
+        # MP fetch often returns P1/full-cell (SG=1, formula=W8C4)
+        # while the search correctly had SG=60, formula=W2C.
+        #
+        # CRITICAL: when a fixture is providing the CIF (e.g. mp-2034
+        # W2C → fixtures/w2c_pbcn_mp_2034.cif), the fixture's cell is in
+        # the CifWriter / Pbcn convention, but phase_hint['a','b','c']
+        # comes from parse_cif's sorted-axis convention.  Overriding
+        # the fixture cell with phase_hint axes produces a CIF whose
+        # cell and atomic positions are in *different* conventions —
+        # exactly the disaster that broke W2C refinement.
+        #
+        # Allowed phase_hint overrides: labels and intent (formula,
+        # name, SG symbol/number, crystal system).
+        # Forbidden when a fixture is in play: cell axes and angles.
+        try:
+            from xrd.mp_api import _fixture_cif_for as _fix_lookup
+            _has_fixture = bool(_fix_lookup(str(cod_id)))
+        except Exception:
+            _has_fixture = False
+
+        if phase_hint and source in ('mp', 'materials_project'):
+            _allowed_keys = ['formula', 'name', 'spacegroup',
+                              'spacegroup_number', 'system']
+            if not _has_fixture:
+                # No fixture → safe to also apply cell from search row,
+                # because the round-tripped MP cell shares phase_hint's
+                # convention.
+                _allowed_keys += ['a', 'b', 'c', 'alpha', 'beta', 'gamma']
+            for _hk in _allowed_keys:
+                _hv = phase_hint.get(_hk)
+                if _hv not in (None, '', 0):
+                    result[_hk] = _hv
+            if _has_fixture:
+                print(f"  phase_hint merge: skipped cell axes (fixture "
+                      f"in use for {cod_id}); applied "
+                      f"{_allowed_keys} only.", flush=True)
 
         # Store CIF text server-side; don't send over wire
         cif_text  = result.pop('cif_text', '')
@@ -376,18 +448,39 @@ def xrd_fetch_cif():
         _cache.put(cache_key, cif_text)
 
         # Compute accurate stick pattern server-side using crystallography engine
-        # IMPORTANT: run through validate_phases first to fix SG number and system
-        # (MP summary endpoint returns spacegroup_number=1 and system=triclinic by default)
+        # IMPORTANT: keep CIF text available for stick generation —
+        # it was popped from result above, so re-attach it.
+        # Also preserve the original SG/formula from the MP search result,
+        # because validate_phases may re-parse the P1 CIF and overwrite
+        # SG to 1 and formula to the full-cell formula (e.g. W8C4).
         try:
             from xrd import validate_phases
-            validated = validate_phases([dict(result)], fetch_missing=False)
-            ph_for_sticks = validated[0] if validated else result
+            ph_seed = dict(result)
+            ph_seed['cif_text'] = cif_text
+            ph_seed['source'] = source
+            validated = validate_phases([dict(ph_seed)], fetch_missing=False)
+            ph_for_sticks = validated[0] if validated else ph_seed
+            # Preserve CIF if validate_phases dropped it
+            if cif_text and not ph_for_sticks.get('cif_text'):
+                ph_for_sticks['cif_text'] = cif_text
+            # Restore search-row metadata if validation downgraded to P1
+            if (ph_seed.get('spacegroup_number', 1) > 1
+                    and ph_for_sticks.get('spacegroup_number', 1) == 1):
+                for _rk in ('formula', 'spacegroup_number', 'spacegroup',
+                             'system', 'source'):
+                    if ph_seed.get(_rk):
+                        ph_for_sticks[_rk] = ph_seed[_rk]
             sticks = get_stick_pattern(ph_for_sticks, wavelength, tt_min=5.0, tt_max=100.0)
             result['stick_pattern'] = sticks
-        except Exception:
+        except Exception as _e:
+            print(f"  fetch_cif stick pattern failed: {_e}", flush=True)
+            result['stick_pattern'] = []
             result['stick_pattern'] = []
 
         result['cached'] = result.get('cached', False)
+        # Ensure source is in the response so the frontend preserves it
+        if 'source' not in result:
+            result['source'] = source
         return jsonify(result)
 
     except Exception as e:
@@ -470,6 +563,7 @@ def gsas2_status():
 
 @app.route('/api/process_xrd', methods=['POST'])
 def process_xrd():
+    print("\n=== /api/process_xrd START ===", flush=True)
     try:
         if 'file' not in request.files:
             return jsonify({'error': 'No file uploaded'}), 400
@@ -490,10 +584,17 @@ def process_xrd():
         if not phases:
             return jsonify({'error': 'No phases selected for refinement.'}), 400
 
-        # Re-attach cached CIF text for pymatgen seeding
+        # Re-attach cached CIF text for pymatgen seeding.
+        # Also ensure 'source' is preserved — downstream _cif_policy
+        # needs it to detect MP phases.
         for ph in phases:
             source = ph.get('source', 'cod')
+            ph['source'] = source  # ensure always present
             cid    = str(ph.get('cod_id', ph.get('mp_id', '')))
+            # Detect MP phases from ID even if source was lost
+            if cid.startswith('mp-') and source == 'cod':
+                ph['source'] = 'mp'
+                source = 'mp'
             cache_key = f"{source}:{cid}"
             text = _cache.get(cache_key)
             if not text:
@@ -518,6 +619,126 @@ def process_xrd():
         safe_id = re.sub(r'[^\w\-]', '_', sample_id)
         out_dir = os.path.join(output_base, f'XRD_{safe_id}_{ts}')
 
+        # ── Calibration mode: separate backend ──────────────────────────
+        calibration_mode = form.get('calibration_mode', '').lower() == 'true'
+
+        if calibration_mode and form.get('method', '') == 'gsas2':
+            from modules.xrd.gsasii_calibration import run_calibration
+            from modules.xrd import parse_xrd_file
+            from modules.xrd.xrd_plots import make_xrd_plot
+
+            os.makedirs(out_dir, exist_ok=True)
+
+            data = parse_xrd_file(upload_path)
+            # Use the first phase as the calibration standard
+            if not phases:
+                return jsonify({'error': 'No phase selected for calibration.'}), 400
+            cal_phase = phases[0]
+            # Re-attach CIF text
+            source = cal_phase.get('source', 'cod')
+            cid = str(cal_phase.get('cod_id', cal_phase.get('mp_id', '')))
+            for key_fmt in [f"{source}:{cid}", f"cod:{cid}", f"mp:{cid}"]:
+                text = _cache.get(key_fmt)
+                if text:
+                    cal_phase['cif_text'] = text
+                    break
+
+            # Override cell to NIST SRM 640g certified value for Si.
+            # Only apply for SG 227 (Fd-3m / Si / Ge / diamond).
+            _cal_sg = int(cal_phase.get('spacegroup_number', 0) or 0)
+            if _cal_sg == 227:
+                cal_phase['a'] = 5.431109
+                cal_phase['b'] = 5.431109
+                cal_phase['c'] = 5.431109
+                cal_phase['alpha'] = 90.0
+                cal_phase['beta']  = 90.0
+                cal_phase['gamma'] = 90.0
+
+            # Instrument from form (or auto-detect)
+            _cal_instrument = form.get('instrument', '').strip().lower()
+            if _cal_instrument in ('', 'auto'):
+                _cal_instrument = None  # let run_calibration auto-detect
+
+            cal_result = run_calibration(
+                tt=data['tt'], y_obs=data['intensity'],
+                sigma=data['sigma'],
+                phase=cal_phase,
+                wavelength=wavelength,
+                tt_min=tt_min, tt_max=tt_max,
+                n_bg_coeffs=int(form.get('n_bg_coeffs', 6)
+                                if form.get('n_bg_coeffs', 'auto') != 'auto'
+                                else 6),
+                instrument=_cal_instrument,
+                keep_workdir=True,
+            )
+
+            # Compute Si tick positions for the plot
+            _cal_ticks = []
+            try:
+                from modules.xrd.crystallography import generate_reflections
+                _cal_ticks_raw = generate_reflections(
+                    cal_phase['a'], cal_phase['b'], cal_phase['c'],
+                    cal_phase.get('alpha', 90), cal_phase.get('beta', 90),
+                    cal_phase.get('gamma', 90),
+                    'cubic', cal_phase.get('spacegroup_number', 227),
+                    wavelength, tt_min, tt_max, hkl_max=12)
+                _cal_ticks = [r[0] for r in _cal_ticks_raw]
+            except Exception as _te:
+                print(f"  Warning: tick positions: {_te}", flush=True)
+
+            # Phase-only contribution = calc - background
+            _y_calc = np.array(cal_result['y_calc'])
+            _y_bg = np.array(cal_result['y_background'])
+            _phase_only = np.maximum(_y_calc - _y_bg, 0).tolist()
+
+            # Make a plot from the calibration result
+            plot_result = {
+                'tt': cal_result['tt'],
+                'y_obs': cal_result['y_obs'],
+                'y_calc': cal_result['y_calc'],
+                'y_background': cal_result['y_background'],
+                'residuals': cal_result['residuals'],
+                'statistics': cal_result['statistics'],
+                'phase_results': [{
+                    'name': cal_phase.get('name', 'Standard'),
+                    'spacegroup': cal_phase.get('spacegroup', 'Fd-3m'),
+                    'weight_fraction_%': 100.0,
+                    'tick_positions': _cal_ticks,
+                }],
+                'phase_patterns': [_phase_only],
+                'wavelength': wavelength,
+            }
+            plot_path = os.path.join(out_dir, 'xrd_calibration.png')
+            make_xrd_plot(plot_result, {
+                'sample_id': sample_id,
+                'wavelength_label': wl_label,
+                'method': 'GSAS-II Calibration',
+            }, plot_path)
+
+            with open(plot_path, 'rb') as img:
+                plot_b64 = base64.b64encode(img.read()).decode()
+
+            return jsonify({
+                'plot_b64':      plot_b64,
+                'statistics':    cal_result['statistics'],
+                'phase_results': [{
+                    'name': cal_phase.get('name', 'Standard'),
+                    'spacegroup': cal_phase.get('spacegroup', ''),
+                    'weight_fraction_%': 100.0,
+                    'instprm_params': cal_result['params'],
+                    'lorentzian_term': cal_result.get('lorentzian_term', '?'),
+                }],
+                'zero_shift':    cal_result['params'].get('Zero', 0),
+                'pymatgen_used': False,
+                'method':        'GSAS-II Calibration',
+                'instprm_path':  cal_result['instprm_path'],
+                'output_dir':    out_dir,
+            })
+
+        # ── Normal refinement mode ─────────────────────────────────────
+        print(f"  XRD backend call: method={form.get('method')} "
+              f"instrument={form.get('instrument', 'auto')} "
+              f"n_phases={len(phases)}", flush=True)
         result = xrd_processor.run(
             filepath   = upload_path,
             output_dir = out_dir,
@@ -532,21 +753,133 @@ def process_xrd():
                 'max_outer':        MAX_OUTER,
                 'method':           form.get('method', 'lebail'),
                 'instprm_file':     instprm_file_path,
+                'instrument':       form.get('instrument', 'auto'),
+                # Verification mode (GSAS-II only): skip cell/Uiso/size
+                # stages and refine only bg + scales + displacement + Y.
+                # Use for first-pass tests when peak positions or widths
+                # may be wrong — surfaces those problems instead of
+                # absorbing them into more flexible parameters.
+                'verification_mode': form.get('verification_mode', '').lower() == 'true',
+                # Companion to verification_mode: when both are True,
+                # Stage 6 cell refinement is enabled (Stages 3/4/4b/5
+                # still skipped).  Use after a verification run shows
+                # peaks land in the right place and you want the cell
+                # to relax onto the experimental positions.
+                'verify_refine_cell': form.get('verify_refine_cell', '').lower() == 'true',
+                # GSAS-II phase isolation: when True, per-phase curves
+                # come from GSAS-II's actual ycalc (each phase isolated
+                # by zeroing other scales).  When False, per-phase
+                # curves are reconstructed manually from the Python
+                # reflection list (display-only, can disagree with
+                # GSAS-II's internal Fc²).  Diagnostic toggle.
+                'phase_isolation': form.get('phase_isolation', '').lower() == 'true',
+                # Refine March-Dollase preferred orientation for
+                # hexagonal/trigonal phases (e.g. WC along [001]) in
+                # verification mode.  Forces preferred_orientation='auto'
+                # internally so hex phases get MD enabled, then lets
+                # Stage 6 refine the MD ratio alongside cell.
+                'verify_refine_po':
+                    form.get('verify_refine_po', '').lower() == 'true',
+                # Swap position handle: refine Zero, fix DisplaceX/Y at 0.
+                # Use when DisplaceY refuses to move from 0 because the
+                # offset is actually a Zero miscalibration (the measured
+                # instprm's Zero may not transfer cleanly to a different
+                # sample mounting).  Overrides the measured-instprm rule
+                # that locks Zero.
+                'verify_use_zero_not_displace':
+                    form.get('verify_use_zero_not_displace', '').lower() == 'true',
+                # Branch B: post-Stage-6 enforce uniform cell scaling on
+                # W2C.  After cell refines (a, b, c) freely, we override
+                # them with (s·a₀, s·b₀, s·c₀) where s preserves the
+                # refined volume.  Forces axis ratios back to mp-2034.
+                # Diagnostic for whether W2C anisotropic refinement was
+                # capturing real strain or just data-resolution noise.
+                'verify_cell_uniform_w2c':
+                    form.get('verify_cell_uniform_w2c', '').lower() == 'true',
+                # Diagnostic: free X (Lorentzian strain).  Added to the
+                # refine list in Stages 2 and 6.  Use to test whether
+                # residual peak shape needs strain-like broadening on
+                # top of the size broadening Y already captures.
+                'verify_refine_x':
+                    form.get('verify_refine_x', '').lower() == 'true',
+                # Y controls (orthogonal to X / Zero handles).
+                # fix_y dominates over Y-refinement when both set.
+                # nonneg clamps post-Stage-6 Y < 0 to 0.
+                'verify_fix_y':
+                    form.get('verify_fix_y', '').lower() == 'true',
+                'verify_y_fixed_value': (
+                    float(form.get('verify_y_fixed_value', '0') or '0')
+                    if form.get('verify_y_fixed_value', '').strip() else None),
+                'verify_y_nonnegative':
+                    form.get('verify_y_nonnegative', '').lower() == 'true',
+                # Explicit structural toggles — override the verification_mode
+                # default of "off" without leaving verification_mode.
+                'verify_refine_uiso':
+                    form.get('verify_refine_uiso', '').lower() == 'true',
+                'verify_refine_size':
+                    form.get('verify_refine_size', '').lower() == 'true',
+                # Refine atom positions (XYZ).  Existing flag re-exposed.
+                'refine_xyz':
+                    form.get('refine_xyz', '').lower() == 'true',
+                # Tick source: True = GSAS-II RefList, False = Python refs.
+                'use_gsas_ref_ticks':
+                    form.get('use_gsas_ref_ticks', '').lower() == 'true',
+                # Fix WC PO: hold March-Dollase ratio at a user-specified
+                # value during refinement (used to break MD ↔ Uiso
+                # correlation in runs that combine PO and Uiso).
+                'verify_fix_po':
+                    form.get('verify_fix_po', '').lower() == 'true',
+                'verify_po_fixed_value': (
+                    float(form.get('verify_po_fixed_value', '0.905') or '0.905')
+                    if form.get('verify_po_fixed_value', '').strip() else None),
+                # Legacy per-phase HAP toggles (kept for back-compat).
+                # Prefer phase_options (below) for new clients.
+                'verify_refine_wc_size':
+                    form.get('verify_refine_wc_size', '').lower() == 'true',
+                'verify_refine_w2c_size':
+                    form.get('verify_refine_w2c_size', '').lower() == 'true',
+                'verify_refine_wc_mustrain':
+                    form.get('verify_refine_wc_mustrain', '').lower() == 'true',
+                'verify_refine_w2c_mustrain':
+                    form.get('verify_refine_w2c_mustrain', '').lower() == 'true',
+                # Generic per-phase refinement options.  JSON-serialized
+                # list of dicts (one per phase, by index) with keys
+                # refine_size, refine_mustrain, po_mode, po_value, po_axis.
+                # Frontend builds this from the per-phase control cards.
+                'phase_options':
+                    (lambda _raw: (
+                        __import__('json').loads(_raw)
+                        if _raw and _raw.strip().startswith(('[', '{'))
+                        else None
+                    ))(form.get('phase_options', '')),
             }
         )
+        print("=== xrd_processor.run returned ===", flush=True)
 
         with open(result['plot_path'], 'rb') as img:
             plot_b64 = base64.b64encode(img.read()).decode()
 
+        print("=== /api/process_xrd DONE ===", flush=True)
         return jsonify({
             'plot_b64':      plot_b64,
             'statistics':    result['statistics'],
             'phase_results': result['phase_results'],
             'zero_shift':    result['zero_shift'],
+            'displacement_um':    result.get('displacement_um'),
+            'displacement_param': result.get('displacement_param'),
             'pymatgen_used': result.get('pymatgen_used', False),
             'method':        result.get('method', 'Le Bail'),
             'summary_path':  result['summary_path'],
             'output_dir':    out_dir,
+            # Raw arrays for interactive plotting — nested in result['result']
+            'plot_data': {
+                'tt':              result.get('result', {}).get('tt', []),
+                'y_obs':           result.get('result', {}).get('y_obs', []),
+                'y_calc':          result.get('result', {}).get('y_calc', []),
+                'y_background':    result.get('result', {}).get('y_background', []),
+                'residuals':       result.get('result', {}).get('residuals', []),
+                'phase_patterns':  result.get('result', {}).get('phase_patterns', []),
+            },
         })
     except (SystemExit, KeyboardInterrupt):
         # GSAS-II sometimes calls sys.exit() on fatal errors — catch it
@@ -630,5 +963,5 @@ if __name__ == '__main__':
     if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
         Timer(1.2, open_browser).start()
 
-    app.run(debug=True, port=5000, use_reloader=True, threaded=True)
+    app.run(debug=True, port=5000, use_reloader=False, threaded=True)
 
