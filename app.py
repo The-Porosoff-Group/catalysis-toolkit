@@ -382,12 +382,14 @@ def xrd_fetch_cif():
     try:
         data       = request.get_json()
         cod_id     = str(data.get('cod_id', ''))
-        source     = data.get('source', 'cod')
+        source_raw = data.get('source', 'cod')
+        source     = ('mp' if source_raw in ('mp', 'materials_project')
+                      or cod_id.startswith('mp-') else 'cod')
         wavelength = float(data.get('wavelength', 1.54056))
 
         phase_hint = data.get('phase_hint') or {}
 
-        if source == 'mp' or cod_id.startswith('mp-'):
+        if source == 'mp':
             result = cached_fetch_mp(cod_id, MP_API_KEY, mp_fetch_cif)
         else:
             result = cached_fetch_cod(cod_id, cod_fetch_cif)
@@ -418,34 +420,86 @@ def xrd_fetch_cif():
         #
         # Allowed phase_hint overrides: labels and intent (formula,
         # name, SG symbol/number, crystal system).
-        # Forbidden when a fixture is in play: cell axes and angles.
+        # Forbidden for MP CIFs: cell axes and angles. Those must come
+        # from the CIF that also provides the atom positions.
         try:
             from xrd.mp_api import _fixture_cif_for as _fix_lookup
             _has_fixture = bool(_fix_lookup(str(cod_id)))
         except Exception:
             _has_fixture = False
 
-        if phase_hint and source in ('mp', 'materials_project'):
+        if phase_hint and source == 'mp':
             _allowed_keys = ['formula', 'name', 'spacegroup',
                               'spacegroup_number', 'system']
-            if not _has_fixture:
-                # No fixture → safe to also apply cell from search row,
-                # because the round-tripped MP cell shares phase_hint's
-                # convention.
-                _allowed_keys += ['a', 'b', 'c', 'alpha', 'beta', 'gamma']
             for _hk in _allowed_keys:
                 _hv = phase_hint.get(_hk)
                 if _hv not in (None, '', 0):
                     result[_hk] = _hv
-            if _has_fixture:
-                print(f"  phase_hint merge: skipped cell axes (fixture "
-                      f"in use for {cod_id}); applied "
-                      f"{_allowed_keys} only.", flush=True)
+            print(f"  phase_hint merge: applied display/intent metadata "
+                  f"only for {cod_id}; CIF cell remains authoritative.",
+                  flush=True)
 
         # Store CIF text server-side; don't send over wire
         cif_text  = result.pop('cif_text', '')
         cache_key = f"{'mp' if source=='mp' else 'cod'}:{cod_id}"
         _cache.put(cache_key, cif_text)
+        if source == 'mp':
+            _cache.put(f"{cache_key}:gsas:v1", cif_text)
+
+        cif_check = {
+            'status': 'error' if not cif_text else 'ok',
+            'ok': bool(cif_text),
+            'messages': [],
+            'expected_sg': result.get('spacegroup_number'),
+            'parsed_sg': None,
+            'site_count': None,
+            'cell': None,
+        }
+        if cif_text:
+            try:
+                from modules.xrd.crystallography import parse_cif as _parse_cif
+                _parsed_cif = _parse_cif(cif_text)
+                _parsed_sg = int(_parsed_cif.get('spacegroup_number', 1) or 1)
+                _expected_sg = int(result.get('spacegroup_number', 0) or 0)
+                _sites = _parsed_cif.get('sites') or []
+                cif_check.update({
+                    'parsed_sg': _parsed_sg,
+                    'site_count': len(_sites),
+                    'cell': {
+                        'a': _parsed_cif.get('a'),
+                        'b': _parsed_cif.get('b'),
+                        'c': _parsed_cif.get('c'),
+                        'alpha': _parsed_cif.get('alpha'),
+                        'beta': _parsed_cif.get('beta'),
+                        'gamma': _parsed_cif.get('gamma'),
+                    },
+                })
+                if _expected_sg > 1 and _parsed_sg == 1:
+                    cif_check['status'] = 'warn'
+                    cif_check['ok'] = True
+                    cif_check['messages'].append(
+                        'Source CIF is P1/full-cell; GSAS-II prep will '
+                        'attempt a symmetry-safe reduction before refinement.')
+                elif (_expected_sg > 1 and _parsed_sg > 1
+                        and _parsed_sg != _expected_sg):
+                    cif_check['status'] = 'error'
+                    cif_check['ok'] = False
+                    cif_check['messages'].append(
+                        f"Source CIF declares SG {_parsed_sg}, but the "
+                        f"selected phase expects SG {_expected_sg}.")
+                elif _sites:
+                    cif_check['messages'].append(
+                        f"CIF parsed as SG {_parsed_sg} with "
+                        f"{len(_sites)} atom site(s).")
+                else:
+                    cif_check['status'] = 'warn'
+                    cif_check['ok'] = True
+                    cif_check['messages'].append(
+                        'CIF parsed, but no atom-site loop was found.')
+            except Exception as _ve:
+                cif_check['status'] = 'error'
+                cif_check['ok'] = False
+                cif_check['messages'].append(f'CIF parse check failed: {_ve}')
 
         # Compute accurate stick pattern server-side using crystallography engine
         # IMPORTANT: keep CIF text available for stick generation —
@@ -472,12 +526,27 @@ def xrd_fetch_cif():
                         ph_for_sticks[_rk] = ph_seed[_rk]
             sticks = get_stick_pattern(ph_for_sticks, wavelength, tt_min=5.0, tt_max=100.0)
             result['stick_pattern'] = sticks
+            result['stick_source'] = 'python_reflections'
         except Exception as _e:
             print(f"  fetch_cif stick pattern failed: {_e}", flush=True)
             result['stick_pattern'] = []
-            result['stick_pattern'] = []
+            result['stick_source'] = 'unavailable'
 
         result['cached'] = result.get('cached', False)
+        result['cache_key'] = cache_key
+        result['cif_check'] = cif_check
+        result['validation'] = cif_check
+        result['preview'] = {
+            'stick_pattern': result.get('stick_pattern', []),
+            'stick_source': result.get('stick_source', 'python_reflections'),
+        }
+        result['phase'] = {
+            k: result.get(k) for k in (
+                'formula', 'name', 'spacegroup', 'spacegroup_number',
+                'system', 'a', 'b', 'c', 'alpha', 'beta', 'gamma',
+                'Z', 'source', 'cod_id', 'mp_id')
+            if k in result
+        }
         # Ensure source is in the response so the frontend preserves it
         if 'source' not in result:
             result['source'] = source
@@ -595,11 +664,18 @@ def process_xrd():
             if cid.startswith('mp-') and source == 'cod':
                 ph['source'] = 'mp'
                 source = 'mp'
-            cache_key = f"{source}:{cid}"
-            text = _cache.get(cache_key)
-            if not text:
-                # Try alternate key format
-                text = _cache.get(f"cod:{cid}") or _cache.get(f"mp:{cid}")
+            cache_keys = [
+                f"{source}:{cid}:gsas:v1",
+                f"{source}:{cid}",
+                f"cod:{cid}",
+                f"mp:{cid}:gsas:v1",
+                f"mp:{cid}",
+            ]
+            text = None
+            for cache_key in cache_keys:
+                text = _cache.get(cache_key)
+                if text:
+                    break
             if text:
                 ph['cif_text'] = text
 
@@ -637,7 +713,8 @@ def process_xrd():
             # Re-attach CIF text
             source = cal_phase.get('source', 'cod')
             cid = str(cal_phase.get('cod_id', cal_phase.get('mp_id', '')))
-            for key_fmt in [f"{source}:{cid}", f"cod:{cid}", f"mp:{cid}"]:
+            for key_fmt in [f"{source}:{cid}:gsas:v1", f"{source}:{cid}",
+                            f"cod:{cid}", f"mp:{cid}:gsas:v1", f"mp:{cid}"]:
                 text = _cache.get(key_fmt)
                 if text:
                     cal_phase['cif_text'] = text
