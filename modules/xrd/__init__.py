@@ -503,11 +503,16 @@ def _write_summary_xlsx(result, metadata, method_label, output_dir):
                     sites = parsed.get('sites') or None
                 except Exception:
                     pass
+            # Determine site policy using the same logic as the backend
+            from .gsasii_backend import _cif_policy
+            _policy = _cif_policy(ph)
+            _sp = ('legacy_direct_sites' if _policy == 'mp_w2c_pbcn_compat'
+                   else 'auto')
             ref_list = generate_reflections(
                 ph.get('a', 1), ph.get('b', 1), ph.get('c', 1),
                 ph.get('alpha', 90), ph.get('beta', 90), ph.get('gamma', 90),
                 sys_, sg, wavelength, tt_min, tt_max, hkl_max=12,
-                sites=sites)
+                sites=sites, site_policy=_sp)
             if filtered_ticks:
                 # Only include reflections whose 2θ is near a filtered tick.
                 # Use tolerance (0.01°) instead of exact match to avoid
@@ -611,10 +616,22 @@ def run(filepath, output_dir, metadata, params):
         try:
             n_bg = int(_bg_raw)
         except (ValueError, TypeError):
-            n_bg = 8
+            n_bg = 6
         _bg_auto = False
     max_outer  = params.get('max_outer', 10)
     method     = params.get('method', 'lebail').lower()
+
+    # ── Instrument inference ───────────────────────────────────────────
+    # Infer instrument from filename/metadata, or use explicit override.
+    _instrument = params.get('instrument', 'auto')
+    if _instrument == 'auto':
+        from .gsasii_backend import infer_instrument
+        _instrument, _instrument_reason = infer_instrument(
+            filepath=filepath,
+            metadata=metadata,
+        )
+    else:
+        _instrument_reason = 'specified by params'
 
     # Run refinement
     if method == 'gsas2':
@@ -710,6 +727,26 @@ def run(filepath, output_dir, metadata, params):
                 # Fall through — seed_params stays None, GSAS-II uses its
                 # own peak-width estimation as before.
 
+        # Build options dict from params — callers can pass these
+        # through the params dict or leave them unset for defaults.
+        _gsas_options = {}
+        for _opt_key in ('geometry', 'preferred_orientation', 'refine_xyz',
+                         'background_mode', 'exclude_regions',
+                         'phase_sensitivity', 'verification_mode',
+                         'verify_refine_cell', 'phase_isolation',
+                         'verify_refine_po', 'verify_use_zero_not_displace',
+                         'verify_cell_uniform_w2c', 'verify_refine_x',
+                         'verify_fix_y', 'verify_y_fixed_value',
+                         'verify_y_nonnegative', 'verify_refine_uiso',
+                         'verify_refine_size', 'use_gsas_ref_ticks',
+                         'verify_fix_po', 'verify_po_fixed_value',
+                         'verify_refine_wc_size', 'verify_refine_w2c_size',
+                         'verify_refine_wc_mustrain',
+                         'verify_refine_w2c_mustrain',
+                         'phase_options'):
+            if _opt_key in params:
+                _gsas_options[_opt_key] = params[_opt_key]
+
         result = run_gsas2(
             tt, intensity, sigma, phases, wavelength,
             tt_min=tt_min, tt_max=tt_max,
@@ -719,6 +756,9 @@ def run(filepath, output_dir, metadata, params):
             sh_l=params.get('sh_l'),
             auto_bg=_bg_auto,
             seed_params=seed_params,
+            options=_gsas_options if _gsas_options else None,
+            instrument=_instrument,
+            instrument_reason=_instrument_reason,
         )
     elif method == 'rietveld':
         # Check that all phases have atom sites (CIF text)
@@ -762,6 +802,8 @@ def run(filepath, output_dir, metadata, params):
         'statistics':   result['statistics'],
         'phase_results': result['phase_results'],
         'zero_shift':   result['zero_shift'],
+        'displacement_um':    result.get('displacement_um'),
+        'displacement_param': result.get('displacement_param'),
         'pymatgen_used': result.get('pymatgen_used', False),
         'method':        method_label,
         'result':       result,

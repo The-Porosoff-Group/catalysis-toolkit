@@ -116,7 +116,9 @@ def make_xrd_plot(result, metadata, output_path):
                             ec=GRID, alpha=0.9))
 
     # Title
-    lam_label = metadata.get('wavelength_label', f"λ={result['wavelength']:.4f} Å")
+    lam_label = metadata.get('wavelength_label')
+    if not lam_label:
+        lam_label = f"λ={result.get('wavelength', 1.54056):.4f} Å"
     method_label = metadata.get('method', 'Le Bail')
     ax_main.set_title(
         f"{metadata.get('sample_id','Sample')}   ·   "

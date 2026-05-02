@@ -13,12 +13,45 @@ Key rule for the new API: do NOT request 'structure' in the fields parameter
 via raw REST — it causes a 400. Only request scalar/simple fields.
 """
 
-import re, requests, json
+import os, re, requests, json
 from .crystallography import parse_cif
 from .cod_api import infer_system, _sf
 
 MP_SUMMARY = "https://api.materialsproject.org/materials/summary/"
 TIMEOUT    = 15
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Local CIF fixtures override
+# ─────────────────────────────────────────────────────────────────────────────
+# Some Materials Project entries import incorrectly into GSAS-II when the raw
+# structure JSON is round-tripped through pymatgen's CifWriter (e.g. mp-2034
+# W2C used to land as P1/full-cell, blowing up the cell DoF count).  Audited
+# canonical CIFs live in fixtures/ at the toolkit root.  When fetch_cif() sees
+# one of these mp_ids, it substitutes the fixture text for the round-tripped
+# CIF, but keeps everything else (formula, symmetry metadata, etc.) from MP.
+#
+# To add a new fixture: drop the .cif into fixtures/ and add an entry below.
+_FIXTURE_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    'fixtures')
+_LOCAL_FIXTURES = {
+    'mp-2034': 'w2c_pbcn_mp_2034.cif',   # W2C Pbcn — see CIF-Audit_v1.md
+}
+
+
+def _fixture_cif_for(mp_id):
+    """Return canonical fixture CIF text for an mp_id, or None if no override."""
+    fname = _LOCAL_FIXTURES.get(mp_id)
+    if not fname:
+        return None
+    path = os.path.join(_FIXTURE_DIR, fname)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path) as f:
+            return f.read()
+    except Exception:
+        return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -275,6 +308,14 @@ def fetch_cif(mp_id, api_key):
 
     # Convert pymatgen structure dict to CIF text
     cif_text = _structure_dict_to_cif(struct, mp_id, formula, sym)
+
+    # Local-fixture override: for known-problematic MP entries, substitute
+    # the audited canonical CIF (see _LOCAL_FIXTURES at top of this file).
+    fixture_text = _fixture_cif_for(mp_id)
+    if fixture_text:
+        print(f"  fetch_cif: using local fixture for {mp_id} "
+              f"(overrides round-tripped MP CIF)", flush=True)
+        cif_text = fixture_text
 
     parsed = parse_cif(cif_text)
     parsed.update({"mp_id": mp_id, "cod_id": mp_id,

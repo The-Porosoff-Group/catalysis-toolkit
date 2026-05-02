@@ -7,10 +7,36 @@ Install via:  git clone https://github.com/AdvancedPhotonSource/GSAS-II.git
               cd GSAS-II && pip install .
 This module wraps GSASIIscriptable to provide a refinement backend compatible
 with the toolkit's result format (same keys as run_lebail / run_rietveld).
+
+SEPARATION RULE (refinement vs. display):
+  This module owns the CIF that GSAS-II refines.  The CIF GSAS-II reads
+  must be internally consistent: cell parameters and atom positions
+  must travel together in the same crystallographic setting.  CifWriter
+  may transform an asymmetric unit into a different setting (e.g. axis
+  permutation for orthorhombic phases); when that happens the entire
+  CIF block — cell + sites + symmetry ops — must be used together, NOT
+  combined with cell parameters from the search-row metadata.
+
+  The preview/tick generator (cod_api.get_stick_pattern) is allowed to
+  produce a different reflection list for display.  That display
+  decision MUST NOT feed back into the CIF construction here.
+
+  Validation gate (post-add_phase, before any refinement) compares
+  expected SG/cell/atom-count against what GSAS-II actually imported
+  and warns on mismatch.  This catches the W2C-as-P1 class of bug.
+
+  Architecture spec: see CLAUDE OUTPUTS /
+  Catalysis-Toolkit_Architecture_v1.md.
 """
 
 import math, os, sys, tempfile, warnings
 import numpy as np
+
+
+class _IsolationSkipped(Exception):
+    """Sentinel: phase isolation intentionally disabled."""
+    pass
+
 
 # ── GSAS-II availability check ──────────────────────────────────────────────
 
@@ -147,31 +173,86 @@ def _get_hm_symbol(sg_num):
     return 'P 1'
 
 
-# ── Default instrument / refinement parameters ────────────────────────────
-# These are used when the user does not provide their own .instprm file.
-# U, V, W, X, Y are initial guesses — GSAS-II refines them during fitting.
-# Polariz. and SH/L are NOT refined and directly affect calculated
-# intensities; users with known instrument profiles should override them.
-DEFAULT_POLARIZ = 0.5     # Beam polarization factor.
-                           # 0.5 = unpolarized (Kβ-filtered, no monochromator)
-                           # 0.99 = graphite monochromator on diffracted side
-                           # Most in-house Cu Kα Bragg-Brentano lab
-                           # instruments (e.g. Rigaku SmartLab with Kβ filter)
-                           # use NO monochromator → 0.5.  A wrong polariz
-                           # biases calculated peak intensity vs. 2θ, which
-                           # propagates directly into scale factors and H&H
-                           # weight fractions.
-DEFAULT_SH_L = 0.002      # Finger-Cox-Jephcoat asymmetry parameter
-                           # Starting low is intentional: Stage 1 refines
-                           # background with SH/L fixed, so a low SH/L means
-                           # nearly symmetric peaks → clean baseline.  SH/L
-                           # is then refined alongside background in Stage 2.
+# ── Instrument profiles ─────────────────────────────────────────────────
+# Named profiles bundle geometry, displacement model, polarization, SH/L,
+# preferred-orientation default, and zero seed for each known instrument.
+# These are provisional — a measured .instprm file ALWAYS takes priority
+# over profile defaults for U/V/W/X/Y/SH/L.
+#
+# Usage:
+#   1. Auto-detect from filename/header/metadata via infer_instrument().
+#   2. Override explicitly via params['instrument'] = 'smartlab'.
+#   3. Fall back to DEFAULT_INSTRUMENT if inference fails.
+INSTRUMENT_PROFILES = {
+    'synergy_s': {
+        'label':    'Synergy-S capillary/transmission',
+        'geometry': 'capillary',
+        'displacement_param': 'DisplaceY',
+        'zero_seed': -0.25,    # from Synergy-Dualflex .par (WC/W2C config)
+        'polariz':  0.5,
+        'sh_l':     0.002,
+        'preferred_orientation_default': 'off',
+        'sigma_inflation_K': 5.0,  # 2D-integrated σ underestimates uncertainty
+        'instprm_filename': 'synergy_s_Si640g.instprm',
+        'notes': 'Measured from NIST SRM 640g Si standard.',
+    },
+    'smartlab': {
+        'label':    'Rigaku SmartLab flat plate / Bragg-Brentano',
+        'geometry': 'bragg_brentano',
+        'displacement_param': 'DisplaceX',
+        'zero_seed': -0.027,   # measured from NIST Si 640g
+        'polariz':  0.5,       # Kβ-filtered, no monochromator
+        'sh_l':     0.005,     # measured from NIST Si 640g
+        'preferred_orientation_default': 'auto',
+        'sigma_inflation_K': 1.0,  # σ ≈ √I is already correct for BB
+        'instprm_filename': 'smartlab_Si640g.instprm',  # auto-locate
+        'notes': 'Measured from NIST SRM 640g Si standard, 2026-04-30.',
+    },
+}
+DEFAULT_INSTRUMENT = 'smartlab'
+
+# Legacy defaults — kept for backward compat and as fallback values.
+# When an instrument profile is active, these are overridden by profile
+# values.
+DEFAULT_POLARIZ = 0.5
+DEFAULT_SH_L = 0.002
 DEFAULT_U = 2.0            # Caglioti U initial guess (centideg²) — refined
 DEFAULT_V = -2.0           # Caglioti V initial guess (centideg²) — refined
 DEFAULT_W = 5.0            # Caglioti W initial guess (centideg²) — refined
 DEFAULT_X = 0.0            # Lorentzian X initial guess (centideg) — refined
 DEFAULT_Y = 0.0            # Lorentzian Y initial guess (centideg) — refined
 DEFAULT_B_ISO = 0.5        # Fallback B_iso (Å²) when GSAS-II extraction fails
+
+
+def infer_instrument(filepath=None, metadata=None, raw_header=None):
+    """Infer instrument identity from filename, metadata, or header text.
+
+    Returns (instrument_key, reason_string).  Falls back to
+    DEFAULT_INSTRUMENT if nothing matches.
+    """
+    metadata = metadata or {}
+    text = ' '.join([
+        str(filepath or ''),
+        str(metadata),
+        str(raw_header or ''),
+    ]).lower()
+
+    # Strong filename/header hints
+    if 'synergy' in text or 'crysalis' in text or 'dualflex' in text:
+        return 'synergy_s', 'filename/header contains Synergy/CrysAlis/Dualflex'
+    if 'smartlab' in text or 'rigaku' in text:
+        return 'smartlab', 'filename/header contains SmartLab/Rigaku'
+
+    # Weak format hints
+    fmt = str(metadata.get('format', '')).lower()
+    if fmt == 'stepscan':
+        return 'smartlab', 'weak inference from StepScan format'
+    if fmt == 'powdergraph':
+        return 'synergy_s', 'weak inference from PowderGraph/integrated format'
+
+    return DEFAULT_INSTRUMENT, (
+        f'default fallback ({DEFAULT_INSTRUMENT}); '
+        f'instrument not identifiable from file')
 
 
 def _get_expanded_sites(cif_text, spacegroup_number=None):
@@ -703,6 +784,21 @@ def _cluster_to_asymmetric(struct, sg_num):
     return result if result else None
 
 
+def _cif_policy(ph):
+    """Determine CIF handling policy for a phase.
+
+    Returns 'default' for all phases.  The legacy 'mp_w2c_pbcn_compat'
+    branch was retired 2026-05-01 after the Step-0 CIF audit
+    (see Catalysis-Toolkit_CIF-Audit_v1.md).  W2C now ships as the
+    canonical Pbcn fixture (mp_api._LOCAL_FIXTURES['mp-2034']) and
+    flows through _build_conventional_cif unchanged.
+
+    The function is kept as a stub so future per-phase routing can be
+    added here without re-introducing a fork upstream.
+    """
+    return 'default'
+
+
 def _build_conventional_cif(ph):
     """
     Build a synthetic CIF string using the phase dict's (conventional) cell
@@ -713,11 +809,15 @@ def _build_conventional_cif(ph):
     Materials Project data).  The space group is written explicitly so that
     GSAS-II applies the correct cell-parameter constraints.
 
-    If the asymmetric-unit reduction fails for a complex structure (e.g.
-    W2C Pbcn from Materials Project), this function detects the failure
-    and returns the ORIGINAL CIF text instead of building a synthetic CIF
-    with full-cell sites + the declared space group (which would cause
-    GSAS-II to double-expand and produce wrong reflections).
+    If the asymmetric-unit reduction fails for a complex structure, this
+    function detects the failure and returns the ORIGINAL CIF text instead
+    of building a synthetic CIF with full-cell sites + the declared space
+    group (which would cause GSAS-II to double-expand).
+
+    NOTE: Phases that need a specific canonical CIF (e.g. mp-2034 W2C)
+    should ship that CIF through the phase dict's 'cif_text' field — see
+    mp_api._LOCAL_FIXTURES.  The old mp_w2c_pbcn_compat early-return was
+    retired 2026-05-01 after the Step-0 audit.
     """
     a   = ph.get('a', 4.0)
     b   = ph.get('b', a)
@@ -1284,17 +1384,43 @@ def _auto_select_bg_coeffs(tt, y_obs, phases, wavelength, tt_min, tt_max,
     except Exception:
         pass
 
-    # Default to 6 Chebyshev terms — this is sufficient for standard
-    # crystalline samples and avoids overfitting.  Only go higher if the
-    # user explicitly requested more than 6 terms.
+    # Default to 6 Chebyshev terms.  Escalate to 10 when the DW/RMS
+    # tests indicate the background is underfit.
     best_n = 6
-    if user_n > 6:
+    _escalation_reason = None
+
+    # Tier 2 triggers — escalate from 6 to 10 only when BOTH
+    # autocorrelation AND RMS improvement confirm the background is
+    # genuinely underfit.  DW alone is not sufficient because
+    # nanocrystalline patterns with closely spaced broad peaks have
+    # small peak-free zones where residuals are artificially
+    # autocorrelated from peak tails, not from background underfitting.
+    if dw < 0.1 and has_broad_feature and improvement_6_to_10 > 0.10:
+        # (a) Extreme autocorrelation + broad feature + 10% RMS improvement
+        best_n = 10
+        _escalation_reason = (f"DW(3)={dw:.3f} < 0.1 + broad_feature + "
+                              f"improv={improvement_6_to_10:.1%} > 10%")
+    elif dw < 0.5 and has_broad_feature and improvement_6_to_10 > 0.20:
+        # (b) Moderate autocorrelation + broad feature + strong improvement
+        best_n = 10
+        _escalation_reason = (f"DW(3)={dw:.3f} < 0.5 + broad_feature + "
+                              f"improv={improvement_6_to_10:.1%} > 20%")
+    elif dw_6 < 0.3 and improvement_6_to_10 > 0.15:
+        # (c) Strong autocorrelation on 6-term residuals + improvement
+        best_n = 10
+        _escalation_reason = (f"DW(6)={dw_6:.3f} < 0.3 + "
+                              f"improv={improvement_6_to_10:.1%} > 15%")
+
+    # User override: if user explicitly requested more than auto-selected
+    if user_n > best_n:
         best_n = user_n
+        _escalation_reason = f"user requested {user_n}"
 
     print(f"  Auto-BG: peak-free analysis — RMS(6)={rms_6:.2f}, "
           f"RMS(10)={rms_10:.2f}, DW(3)={dw:.2f}, DW(6)={dw_6:.2f}, "
           f"broad_feature={has_broad_feature}, "
-          f"improv_6→10={improvement_6_to_10:.1%} → n_bg={best_n}",
+          f"improv_6→10={improvement_6_to_10:.1%} → n_bg={best_n}"
+          + (f" [{_escalation_reason}]" if _escalation_reason else ""),
           flush=True)
     return best_n
 
@@ -1525,12 +1651,13 @@ def _is_cu_kalpha(wavelength):
 
 def _write_instprm(work_dir, wavelength, polariz=None, sh_l=None,
                    u=None, v=None, w=None, x=None, y=None,
-                   kalpha2=None):
+                   kalpha2=None, zero_seed=None):
     """Write a minimal GSAS-II .instprm file. Returns path.
 
     Uses module-level DEFAULT_* constants unless overridden.
     U, V, W, X, Y are initial guesses that GSAS-II will refine.
     Polariz. and SH/L are NOT refined — they should match the instrument.
+    zero_seed: starting value for Zero parameter (default 0.0).
 
     Wavelength handling
     -------------------
@@ -1578,18 +1705,10 @@ def _write_instprm(work_dir, wavelength, polariz=None, sh_l=None,
 
     # Zero seed: starting value for GSAS-II's Zero parameter refinement.
     # This is just an initial guess — Zero is still refined freely in
-    # Stage 2 and Stage 6, so GSAS-II will walk to whatever value
-    # minimises Rwp regardless of this starting point.  The WC/W2C
-    # Synergy-Dualflex .par reports a measured theta zero-correction
-    # of -0.25° for this instrument configuration, so seeding at -0.25°
-    # gives the optimiser a slightly better starting point than 0.0.
-    # If the fit converges to a very different value (e.g. +0.07° as in
-    # v5), that means GSAS-II is compensating for additional corrections
-    # (transparency, displacement) that weren't present before — the
-    # absolute value of the refined Zero is not a physical quantity in
-    # isolation.  Set to 0.0 if seeding is undesirable for a given
-    # instrument.
-    _ZERO_SEED = -0.25
+    # Stage 2 and Stage 6.  The value is now instrument-profile-specific:
+    #   synergy_s: -0.25° (from Synergy-Dualflex .par)
+    #   smartlab:   0.0° (no prior calibration data)
+    _ZERO_SEED = zero_seed if zero_seed is not None else 0.0
     lines = [
         '#GSAS-II instrument parameter file; do not add/delete items!',
         'Type:PXC',
@@ -1705,7 +1824,8 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
               tt_min=None, tt_max=None, n_bg_coeffs=6,
               max_cycles=10, progress_callback=None,
               instprm_file=None, polariz=None, sh_l=None,
-              auto_bg=True, seed_params=None):
+              auto_bg=True, seed_params=None, options=None,
+              instrument=None, instrument_reason=None):
     """
     Run GSAS-II Rietveld refinement via GSASIIscriptable.
 
@@ -1719,20 +1839,283 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         when auto_bg=True, exact value when auto_bg=False)
     max_cycles : int — max refinement cycles
     instprm_file : str, optional — path to user-provided .instprm file;
-        if given, this is used INSTEAD of the auto-generated defaults
+        if given, this is used INSTEAD of all provisional instrument
+        defaults.  This is the single highest-priority setting — a
+        measured standard .instprm pins U/V/W/X/Y/SH/L to physical
+        values and makes sample parameters uniquely determinable.
     polariz : float, optional — monochromator polarization (default 0.99)
     sh_l : float, optional — Finger-Cox-Jephcoat asymmetry (default 0.002)
     auto_bg : bool — if True, automatically determine the optimal number
         of background coefficients from the data (default True)
+    options : dict, optional — backend refinement options with safe
+        defaults.  Callers can ignore this entirely; the backend will
+        behave predictably with the defaults below.
+
+        Supported keys:
+          geometry : str — "capillary" (default) or "bragg_brentano".
+              Controls which displacement correction is refined:
+              capillary → DisplaceY, bragg_brentano → DisplaceX.
+          preferred_orientation : str — "auto" (default), "off", or
+              "force".  "auto" enables March-Dollase for hexagonal/
+              trigonal phases only.  "off" disables for all.  "force"
+              enables for all phases.
+          refine_xyz : bool — whether to refine atom positions (Stage 5).
+              Default False.  Without a measured .instprm, XYZ
+              refinement can absorb errors from polarization,
+              absorption, PO, background, or wrong phase choice.
+          background_mode : str — "auto" (default), "fixed6", "fixed10",
+              or "fixed14".  "auto" uses DW/RMS analysis to select
+              between 6 and 10.  Fixed modes bypass auto-selection.
+          exclude_regions : list of (lo, hi) tuples — 2θ ranges to
+              mask out before fitting (detector artifacts, holder
+              peaks, low-angle junk).
+          phase_sensitivity : bool — if True, run diagnostic variants
+              (PO on/off, XYZ on/off, BG 6/10) and report stability.
+              Default False.  Slow but useful for automated screening.
 
     Returns dict compatible with Le Bail / Rietveld output (same keys).
     """
+    print("\n=== GSAS-II REFINEMENT START ===", flush=True)
     if not _GSASII_AVAILABLE:
         raise RuntimeError(
             f"GSAS-II is not installed or not importable in this Python environment. "
             f"Install with: git clone https://github.com/AdvancedPhotonSource/GSAS-II.git "
             f"&& cd GSAS-II && pip install .\n"
             f"Import error: {_GSASII_IMPORT_ERROR}")
+
+    # ── Resolve instrument profile ─────────────────────────────────────────
+    # The instrument profile bundles geometry, displacement model, polariz,
+    # SH/L, PO default, zero seed, and sigma inflation into one coherent
+    # set of defaults.  Explicit params (polariz=, sh_l=) override profile.
+    instrument = instrument or DEFAULT_INSTRUMENT
+    instrument_reason = instrument_reason or 'default'
+    profile = INSTRUMENT_PROFILES.get(instrument, INSTRUMENT_PROFILES[DEFAULT_INSTRUMENT])
+
+    print(f"  Instrument: {profile['label']}", flush=True)
+    print(f"    Selection: {instrument_reason}", flush=True)
+    print(f"    Displacement model: {profile['displacement_param']}",
+          flush=True)
+    # Note: "Profile:" line is printed AFTER auto-locate below,
+    # so it correctly reflects whether a measured .instprm was found.
+
+    # ── Parse options with safe defaults ───────────────────────────────────
+    # Options can override profile defaults where needed.
+    options = options or {}
+    geometry             = options.get('geometry', profile['geometry'])
+    preferred_orientation = options.get('preferred_orientation',
+                                        profile['preferred_orientation_default'])
+    refine_xyz           = options.get('refine_xyz', False)
+    background_mode      = options.get('background_mode', 'auto')
+    exclude_regions      = options.get('exclude_regions', [])
+    phase_sensitivity    = options.get('phase_sensitivity', False)
+    # Verification mode: skip Stage 3 (cell), Stage 4 (Uiso+MD), Stage 4b
+    # (size), and disable cell refinement in Stage 6.  First-pass test for
+    # a new sample/CIF combination — refines only background, scales,
+    # displacement, and Y, so position/width problems become visible
+    # without being absorbed by the more flexible parameters.
+    verification_mode    = options.get('verification_mode', False)
+    # When verification_mode AND verify_refine_cell are both True, Stage 3
+    # (per-phase cell with divergence checks) still skips, but Stage 6
+    # gets cell refinement back on top of bg + scales + displacement + Y.
+    # Use this once verification_mode has shown peaks land in the right
+    # place and you want to let the cell shrink/relax.  Uiso, size, MD,
+    # and XYZ remain off.
+    verify_refine_cell   = options.get('verify_refine_cell', False)
+    # Phase isolation: per-phase patterns from GSAS-II ycalc instead of
+    # manual reconstruction.  Default ON — internally consistent with
+    # GSAS-II RefList ticks (see tick-source switch in per-phase loop).
+    phase_isolation_opt  = bool(options.get('phase_isolation', True))
+    # Refine March-Dollase preferred orientation for hexagonal/trigonal
+    # phases during verification mode.  Without this flag, PO is set up
+    # at ratio=1.0 (no texture) but never refines, so hex platelet
+    # texture (e.g. WC along [001]) cannot be captured.  When True,
+    # forces preferred_orientation to 'auto' (hex/trig only) and lets
+    # Stage 6 refine the MD ratio alongside cell.
+    verify_refine_po_opt = bool(options.get('verify_refine_po', False))
+    if verify_refine_po_opt and verification_mode:
+        if preferred_orientation == 'off':
+            preferred_orientation = 'auto'
+            print(f"  PO override: preferred_orientation forced to 'auto' "
+                  f"because verify_refine_po=True.", flush=True)
+    # Swap position-handle: free Zero, fix DisplaceX/Y at zero.  Use when
+    # the offset is a real diffractometer/wavelength miscalibration that
+    # the measured-instprm Zero cannot capture for this sample (e.g. when
+    # DisplaceY refuses to move from 0 because the position residual
+    # belongs to Zero, not to sample displacement).  Overrides the
+    # measured-instprm rule that locks Zero.
+    use_zero_not_displace_opt = bool(
+        options.get('verify_use_zero_not_displace', False))
+    if use_zero_not_displace_opt:
+        print(f"  Position handle: refining Zero, fixing DisplaceX/Y = 0 "
+              f"(verify_use_zero_not_displace=True).", flush=True)
+    # Constrain W2C cell to uniform-volume scaling (Branch B).
+    # Stage 6 refines (a, b, c) freely; afterward, post-process W2C
+    # cell to enforce (a, b, c) = (s·a₀, s·b₀, s·c₀) where
+    # s = (V_refined/V_start)^(1/3).  Tests whether the unconstrained
+    # anisotropic refinement was capturing real strain or just exploiting
+    # the data-resolution-limited a/b correlation.  Compare χ² against
+    # the unconstrained run: similar χ² → uniform scaling is enough,
+    # the anisotropy was noise; much worse χ² → real anisotropic strain.
+    uniform_cell_w2c_opt = bool(
+        options.get('verify_cell_uniform_w2c', False))
+    if uniform_cell_w2c_opt:
+        print(f"  Cell constraint: W2C will be post-scaled to uniform "
+              f"contraction after Stage 6 "
+              f"(verify_cell_uniform_w2c=True).", flush=True)
+    # Diagnostic: free Lorentzian strain X in Stage 2 and Stage 6.
+    # Normally X is pinned to the measured-instprm value (Si standard
+    # has X = 0).  When this is True, X is added to the refine list
+    # alongside Y (and Zero, if zero-swap is also on).  Use to test
+    # whether residual Lorentzian peak shape needs strain-like broadening.
+    refine_x_opt = bool(options.get('verify_refine_x', False))
+    if refine_x_opt:
+        print(f"  Diagnostic: X (Lorentzian strain) will refine in "
+              f"Stages 2 and 6 (verify_refine_x=True).", flush=True)
+    # Y controls — orthogonal to X and Zero handles.  Fix-Y dominates
+    # refine-Y when both are set.  Non-negative constraint applies
+    # post-Stage-6 only when Y refines.
+    fix_y_opt           = bool(options.get('verify_fix_y', False))
+    y_fixed_value_opt   = options.get('verify_y_fixed_value', None)
+    y_nonneg_opt        = bool(options.get('verify_y_nonnegative', False))
+    if fix_y_opt:
+        print(f"  Y control: fixing Y at requested value "
+              f"(verify_fix_y=True, value={y_fixed_value_opt}).",
+              flush=True)
+    if y_nonneg_opt:
+        print(f"  Y control: post-Stage-6 will clamp Y to >= 0 "
+              f"(verify_y_nonnegative=True).", flush=True)
+    # Explicit toggles for structural refinement (Phase B).  These
+    # OVERRIDE the verification_mode default of "off" — they let the
+    # user run a near-verification recipe with one extra structural
+    # parameter active, without leaving verification_mode entirely.
+    refine_uiso_opt     = bool(options.get('verify_refine_uiso', False))
+    refine_size_opt     = bool(options.get('verify_refine_size', False))
+    if refine_uiso_opt:
+        print(f"  Structural: Uiso (atomic displacement) will refine in "
+              f"Stage 4 (verify_refine_uiso=True).", flush=True)
+    if refine_size_opt:
+        print(f"  Structural: HAP Size will refine in Stage 4b "
+              f"(verify_refine_size=True).", flush=True)
+    # Tick source: default Python phase_refs (filtered by intensity),
+    # opt-in to GSAS-II RefList (all reflections including weak ones).
+    use_gsas_ticks_opt  = bool(options.get('use_gsas_ref_ticks', False))
+    # Fix WC PO: keep March-Dollase enabled at a held value instead of
+    # refining.  Use when adding Uiso to a recipe where MD was refining
+    # — Uiso × MD correlation is the main SVD source in those runs.
+    fix_po_opt          = bool(options.get('verify_fix_po', False))
+    try:
+        po_fixed_value_opt = float(
+            options.get('verify_po_fixed_value', 0.905) or 0.905)
+    except (TypeError, ValueError):
+        po_fixed_value_opt = 0.905
+    if fix_po_opt:
+        print(f"  PO control: WC PO held at MD ratio = "
+              f"{po_fixed_value_opt:.4f} (verify_fix_po=True).",
+              flush=True)
+    # Per-phase refinement options (dynamic, phase-agnostic).
+    # phase_options is a list (one entry per phase, indexed) of dicts:
+    #   {"refine_size": bool, "refine_mustrain": bool,
+    #    "po_mode": "off"|"fixed"|"refined",
+    #    "po_value": float, "po_axis": [h, k, l] or None}
+    # When provided, the backend applies these per-phase by index instead
+    # of the legacy name-based WC/W2C options.
+    phase_options_raw = options.get('phase_options', None)
+    if phase_options_raw is None:
+        phase_options_list = []
+    elif isinstance(phase_options_raw, list):
+        phase_options_list = phase_options_raw
+    elif isinstance(phase_options_raw, dict):
+        # Convert {"0": {...}, "1": {...}} → list
+        try:
+            _max_idx = max(int(k) for k in phase_options_raw.keys())
+            phase_options_list = [
+                phase_options_raw.get(str(i), {})
+                for i in range(_max_idx + 1)]
+        except Exception:
+            phase_options_list = []
+    else:
+        phase_options_list = []
+    if phase_options_list:
+        print(f"  Per-phase options received for {len(phase_options_list)} "
+              f"phase(s):", flush=True)
+        for _pi, _popts in enumerate(phase_options_list):
+            print(f"    Phase {_pi}: {_popts}", flush=True)
+
+    # Legacy phase-specific HAP options — kept as a fallback for callers
+    # that haven't migrated to phase_options.  Detection by case-insensitive
+    # name match: any phase whose name contains "wc" but not "w2c" → WC;
+    # contains "w2c" → W2C.
+    refine_wc_size_opt      = bool(options.get('verify_refine_wc_size', False))
+    refine_w2c_size_opt     = bool(options.get('verify_refine_w2c_size', False))
+    refine_wc_mustrain_opt  = bool(options.get('verify_refine_wc_mustrain', False))
+    refine_w2c_mustrain_opt = bool(options.get('verify_refine_w2c_mustrain', False))
+    if any([refine_wc_size_opt, refine_w2c_size_opt,
+            refine_wc_mustrain_opt, refine_w2c_mustrain_opt]):
+        print(f"  HAP per-phase (legacy name-based): "
+              f"WC size={refine_wc_size_opt}, "
+              f"W2C size={refine_w2c_size_opt}, "
+              f"WC mustrain={refine_wc_mustrain_opt}, "
+              f"W2C mustrain={refine_w2c_mustrain_opt}",
+              flush=True)
+
+    def _phase_opts_for(idx, name):
+        """Return effective per-phase options dict.  phase_options_list
+        wins over legacy WC/W2C name-based options.  Returns a dict with
+        all keys present (None/defaults for unspecified)."""
+        defaults = {
+            'refine_size': False,
+            'refine_mustrain': False,
+            'po_mode': 'off',
+            'po_value': 1.0,
+            'po_axis': None,
+        }
+        # Layer 1: legacy name-based fallback
+        _n = (name or '').lower()
+        if 'w2c' in _n:
+            if refine_w2c_size_opt:
+                defaults['refine_size'] = True
+            if refine_w2c_mustrain_opt:
+                defaults['refine_mustrain'] = True
+        elif 'wc' in _n:
+            if refine_wc_size_opt:
+                defaults['refine_size'] = True
+            if refine_wc_mustrain_opt:
+                defaults['refine_mustrain'] = True
+        # Layer 2: explicit phase_options entry overrides
+        if idx < len(phase_options_list):
+            _explicit = phase_options_list[idx] or {}
+            if isinstance(_explicit, dict):
+                for k in defaults:
+                    if k in _explicit:
+                        defaults[k] = _explicit[k]
+        return defaults
+    if verification_mode:
+        if verify_refine_cell:
+            print("  VERIFICATION + CELL MODE: Uiso, MD, size, and XYZ "
+                  "still skipped.  Cell refines in Stage 6 only.  "
+                  "Refining bg + scales + displacement + Y + cell.",
+                  flush=True)
+        else:
+            print("  VERIFICATION MODE: cell, Uiso, MD, size, and XYZ "
+                  "stages will be skipped.  Refining bg + scales + "
+                  "displacement + Y only.  Add cell refinement in a "
+                  "follow-up run once peaks land in the right place.",
+                  flush=True)
+        refine_xyz = False  # never refine atom positions in verification mode
+
+    # Profile-derived defaults (explicit params take priority)
+    if polariz is None:
+        polariz = profile['polariz']
+    if sh_l is None:
+        sh_l = profile['sh_l']
+
+    # Sigma inflation factor — profile-specific
+    _SIGMA_INFLATION_FACTOR = profile.get('sigma_inflation_K', 1.0)
+
+    print(f"  Options: geometry={geometry}, PO={preferred_orientation}, "
+          f"XYZ={refine_xyz}, BG={background_mode}, "
+          f"exclude={len(exclude_regions)} regions, "
+          f"sigma_K={_SIGMA_INFLATION_FACTOR}", flush=True)
 
     # Validate: all phases need CIF text
     missing = [ph.get('name', '?') for ph in phases if not ph.get('cif_text')]
@@ -1749,6 +2132,20 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
     tt_r = tt[mask]
     y_r = y_obs[mask]
     sig_r = sigma[mask] if sigma is not None else np.sqrt(np.maximum(y_r, 1.0))
+
+    # ── Apply exclusion regions ─────────────────────────────────────────
+    # Mask out user-specified 2θ ranges (detector artifacts, holder peaks,
+    # low-angle junk, or known non-phase features) before writing XYE.
+    if exclude_regions:
+        keep = np.ones(len(tt_r), dtype=bool)
+        for lo, hi in exclude_regions:
+            keep &= ~((tt_r >= lo) & (tt_r <= hi))
+        n_excluded = int(np.sum(~keep))
+        tt_r = tt_r[keep]
+        y_r = y_r[keep]
+        sig_r = sig_r[keep]
+        print(f"  Exclusion regions: masked {n_excluded} points in "
+              f"{len(exclude_regions)} region(s).", flush=True)
 
     if progress_callback:
         progress_callback('GSAS-II: setting up project...')
@@ -1785,11 +2182,41 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
               f"(Cu Kα1/Kα2 doublet active — seeds would be "
               f"~2× too wide for the doublet model).", flush=True)
 
+    # Auto-locate measured .instprm from instrument profile if not
+    # explicitly provided.  Searches relative to the toolkit root
+    # (two levels up from this module file).
+    if not instprm_file:
+        _profile_instprm = profile.get('instprm_filename')
+        if _profile_instprm:
+            _module_dir = os.path.dirname(os.path.abspath(__file__))
+            _toolkit_root = os.path.dirname(os.path.dirname(_module_dir))
+            _candidate = os.path.join(_toolkit_root, _profile_instprm)
+            if os.path.isfile(_candidate):
+                instprm_file = _candidate
+                print(f"  Auto-located measured .instprm: {_candidate}",
+                      flush=True)
+
+    # Report profile status AFTER auto-locate, so it's accurate
+    if instprm_file and os.path.isfile(instprm_file):
+        print(f"    Profile: measured .instprm (overrides provisional "
+              f"defaults)", flush=True)
+    else:
+        print(f"    Profile: temporary fallback, not measured .instprm",
+              flush=True)
+
+    _measured_instprm = False  # True when U/V/W/X/Y should be FIXED
+
     if instprm_file and os.path.isfile(instprm_file):
         import shutil
         instprm_path = os.path.join(work_dir, 'instrument.instprm')
         shutil.copy2(instprm_file, instprm_path)
-        print(f"Using user-provided instrument parameters: {instprm_file}",
+        _measured_instprm = True
+        print(f"Using MEASURED instrument parameters: {instprm_file}",
+              flush=True)
+        print(f"  → U/V/W/X/SH/L and Zero fixed; Y may refine for "
+              f"sample size broadening."
+              f"\n  → Refining: displacement, Y, scale, cell, BG"
+              f"  (and Size/Uiso unless verification_mode).",
               flush=True)
         # Populate est_* with defaults for downstream reset targets; the
         # user .instprm controls actual refinement starting values.
@@ -1818,7 +2245,8 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         instprm_path = _write_instprm(work_dir, wavelength,
                                        polariz=polariz, sh_l=sh_l,
                                        u=est_u, v=est_v, w=est_w,
-                                       x=est_x, y=est_y)
+                                       x=est_x, y=est_y,
+                                       zero_seed=profile.get('zero_seed', 0.0))
     else:
         # Estimate initial profile parameters from observed peak widths.
         # This path is used when no user instprm and no usable seeds —
@@ -1830,7 +2258,8 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         instprm_path = _write_instprm(work_dir, wavelength,
                                        polariz=polariz, sh_l=sh_l,
                                        u=est_u, v=est_v, w=est_w,
-                                       x=est_x, y=est_y)
+                                       x=est_x, y=est_y,
+                                       zero_seed=profile.get('zero_seed', 0.0))
     # Save initial profile estimates for use as reset targets if
     # parameters diverge during refinement.  Better than resetting
     # to arbitrary small constants (e.g. 0.01) which are far from
@@ -1848,6 +2277,34 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # setting (common with Materials Project data).
         cif_for_gsas = _build_conventional_cif(ph)
         gsas_cif_texts.append(cif_for_gsas)
+
+        # ── W2C / mp-2034 emergency guard ─────────────────────────────
+        # The fixture pipeline must produce a Pbcn (SG 60) CIF for
+        # mp-2034.  If anything in app.py / cif_cache / _build_conventional_cif
+        # has rewritten the CIF into P1/full-cell, refining further is
+        # silently meaningless.  Stop the run with a clear error
+        # instead of producing garbage results.
+        _phase_id = str(ph.get('cod_id', ph.get('mp_id', '')))
+        if _phase_id == 'mp-2034':
+            _has_pbcn = ('Pbcn' in cif_for_gsas)
+            _has_sg60 = ('_symmetry_Int_Tables_number   60' in cif_for_gsas
+                         or '_symmetry_Int_Tables_number 60' in cif_for_gsas
+                         or '_space_group_IT_number 60' in cif_for_gsas
+                         or '_space_group_IT_number   60' in cif_for_gsas)
+            if not (_has_pbcn and _has_sg60):
+                raise RuntimeError(
+                    f"W2C mp-2034 is not using the Pbcn fixture CIF.  "
+                    f"Expected fixtures/w2c_pbcn_mp_2034.cif before "
+                    f"GSAS-II refinement, but the CIF being written "
+                    f"to {ph.get('name', 'phase')!r} contains "
+                    f"Pbcn={_has_pbcn}, SG60={_has_sg60}.  Refinement "
+                    f"aborted to prevent silent garbage output.  "
+                    f"Check app.py phase_hint merge logic and "
+                    f"cif_cache.cached_fetch_mp fixture priority."
+                )
+            print(f"  ✓ W2C mp-2034 fixture guard passed: Pbcn + SG 60.",
+                  flush=True)
+
         cif_path = _write_temp_cif(cif_for_gsas, ph.get('name', 'phase'),
                                    work_dir=work_dir, index=i)
         cif_paths.append(cif_path)
@@ -1906,13 +2363,11 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # K and divides reduced χ² by K²).  Rwp is invariant under
         # uniform σ scaling because it is a ratio.
         #
-        # K = 5 is a deliberately conservative choice — aggressive enough
-        # to bring GoF to ~2 (an honest value for lab XRD), but
-        # conservative enough to leave headroom for real model error.
-        # Set K = 1.0 to disable inflation entirely (appropriate for
-        # conventional Bragg-Brentano data where σ ≈ √I is already
-        # correct).
-        _SIGMA_INFLATION_FACTOR = 5.0
+        # Sigma inflation factor K is now instrument-profile-specific:
+        #   synergy_s:  K=5.0 (2D-integrated σ underestimates uncertainty)
+        #   smartlab:   K=1.0 (σ ≈ √I is already correct for BB)
+        # The value was resolved from the instrument profile at the top
+        # of this function into _SIGMA_INFLATION_FACTOR.
         try:
             _wt = 1.0 / (_SIGMA_INFLATION_FACTOR ** 2)
             histogram.data['wtFactor'] = _wt
@@ -2022,6 +2477,139 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 print(f"    atom {_ai}: {_lbl} ({_el}) at "
                       f"({_x}, {_y}, {_z})", flush=True)
 
+        # ── CIF import validation gate ─────────────────────────────────────
+        # Compare what GSAS-II actually imported against what the search-row
+        # phase metadata SAID it should be.  Catches the W2C-as-P1 class of
+        # bug (where CIF construction silently produces a structure GSAS-II
+        # interprets as a different space group / setting / atom count).
+        # This is non-fatal — we log a clear warning and continue, leaving
+        # the user to abort if the mismatch matters for their fit.
+        _validation_warnings = []
+        for _pi, (_po, _ph_input) in enumerate(zip(gsas_phases, phases)):
+            _expected_sg = int(_ph_input.get('spacegroup_number', 0) or 0)
+            _expected_a  = float(_ph_input.get('a', 0) or 0)
+            _expected_b  = float(_ph_input.get('b', _expected_a) or _expected_a)
+            _expected_c  = float(_ph_input.get('c', _expected_a) or _expected_a)
+            _name        = _ph_input.get('formula') or _ph_input.get('name') or f'phase{_pi}'
+
+            try:
+                _imported_sgdata = _po.data['General'].get('SGData', {}) or {}
+                _imported_sg_str = (_imported_sgdata.get('SpGrp')
+                                    or _imported_sgdata.get('SpcGrp')
+                                    or '?').strip()
+                _imported_sg_num = int(_imported_sgdata.get('SGuniq', 0) or 0)
+                if not _imported_sg_num:
+                    # Try to infer from the H-M symbol via pymatgen.
+                    try:
+                        from pymatgen.symmetry.groups import SpaceGroup
+                        _imported_sg_num = int(
+                            SpaceGroup(_imported_sg_str).int_number)
+                    except Exception:
+                        pass
+                _imported_atoms = len(_po.data.get('Atoms', []))
+                _imported_cell  = _po.data['General']['Cell']
+                _ia = float(_imported_cell[1])
+                _ib = float(_imported_cell[2])
+                _ic = float(_imported_cell[3])
+            except Exception as _e:
+                print(f"  ⚠ Validation [{_pi} {_name}]: could not read "
+                      f"GSAS-II state: {_e}", flush=True)
+                continue
+
+            # Space group sanity check.  P1 (1) when something else was
+            # expected → mostly-fatal: refinement is now fitting a
+            # different model than the user thinks.
+            if _expected_sg > 1 and _imported_sg_num == 1:
+                _msg = (f"phase {_pi} ({_name}): expected SG "
+                        f"{_expected_sg} but GSAS-II imported as "
+                        f"P1 (SG 1).  CIF round-trip likely lost "
+                        f"symmetry — refinement model is NOT what "
+                        f"the search row indicated.")
+                _validation_warnings.append(_msg)
+                print(f"  ⚠ VALIDATION FAIL: {_msg}", flush=True)
+            elif _expected_sg > 1 and _imported_sg_num != _expected_sg:
+                _msg = (f"phase {_pi} ({_name}): expected SG "
+                        f"{_expected_sg}, GSAS-II imported SG "
+                        f"{_imported_sg_num} ('{_imported_sg_str}').  "
+                        f"Possible setting transformation (CifWriter "
+                        f"may have standardized axes).")
+                _validation_warnings.append(_msg)
+                print(f"  ⚠ VALIDATION WARN: {_msg}", flush=True)
+
+            # Cell sanity: each axis within ±5% of expected, or a
+            # PERMUTATION of (a, b, c) within ±5%.  Permutation is
+            # legal for orthorhombic CifWriter standardization but
+            # worth flagging.
+            def _close(x, y, tol=0.05):
+                if x <= 0 or y <= 0:
+                    return False
+                return abs(x - y) / max(x, y) <= tol
+            if _expected_a > 0 and _expected_b > 0 and _expected_c > 0:
+                _direct = (_close(_ia, _expected_a)
+                           and _close(_ib, _expected_b)
+                           and _close(_ic, _expected_c))
+                _expected_sorted = sorted([_expected_a, _expected_b, _expected_c])
+                _imported_sorted = sorted([_ia, _ib, _ic])
+                _permuted = all(_close(x, y) for x, y in
+                                zip(_expected_sorted, _imported_sorted))
+                if not _direct and _permuted:
+                    _msg = (f"phase {_pi} ({_name}): cell axes match "
+                            f"under permutation but not direct.  "
+                            f"Expected ({_expected_a:.4f}, "
+                            f"{_expected_b:.4f}, {_expected_c:.4f}) → "
+                            f"got ({_ia:.4f}, {_ib:.4f}, {_ic:.4f}).  "
+                            f"OK for orthorhombic if positions were "
+                            f"transformed together, but verify the "
+                            f"refined cell maps to your intended axes.")
+                    _validation_warnings.append(_msg)
+                    print(f"  ⚠ VALIDATION WARN: {_msg}", flush=True)
+                elif not _direct and not _permuted:
+                    _msg = (f"phase {_pi} ({_name}): cell mismatch.  "
+                            f"Expected ({_expected_a:.4f}, "
+                            f"{_expected_b:.4f}, {_expected_c:.4f}), "
+                            f"got ({_ia:.4f}, {_ib:.4f}, {_ic:.4f}).")
+                    _validation_warnings.append(_msg)
+                    print(f"  ⚠ VALIDATION FAIL: {_msg}", flush=True)
+
+        if _validation_warnings:
+            print(f"  ⚠ {len(_validation_warnings)} validation issue(s) "
+                  f"detected before refinement.  Continuing anyway — "
+                  f"check the warnings above and the refined cell vs. "
+                  f"expected at the end.", flush=True)
+        else:
+            print(f"  ✓ CIF import validation: all phases imported with "
+                  f"expected space group and cell.", flush=True)
+
+        # ── Diagnostic: HAP keys (per-phase histogram-and-phase data) ─────
+        # Used to verify the structure GSAS-II expects when we set per-phase
+        # Size / Mustrain refinement flags.  Printed once at startup so
+        # we can confirm the dict layout matches the installed GSAS-II.
+        print("  HAP keys diagnostic (one-time, for per-phase refinement):",
+              flush=True)
+        for _pi, _po in enumerate(gsas_phases):
+            try:
+                _hap_dict = _po.data.get('Histograms', {})
+                if not _hap_dict:
+                    print(f"    Phase {_pi} ({_po.name}): no HAP entries.",
+                          flush=True)
+                    continue
+                _hap = list(_hap_dict.values())[0]
+                _keys = sorted(_hap.keys()) if isinstance(_hap, dict) else []
+                print(f"    Phase {_pi} ({_po.name}): HAP keys = {_keys}",
+                      flush=True)
+                if isinstance(_hap, dict):
+                    if 'Size' in _hap:
+                        print(f"      Size:     {_hap['Size']}", flush=True)
+                    if 'Mustrain' in _hap:
+                        print(f"      Mustrain: {_hap['Mustrain']}",
+                              flush=True)
+                    if 'Pref.Ori.' in _hap:
+                        print(f"      Pref.Ori.: {_hap['Pref.Ori.']}",
+                              flush=True)
+            except Exception as _e:
+                print(f"    Phase {_pi}: HAP inspection failed: {_e}",
+                      flush=True)
+
         # Track which stage succeeded (for fallback on failure)
         last_good_stage = 0
         _failed_stages = []
@@ -2064,38 +2652,45 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         _complex = max_asym_atoms > 6  # W2C has ~6 asym sites
         _cyc_mult = 2 if _complex else 1  # double cycles for complex phases
 
-        # ── Auto-select background coefficients ────────────────────────
-        # When auto_bg is enabled (default, GUI "Auto" selection),
-        # evaluate the data to determine the optimal number of Chebyshev
-        # terms.  This removes the subjectivity of the manual selector.
-        if auto_bg:
+        # ── Background coefficient selection ─────────────────────────────
+        # Priority order:
+        #   1. background_mode='fixedN' from options → exactly N terms
+        #   2. auto_bg=False (user picked a number in GUI) → use n_bg_coeffs as-is
+        #   3. auto_bg=True AND background_mode='auto' → DW/RMS auto-select
+        #
+        # The key distinction: when the user explicitly selects "6" or "8"
+        # in the GUI dropdown, __init__.py sets auto_bg=False and n_bg_coeffs
+        # to that value.  We must NOT override it with auto-selection.
+        if background_mode.startswith('fixed'):
+            try:
+                n_bg_coeffs = int(background_mode.replace('fixed', ''))
+                print(f"  Background: fixed mode → {n_bg_coeffs} Chebyshev "
+                      f"coefficients.", flush=True)
+            except ValueError:
+                n_bg_coeffs = 6
+        elif not auto_bg:
+            # User explicitly selected a number in the GUI — respect it.
+            print(f"  Background: user-specified {n_bg_coeffs} Chebyshev "
+                  f"coefficients.", flush=True)
+        elif auto_bg:
             n_bg_coeffs = _auto_select_bg_coeffs(
                 tt, y_obs, phases, wavelength, tt_min, tt_max,
                 user_n=n_bg_coeffs)
-            # Update ONLY the coefficient count in GSAS-II's background config.
-            # CRITICAL: do NOT overwrite the initial coefficient values —
-            # GSAS-II's own initial estimates are typically better than our
-            # simple percentile + zeros approach.  Overwriting them with
-            # [bg_init, 0, 0, ...] gives a flat starting background that
-            # sends the refinement off track.
-            bkg_data = histogram.data['Background']
-            existing = bkg_data[0]
-            old_n = existing[2] if len(existing) > 2 else 6
-            existing[2] = n_bg_coeffs
-            # Pad or truncate coefficient list to match new count
-            # Format: ['chebyschev-1', refine_flag, n_coeffs, c0, c1, ...]
-            n_existing_coeffs = len(existing) - 3
-            if n_bg_coeffs > n_existing_coeffs:
-                # Pad with zeros for new higher-order terms
-                existing.extend([0.0] * (n_bg_coeffs - n_existing_coeffs))
-            elif n_bg_coeffs < n_existing_coeffs:
-                # Truncate
-                bkg_data[0] = existing[:3 + n_bg_coeffs]
             print(f"  Background: auto-selected {n_bg_coeffs} Chebyshev "
-                  f"coefficients (was {old_n})", flush=True)
-        else:
-            print(f"  Background: using user-specified {n_bg_coeffs} "
-                  f"Chebyshev coefficients", flush=True)
+                  f"coefficients.", flush=True)
+
+        # Update the histogram's background config to match n_bg_coeffs.
+        # This runs for ALL paths (auto, user-specified, fixed) so the
+        # coefficient list is always the right length.
+        bkg_data = histogram.data['Background']
+        existing = bkg_data[0]
+        old_n = existing[2] if len(existing) > 2 else 6
+        existing[2] = n_bg_coeffs
+        n_existing_coeffs = len(existing) - 3
+        if n_bg_coeffs > n_existing_coeffs:
+            existing.extend([0.0] * (n_bg_coeffs - n_existing_coeffs))
+        elif n_bg_coeffs < n_existing_coeffs:
+            bkg_data[0] = existing[:3 + n_bg_coeffs]
 
         if progress_callback:
             progress_callback('GSAS-II: stage 1 — refining background + scale...')
@@ -2115,26 +2710,28 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             hapData = list(phase_obj.data['Histograms'].values())[0]
             hapData['Scale'] = [init_scale, False]  # start fixed
 
-        # First: refine background only
-        _safe_refine('background', [{
+        # Stage 1a: refine phase scales FIRST with background fixed.
+        # Prevents the background polynomial from absorbing real peak
+        # intensity before the scale factors have a chance to activate.
+        # This is especially important for highly crystalline patterns
+        # (WC/W2C) where intense peaks sit on a relatively flat baseline.
+        for phase_obj in gsas_phases:
+            hapData = list(phase_obj.data['Histograms'].values())[0]
+            hapData['Scale'] = [hapData['Scale'][0], True]  # turn on
+        _safe_refine('scales only (background fixed)', [{
+            'set': {},
+            'cycles': min(max_cycles, 3),
+        }], 1)
+
+        # Stage 1b: refine background + scales together.
+        # Now that scales are in the right ballpark, the background
+        # polynomial can adjust without absorbing peak intensity.
+        _safe_refine('background + scales', [{
             'set': {
                 'Background': {'type': 'chebyschev-1', 'refine': True,
                                 'no. coeffs': n_bg_coeffs},
             },
             'cycles': min(max_cycles, 5),
-        }], 1)
-
-        # Now refine ALL phase scales SIMULTANEOUSLY.
-        # This is critical for overlapping phases (WC + W2C) — simultaneous
-        # refinement lets the optimizer distribute intensity between phases
-        # based on their respective peak patterns, rather than the first
-        # phase greedily absorbing everything.
-        for phase_obj in gsas_phases:
-            hapData = list(phase_obj.data['Histograms'].values())[0]
-            hapData['Scale'] = [hapData['Scale'][0], True]  # turn on
-        _safe_refine('all scales (simultaneous)', [{
-            'set': {},
-            'cycles': min(max_cycles, 8),
         }], 1)
 
         # ── Scale floor protection ──────────────────────────────────────
@@ -2179,27 +2776,107 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
 
         # ── Stage 2: Profile + background + zero + transparency ──────
         # Refine Gaussian (U, W) and Lorentzian (X, Y) profile parameters
-        # together with zero shift, background, and sample transparency.
+        # together with zero shift, background, and sample displacement.
         #
         # Profile parameter selection for lab XRD stability:
         #   Refined: U, W (Gaussian Caglioti), X, Y (Lorentzian), Zero,
-        #            DisplaceY (sample transparency, Debye-Scherrer)
+        #            Displacement (geometry-dependent: DisplaceY for
+        #            capillary/transmission, DisplaceX for Bragg-Brentano)
         #   Fixed:   V (99%+ correlated with U and W — instrument-determined)
         #            SH/L (instrument constant, 99.9% correlated with Zero)
-        #            DisplaceX (Bragg-Brentano sample-height; not the
-        #            right correction for capillary geometry)
-        # Removing the Bragg-Brentano-specific DisplaceX and adding the
-        # Debye-Scherrer DisplaceY (sample transparency, scales as sin 2θ)
-        # is the appropriate choice for capillary / transmission data
-        # from a 2D area detector (e.g., Synergy-Dualflex with HyPix-6000).
-        # For flat-plate Bragg-Brentano data, swap the two parameter names
-        # below.
-        _safe_refine('profile + bg + zero + transparency', [{
+        _displace_stg2 = ('DisplaceX' if geometry == 'bragg_brentano'
+                          else 'DisplaceY')
+        # When a measured .instprm is loaded, U/V/W/X/Y are FIXED —
+        # only Zero and displacement refine alongside background.
+        # This is the whole point of the measured standard: instrument
+        # broadening is pinned, leaving only sample broadening for
+        # Size/Mustrain to capture.
+        if _measured_instprm:
+            # With measured instprm: U/V/W (Gaussian Caglioti) and X
+            # (Lorentzian strain) are fixed at the Si-standard values —
+            # they're instrument-determined.  Zero is also fixed; all
+            # position correction goes through DisplaceX/Y.
+            #
+            # Y (Lorentzian, FWHM ~ Y/cos θ) STAYS REFINABLE because it
+            # absorbs sample size broadening.  A Si standard pins the
+            # instrumental Y; nanocrystalline samples need additional
+            # Y on top of that.  Locking Y at the Si value would force
+            # nano peaks to look like bulk-Si peaks → broken fit for
+            # WC/W2C (~9 nm crystallites).
+            _inst_params_stg2 = ['Y']
+            _stg2_label = 'bg + displacement + Y (U/V/W/X/SH/L/Zero fixed by instprm)'
+            print(f"  Stage 2: U/V/W/X/SH/L/Zero fixed at instprm values; "
+                  f"Y refinable for sample size broadening.", flush=True)
+        elif verification_mode:
+            # No measured instprm + verification_mode: tighten the profile
+            # to reduce X↔Y correlation.  X is fixed at 0 (strain second-
+            # order for nanocrystals).  Zero is fixed at the seed value;
+            # DisplaceX/Y absorbs position correction.  V is fixed
+            # (correlated with U and W).  This leaves U, W, Y refinable —
+            # the minimum set that can describe Caglioti+Lorentzian width.
+            _inst_params_stg2 = ['U', 'W', 'Y']
+            _stg2_label = ('verify: bg + displacement + U + W + Y '
+                           '(V/X/Zero/SH/L fixed)')
+            print(f"  Stage 2 (verification_mode, no instprm): "
+                  f"refining U, W, Y; V/X/Zero/SH/L held fixed.",
+                  flush=True)
+        else:
+            _inst_params_stg2 = ['U', 'W', 'X', 'Y', 'Zero']
+            _stg2_label = 'profile + bg + zero + displacement'
+
+        # Swap Zero ↔ Displace (when verify_use_zero_not_displace is on):
+        # Add Zero to the refinable list, drop displacement from the
+        # Sample Parameters list, and explicitly zero the DisplaceX/Y
+        # value so it can't drift from a previous stage.
+        if use_zero_not_displace_opt:
+            if 'Zero' not in _inst_params_stg2:
+                _inst_params_stg2 = list(_inst_params_stg2) + ['Zero']
+            try:
+                for _disp_key in ('DisplaceX', 'DisplaceY'):
+                    _dp = histogram.data['Sample Parameters'].get(_disp_key)
+                    if _dp and isinstance(_dp, list):
+                        _dp[0] = 0.0
+                        if len(_dp) >= 2:
+                            _dp[1] = False
+            except Exception as _e:
+                print(f"    Warning: could not pin displacement to 0: {_e}",
+                      flush=True)
+            _stg2_sample_params = []
+            _stg2_label = (_stg2_label.rstrip('.')
+                           + ' [Zero ON, Displace=0 fixed]')
+        else:
+            _stg2_sample_params = [_displace_stg2]
+
+        # Diagnostic: add X (Lorentzian strain) to the refine list.
+        # Stacks on top of any of the above branches.
+        if refine_x_opt and 'X' not in _inst_params_stg2:
+            _inst_params_stg2 = list(_inst_params_stg2) + ['X']
+            _stg2_label = _stg2_label + ' +X'
+
+        # Fix-Y dominates: drop Y from refine list and pin its value.
+        if fix_y_opt:
+            _inst_params_stg2 = [p for p in _inst_params_stg2 if p != 'Y']
+            try:
+                _inst_dict = histogram.data['Instrument Parameters'][0]
+                if 'Y' in _inst_dict and isinstance(_inst_dict['Y'], list):
+                    _y_target = (float(y_fixed_value_opt)
+                                 if y_fixed_value_opt is not None
+                                 else float(_inst_dict['Y'][1]))
+                    _inst_dict['Y'][1] = _y_target  # current value
+                    if len(_inst_dict['Y']) >= 3:
+                        _inst_dict['Y'][2] = False   # refine flag off
+                    print(f"    Stage 2: Y fixed at {_y_target:.4f}.",
+                          flush=True)
+            except Exception as _e:
+                print(f"    Warning: could not fix Y: {_e}", flush=True)
+            _stg2_label = _stg2_label + ' [Y fixed]'
+
+        _safe_refine(_stg2_label, [{
             'set': {
                 'Background': {'type': 'chebyschev-1', 'refine': True,
                                 'no. coeffs': n_bg_coeffs},
-                'Instrument Parameters': ['U', 'W', 'X', 'Y', 'Zero'],
-                'Sample Parameters': ['DisplaceY'],
+                'Instrument Parameters': _inst_params_stg2,
+                'Sample Parameters': _stg2_sample_params,
             },
             'cycles': min(max_cycles, 10 * _cyc_mult),
         }], 2)
@@ -2221,13 +2898,11 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                       f"— skipping cell/atom refinement stages.", flush=True)
 
         # ── Preferred orientation setup ──────────────────────────────────
-        # For phases with crystal systems known to exhibit preferred
-        # orientation in flat-plate geometry (hexagonal platelets, fibrous
-        # crystals, etc.), enable March-Dollase correction.
-        # This is a standard Rietveld parameter, not a bandaid — it models
-        # the physical tendency of crystallites to orient non-randomly on
-        # the sample surface.  Without it, peak intensity ratios cannot
-        # match observed data for textured samples.
+        # March-Dollase correction for preferred orientation.  Controlled
+        # by options['preferred_orientation']:
+        #   "auto"  → enable for hexagonal/trigonal phases only (default)
+        #   "off"   → disable for all phases
+        #   "force" → enable for all phases
         #
         # Common preferred orientation directions:
         #   Hexagonal platelets (WC, BN, MoS2):  [0, 0, 1]
@@ -2236,25 +2911,80 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # The MD ratio starts at 1.0 (no texture) and is refined later
         # alongside Uiso (both affect peak intensities).
         _pref_ori_phases = set()
+        # Track which phases want PO held at a fixed value (per-phase).
+        # Used by the refine-flag loop later to skip setting Pref.Ori.→True.
+        _po_fixed_phases = set()
         for idx, (phase_obj, ph_input) in enumerate(zip(gsas_phases, phases)):
             if idx in _negligible_phases:
                 continue
             sys_ = (ph_input.get('system') or 'triclinic').lower()
-            if sys_ in ('hexagonal', 'trigonal'):
-                # Hexagonal phases: preferred orientation along [001]
-                try:
-                    hapData = list(phase_obj.data['Histograms'].values())[0]
-                    po = hapData.get('Pref.Ori.', ['MD', 1.0, False, [0, 0, 1]])
-                    po[0] = 'MD'           # March-Dollase model
-                    po[1] = 1.0            # start at no texture
-                    po[3] = [0, 0, 1]      # preferred orientation direction
-                    hapData['Pref.Ori.'] = po
-                    _pref_ori_phases.add(idx)
-                    print(f"  Phase {idx} ({sys_}): March-Dollase [001] "
-                          f"preferred orientation enabled.", flush=True)
-                except Exception as e:
-                    print(f"  Phase {idx}: could not set preferred "
-                          f"orientation: {e}", flush=True)
+            _ph_name = getattr(phase_obj, 'name', '') or ''
+            _popts = _phase_opts_for(idx, _ph_name)
+
+            # Per-phase override path: phase_options entry wins.
+            _po_mode_p = _popts.get('po_mode', 'off')
+            _po_axis_p = _popts.get('po_axis')
+            _po_value_p = _popts.get('po_value', 1.0)
+            _has_per_phase_po = (_po_mode_p in ('fixed', 'refined'))
+
+            # Legacy global path: preferred_orientation + fix_po_opt.
+            _enable_md_global = False
+            if not _has_per_phase_po and preferred_orientation != 'off':
+                if preferred_orientation == 'force':
+                    _enable_md_global = True
+                elif preferred_orientation == 'auto':
+                    _enable_md_global = sys_ in ('hexagonal', 'trigonal')
+
+            if not (_has_per_phase_po or _enable_md_global):
+                continue
+
+            # Resolve direction: explicit per-phase axis wins, else
+            # crystal-system default.
+            if _po_axis_p and isinstance(_po_axis_p, (list, tuple)) \
+                    and len(_po_axis_p) == 3:
+                _po_dir = [int(round(float(x))) for x in _po_axis_p]
+            else:
+                if sys_ in ('hexagonal', 'trigonal'):
+                    _po_dir = [0, 0, 1]
+                elif sys_ == 'orthorhombic':
+                    _po_dir = [1, 0, 0]
+                else:
+                    _po_dir = [0, 0, 1]
+
+            # Resolve value: per-phase value wins, else fix_po_opt value
+            # (legacy), else 1.0.
+            if _has_per_phase_po:
+                _po_init = float(_po_value_p) if _po_mode_p == 'fixed' else 1.0
+                _is_fixed = (_po_mode_p == 'fixed')
+            else:
+                _po_init = (po_fixed_value_opt if fix_po_opt else 1.0)
+                _is_fixed = fix_po_opt
+
+            try:
+                hapData = list(phase_obj.data['Histograms'].values())[0]
+                po = hapData.get('Pref.Ori.', ['MD', 1.0, False, _po_dir])
+                po[0] = 'MD'
+                po[1] = _po_init
+                po[3] = _po_dir
+                hapData['Pref.Ori.'] = po
+                _pref_ori_phases.add(idx)
+                if _is_fixed:
+                    _po_fixed_phases.add(idx)
+                _src = 'phase_options' if _has_per_phase_po else 'auto/global'
+                if _is_fixed:
+                    print(f"  Phase {idx} ({sys_}): March-Dollase "
+                          f"{_po_dir} PO held at "
+                          f"{_po_init:.4f} (not refined) [{_src}].",
+                          flush=True)
+                else:
+                    print(f"  Phase {idx} ({sys_}): March-Dollase "
+                          f"{_po_dir} preferred orientation enabled "
+                          f"[{_src}].", flush=True)
+            except Exception as e:
+                print(f"  Phase {idx}: could not set preferred "
+                      f"orientation: {e}", flush=True)
+        if not _pref_ori_phases:
+            print("  Preferred orientation: no phases enabled.", flush=True)
 
         if progress_callback:
             progress_callback('GSAS-II: stage 3 — refining cell parameters...')
@@ -2263,7 +2993,11 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # Refining all cells at once with many atoms can cause arccos
         # errors when cell angles go unphysical. Do it per phase.
         # For cubic phases, lock angles to 90° to prevent arccos errors.
+        if verification_mode:
+            print("  Stage 3 (cell): skipped (verification_mode).", flush=True)
         for idx, (phase_obj, ph_input) in enumerate(zip(gsas_phases, phases)):
+            if verification_mode:
+                continue
             if idx in _negligible_phases:
                 print(f"  Skipping cell refinement for phase {idx} "
                       f"(negligible scale).", flush=True)
@@ -2343,29 +3077,153 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # different crystallite sizes.  Unrefined Size defaults to
         # GSAS-II's initial value (~1 µm), producing wrong peak shapes
         # and trapping the refinement in a local minimum.
+        # Stage 4 runs when not in verification_mode, OR when explicitly
+        # opted into Uiso refinement via verify_refine_uiso.
+        _run_stage4 = (not verification_mode) or refine_uiso_opt
+        if not _run_stage4:
+            print("  Stage 4 (Uiso + MD): skipped (verification_mode, "
+                  "no verify_refine_uiso).", flush=True)
+        elif verification_mode and refine_uiso_opt:
+            print("  Stage 4 (Uiso): running in verification_mode "
+                  "(verify_refine_uiso=True).", flush=True)
         for idx, phase_obj in enumerate(gsas_phases):
+            if not _run_stage4:
+                continue
             if idx in _negligible_phases:
                 continue
             try:
                 phase_obj.set_refinements({'Atoms': {'all': 'U'}})
             except Exception:
                 pass
-        # Enable preferred orientation refinement for applicable phases
+        # Enable preferred orientation refinement for applicable phases.
+        # Per-phase: phases whose PO is "fixed" (in phase_options or via
+        # legacy fix_po_opt) keep refine_flag=False.  Others get the
+        # refine flag set when verification mode allows it.
         for idx in _pref_ori_phases:
+            if verification_mode and not verify_refine_po_opt:
+                continue
+            if idx in _po_fixed_phases:
+                # Defensive: keep refine flag cleared.
+                if idx not in _negligible_phases:
+                    try:
+                        phase_obj_p = gsas_phases[idx]
+                        _hap_p = list(
+                            phase_obj_p.data['Histograms'].values())[0]
+                        _po_p = _hap_p.get('Pref.Ori.')
+                        if _po_p and len(_po_p) >= 3:
+                            _po_p[2] = False
+                    except Exception:
+                        pass
+                continue
             if idx not in _negligible_phases:
                 try:
                     phase_obj = gsas_phases[idx]
                     phase_obj.set_HAP_refinements(
                         {'Pref.Ori.': True})
+                    _po_via = ('Stage 6' if (verification_mode
+                                              and not _run_stage4)
+                               else 'Stage 4')
                     print(f"  Phase {idx}: March-Dollase ratio refinement "
-                          f"enabled.", flush=True)
+                          f"enabled (refines in {_po_via}).", flush=True)
                 except Exception as e:
                     print(f"  Phase {idx}: could not enable Pref.Ori. "
                           f"refinement: {e}", flush=True)
-        _safe_refine('Uiso + preferred orientation', [{
-            'set': {},
-            'cycles': min(max_cycles, 8 * _cyc_mult),
-        }], 4)
+        if _run_stage4:
+            _safe_refine('Uiso + preferred orientation', [{
+                'set': {},
+                'cycles': min(max_cycles, 8 * _cyc_mult),
+            }], 4)
+
+        # ── Stage 4b: Crystallite Size + Microstrain (per-phase) ────────
+        # Drive per-phase HAP refinement from phase_options (or the
+        # legacy WC/W2C name-based fallback inside _phase_opts_for).
+        # No phase-name assumptions in this loop — it just iterates
+        # phase indices and applies whatever options resolve.
+
+        # Pre-compute resolved options per phase
+        _resolved_phase_opts = []
+        for idx, phase_obj in enumerate(gsas_phases):
+            _resolved_phase_opts.append(
+                _phase_opts_for(idx, getattr(phase_obj, 'name', '')))
+
+        _any_per_phase_hap = any(
+            (po.get('refine_size') or po.get('refine_mustrain'))
+            for po in _resolved_phase_opts)
+        _run_stage4b = ((not verification_mode) or refine_size_opt
+                        or _any_per_phase_hap)
+        if not _run_stage4b:
+            print("  Stage 4b (HAP size/mustrain): skipped "
+                  "(verification_mode, no per-phase HAP options).",
+                  flush=True)
+        elif verification_mode:
+            print("  Stage 4b (HAP size/mustrain): running in "
+                  "verification_mode.", flush=True)
+
+        # Per-phase decision and refinement-flag setting
+        _stage4b_anything_set = False
+        for idx, phase_obj in enumerate(gsas_phases):
+            if not _run_stage4b:
+                continue
+            if idx in _negligible_phases:
+                continue
+            _popts = _resolved_phase_opts[idx]
+            _enable_size = bool(refine_size_opt or _popts.get('refine_size'))
+            _enable_mustrain = bool(_popts.get('refine_mustrain'))
+            _ph_label = getattr(phase_obj, 'name', f'phase{idx}')
+
+            if _enable_size:
+                try:
+                    phase_obj.set_HAP_refinements(
+                        {'Size': {'type': 'isotropic', 'refine': True}})
+                    print(f"  Phase {idx} ({_ph_label}): Size refinement "
+                          f"enabled (isotropic).", flush=True)
+                    _stage4b_anything_set = True
+                except Exception as e:
+                    print(f"  Phase {idx}: could not enable Size "
+                          f"refinement: {e}", flush=True)
+            if _enable_mustrain:
+                try:
+                    phase_obj.set_HAP_refinements(
+                        {'Mustrain': {'type': 'isotropic', 'refine': True}})
+                    print(f"  Phase {idx} ({_ph_label}): Mustrain "
+                          f"refinement enabled (isotropic).", flush=True)
+                    _stage4b_anything_set = True
+                except Exception as e:
+                    print(f"  Phase {idx}: could not enable Mustrain "
+                          f"refinement: {e}", flush=True)
+
+        if _run_stage4b and _stage4b_anything_set:
+            _safe_refine('HAP per-phase: size and/or mustrain', [{
+                'set': {},
+                'cycles': min(max_cycles, 8 * _cyc_mult),
+            }], 4)
+        elif _run_stage4b:
+            print("  Stage 4b: no phases matched any HAP option, "
+                  "skipping refinement call.", flush=True)
+
+        # Check for instrument-limited Size (≥ 0.9 µm ≈ 9000 Å).
+        # When Stage 4b was skipped, values are GSAS-II defaults and
+        # meaningless, so report "not refined" instead.
+        for idx, phase_obj in enumerate(gsas_phases):
+            if idx in _negligible_phases:
+                continue
+            if not _run_stage4b:
+                print(f"  Phase {idx}: Size: not refined "
+                      f"(Stage 4b skipped).", flush=True)
+                continue
+            try:
+                hapData = list(phase_obj.data['Histograms'].values())[0]
+                size_data = hapData.get('Size', [])
+                if size_data and len(size_data) > 1:
+                    size_um = float(size_data[1][0])
+                    if size_um >= 0.9:
+                        print(f"  Phase {idx}: Size = {size_um:.3f} µm "
+                              f"(instrument-limited, ≥ 1 µm).", flush=True)
+                    else:
+                        print(f"  Phase {idx}: Size = {size_um:.4f} µm "
+                              f"= {size_um * 10000:.0f} Å.", flush=True)
+            except Exception:
+                pass
 
         # Freeze Uiso after Stage 4.  For heavy elements like W (Z=74)
         # with limited lab XRD reflections, Uiso is weakly determined
@@ -2378,55 +3236,64 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             except Exception:
                 pass
 
-        if progress_callback:
-            progress_callback('GSAS-II: stage 5 — refining atom positions (XYZ)...')
-
         # ── Stage 5: Atom positions (XYZ) ─────────────────────────────
-        # For complex structures (carbides, oxides) the COD database atom
-        # coordinates may not exactly match this sample.  Wrong positions →
-        # wrong structure factors F(hkl) → the Rietveld model cannot match
-        # observed peak intensity ratios → convergence failure.
-        # GSAS-II automatically constrains atoms on special positions, so
-        # this is safe for simple metals (no-op) while critical for W2C etc.
-        #
-        # Save atom positions before refinement for damping check.
-        saved_xyz = {}
-        for idx, phase_obj in enumerate(gsas_phases):
-            if idx in _negligible_phases:
-                continue  # skip XYZ for phases with negligible scale
-            phase_atoms = phase_obj.data.get('Atoms', [])
-            saved_xyz[idx] = [(a[3], a[4], a[5]) if len(a) > 5 else None
-                              for a in phase_atoms]
-            try:
-                phase_obj.set_refinements({'Atoms': {'all': 'X'}})
-            except Exception:
-                pass
-        xyz_ok = _safe_refine('atom XYZ', [{
-            'set': {},
-            'cycles': min(max_cycles, 3 * _cyc_mult),
-        }], 5)
+        # Gated by options['refine_xyz'] (default False).
+        # Without a measured .instprm, XYZ refinement can absorb errors
+        # from polarization, absorption, PO, background, or wrong phase
+        # choice — making Rwp look better while hiding real problems.
+        # Enable only when instrument params are pinned.
+        if refine_xyz:
+            if progress_callback:
+                progress_callback('GSAS-II: stage 5 — refining atom positions (XYZ)...')
 
-        # Damping check: if any atom jumped > 0.5 fractional units,
-        # it likely hopped to a symmetry-equivalent site — revert it.
-        if xyz_ok:
+            # Save atom positions before refinement for damping check.
+            saved_xyz = {}
             for idx, phase_obj in enumerate(gsas_phases):
+                if idx in _negligible_phases:
+                    continue  # skip XYZ for phases with negligible scale
                 phase_atoms = phase_obj.data.get('Atoms', [])
-                for j, atom in enumerate(phase_atoms):
-                    if (len(atom) > 5 and idx in saved_xyz
-                            and j < len(saved_xyz[idx])
-                            and saved_xyz[idx][j] is not None):
-                        ox, oy, oz = saved_xyz[idx][j]
-                        dx = abs(atom[3] - ox)
-                        dy = abs(atom[4] - oy)
-                        dz = abs(atom[5] - oz)
-                        if max(dx, dy, dz) > 0.5:
-                            warnings.warn(
-                                f"GSAS-II: atom {j} in phase {idx} jumped "
-                                f"by ({dx:.3f},{dy:.3f},{dz:.3f}) — "
-                                f"reverting to original position.")
-                            atom[3], atom[4], atom[5] = ox, oy, oz
+                saved_xyz[idx] = [(a[3], a[4], a[5]) if len(a) > 5 else None
+                                  for a in phase_atoms]
+                try:
+                    phase_obj.set_refinements({'Atoms': {'all': 'X'}})
+                except Exception:
+                    pass
+            xyz_ok = _safe_refine('atom XYZ', [{
+                'set': {},
+                'cycles': min(max_cycles, 3 * _cyc_mult),
+            }], 5)
 
-        # Turn off all atom refinement flags (XYZ done, Uiso frozen from Stage 4)
+            # Damping check: if any atom jumped > 0.5 fractional units,
+            # it likely hopped to a symmetry-equivalent site — revert it.
+            if xyz_ok:
+                for idx, phase_obj in enumerate(gsas_phases):
+                    phase_atoms = phase_obj.data.get('Atoms', [])
+                    for j, atom in enumerate(phase_atoms):
+                        if (len(atom) > 5 and idx in saved_xyz
+                                and j < len(saved_xyz[idx])
+                                and saved_xyz[idx][j] is not None):
+                            ox, oy, oz = saved_xyz[idx][j]
+                            dx = abs(atom[3] - ox)
+                            dy = abs(atom[4] - oy)
+                            dz = abs(atom[5] - oz)
+                            if max(dx, dy, dz) > 0.5:
+                                warnings.warn(
+                                    f"GSAS-II: atom {j} in phase {idx} jumped "
+                                    f"by ({dx:.3f},{dy:.3f},{dz:.3f}) — "
+                                    f"reverting to original position.")
+                                atom[3], atom[4], atom[5] = ox, oy, oz
+
+            # Turn off all atom refinement flags
+            for phase_obj in gsas_phases:
+                try:
+                    phase_obj.clear_refinements({'Atoms': {'all': ''}})
+                except Exception:
+                    pass
+        else:
+            print("  Stage 5: XYZ refinement skipped (refine_xyz=False).",
+                  flush=True)
+
+        # Ensure atom refinement flags are off regardless of XYZ path
         for phase_obj in gsas_phases:
             try:
                 phase_obj.clear_refinements({'Atoms': {'all': ''}})
@@ -2442,18 +3309,260 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # to avoid SVD singularity (Uiso ↔ scale correlation is too strong
         # for heavy elements like W with limited lab XRD reflections).
         # Cell is re-enabled; Uiso stays frozen (determined in Stage 4).
-        for idx, phase_obj in enumerate(gsas_phases):
-            if idx not in _negligible_phases:
-                phase_obj.set_refinements({'Cell': True})
-        _safe_refine('final: all parameters together', [{
+        #
+        # Cell-refinement gate for Stage 6:
+        #   verification_mode=True, verify_refine_cell=False  → Cell fixed
+        #   verification_mode=True, verify_refine_cell=True   → Cell on
+        #   verification_mode=False                            → Cell on (default)
+        if verification_mode and not verify_refine_cell:
+            print("  Stage 6: cell refinement disabled (verification_mode).",
+                  flush=True)
+            for idx, phase_obj in enumerate(gsas_phases):
+                try:
+                    phase_obj.set_refinements({'Cell': False})
+                except Exception:
+                    pass
+        else:
+            if verification_mode and verify_refine_cell:
+                print("  Stage 6: cell refinement enabled "
+                      "(verify_refine_cell=True).", flush=True)
+            for idx, phase_obj in enumerate(gsas_phases):
+                if idx not in _negligible_phases:
+                    phase_obj.set_refinements({'Cell': True})
+
+        # ── Snapshot W2C cell BEFORE Stage 6 (for uniform-scale post-fit) ──
+        _uniform_scale_snapshot = {}    # idx → (a0, b0, c0, V0)
+        if uniform_cell_w2c_opt and verify_refine_cell:
+            for _idx_s, (_phase_obj_s, _ph_input_s) in enumerate(
+                    zip(gsas_phases, phases)):
+                _sg_n = int(_ph_input_s.get('spacegroup_number', 0) or 0)
+                _formula = str(_ph_input_s.get('formula', '')).replace(' ', '')
+                _is_pbcn_w2c = (_sg_n == 60
+                                and ('W2C' in _formula or 'CW2' in _formula))
+                if not _is_pbcn_w2c:
+                    continue
+                try:
+                    _cell_arr = _phase_obj_s.data['General']['Cell']
+                    _a0 = float(_cell_arr[1])
+                    _b0 = float(_cell_arr[2])
+                    _c0 = float(_cell_arr[3])
+                    _V0 = _a0 * _b0 * _c0
+                    _uniform_scale_snapshot[_idx_s] = (_a0, _b0, _c0, _V0)
+                    print(f"  Uniform-scale W2C: snapshot phase {_idx_s} "
+                          f"a={_a0:.5f}, b={_b0:.5f}, c={_c0:.5f}, "
+                          f"V={_V0:.4f} Å³", flush=True)
+                except Exception as _e:
+                    print(f"  Uniform-scale W2C: snapshot failed for "
+                          f"phase {_idx_s}: {_e}", flush=True)
+        # Displacement correction depends on geometry:
+        #   capillary       → DisplaceY (radial displacement from beam axis)
+        #   bragg_brentano  → DisplaceX (sample-height/flat-plate displacement)
+        # Using the wrong model distorts peak positions and lattice params.
+        _displace_param = 'DisplaceX' if geometry == 'bragg_brentano' else 'DisplaceY'
+        print(f"  Stage 6: displacement model = {_displace_param} "
+              f"(geometry={geometry})", flush=True)
+
+        # With measured .instprm: fix U/V/W/X (instrument-determined) and
+        # Zero/SH/L (geometric).  Y stays refinable to absorb sample size
+        # broadening — see Stage 2 comment.
+        if _measured_instprm:
+            _inst_params_stg6 = ['Y']
+            _stg6_label = ('final: cell + bg + displacement + Y '
+                           '(U/V/W/X/SH/L/Zero fixed by instprm)')
+        elif verification_mode:
+            # No measured instprm + verification_mode: same restricted
+            # profile as Stage 2 — U, W, Y only.  Cell is gated separately
+            # by verify_refine_cell (cell-flag block above).
+            _inst_params_stg6 = ['U', 'W', 'Y']
+            _cell_state = 'cell on' if verify_refine_cell else 'cell fixed'
+            _stg6_label = (f'verify-final: bg + displacement + U + W + Y '
+                           f'({_cell_state}; V/X/Zero/SH/L fixed)')
+        else:
+            _inst_params_stg6 = ['U', 'W', 'X', 'Y', 'Zero']
+            _stg6_label = 'final: all parameters together'
+
+        # Swap Zero ↔ Displace for Stage 6 (same as Stage 2)
+        if use_zero_not_displace_opt:
+            if 'Zero' not in _inst_params_stg6:
+                _inst_params_stg6 = list(_inst_params_stg6) + ['Zero']
+            try:
+                for _disp_key in ('DisplaceX', 'DisplaceY'):
+                    _dp = histogram.data['Sample Parameters'].get(_disp_key)
+                    if _dp and isinstance(_dp, list):
+                        _dp[0] = 0.0
+                        if len(_dp) >= 2:
+                            _dp[1] = False
+            except Exception as _e:
+                print(f"    Warning: could not pin displacement to 0 "
+                      f"in Stage 6: {_e}", flush=True)
+            _stg6_sample_params = []
+            _stg6_label = (_stg6_label.rstrip(')').rstrip('.')
+                           + ' [Zero ON, Displace=0 fixed]')
+        else:
+            _stg6_sample_params = [_displace_param]
+
+        # Diagnostic: add X (Lorentzian strain) to the refine list.
+        if refine_x_opt and 'X' not in _inst_params_stg6:
+            _inst_params_stg6 = list(_inst_params_stg6) + ['X']
+            _stg6_label = _stg6_label + ' +X'
+
+        # Fix-Y for Stage 6 (matches Stage 2 logic)
+        if fix_y_opt:
+            _inst_params_stg6 = [p for p in _inst_params_stg6 if p != 'Y']
+            try:
+                _inst_dict_6 = histogram.data['Instrument Parameters'][0]
+                if 'Y' in _inst_dict_6 and isinstance(_inst_dict_6['Y'], list):
+                    _y_target_6 = (float(y_fixed_value_opt)
+                                    if y_fixed_value_opt is not None
+                                    else float(_inst_dict_6['Y'][1]))
+                    _inst_dict_6['Y'][1] = _y_target_6
+                    if len(_inst_dict_6['Y']) >= 3:
+                        _inst_dict_6['Y'][2] = False
+                    print(f"    Stage 6: Y fixed at {_y_target_6:.4f}.",
+                          flush=True)
+            except Exception as _e:
+                print(f"    Warning: could not fix Y in Stage 6: {_e}",
+                      flush=True)
+            _stg6_label = _stg6_label + ' [Y fixed]'
+
+        _safe_refine(_stg6_label, [{
             'set': {
                 'Background': {'type': 'chebyschev-1', 'refine': True,
                                 'no. coeffs': n_bg_coeffs},
-                'Instrument Parameters': ['U', 'W', 'X', 'Y', 'Zero'],
-                'Sample Parameters': ['DisplaceY'],
+                'Instrument Parameters': _inst_params_stg6,
+                'Sample Parameters': _stg6_sample_params,
             },
             'cycles': min(max_cycles, 15 * _cyc_mult),
         }], 6)
+
+        # ── Y non-negative enforcement ─────────────────────────────────
+        # Negative Y is unphysical (Lorentzian width can't be negative)
+        # but the LM optimizer can drive Y < 0 when X and Y trade off.
+        # When verify_y_nonnegative is on, clamp refined Y to 0 if it
+        # went negative, then run a 0-cycle refresh so ycalc updates.
+        if y_nonneg_opt and not fix_y_opt:
+            try:
+                _inst_dict_y = histogram.data['Instrument Parameters'][0]
+                if 'Y' in _inst_dict_y and isinstance(_inst_dict_y['Y'], list):
+                    _y_now = float(_inst_dict_y['Y'][1])
+                    if _y_now < 0.0:
+                        print(f"  Y nonneg: refined Y = {_y_now:.4f} < 0; "
+                              f"clamping to 0 and refreshing ycalc.",
+                              flush=True)
+                        _inst_dict_y['Y'][1] = 0.0
+                        if len(_inst_dict_y['Y']) >= 3:
+                            _inst_dict_y['Y'][2] = False
+                        # Turn off cell so the refresh doesn't drift
+                        for _phase_obj_y in gsas_phases:
+                            try:
+                                _phase_obj_y.set_refinements({'Cell': False})
+                            except Exception:
+                                pass
+                        _safe_refine('Y nonneg: refresh ycalc with Y=0',
+                                     [{'set': {}, 'cycles': 0}], 6)
+                    else:
+                        print(f"  Y nonneg: refined Y = {_y_now:.4f} ≥ 0; "
+                              f"no clamping needed.", flush=True)
+            except Exception as _e:
+                print(f"  Y nonneg: failed to inspect/clamp Y: {_e}",
+                      flush=True)
+
+        # ── Branch B: uniform-cell scaling for W2C ─────────────────────
+        # Stage 6 refined (a, b, c) for W2C independently.  Now post-
+        # process: compute s = (V_refined / V_start)^(1/3) and apply
+        # (a, b, c) ← (s·a₀, s·b₀, s·c₀).  This forces the cell change
+        # to be a uniform contraction (preserves axis ratios from
+        # mp-2034) while keeping the volume that the data preferred.
+        # Run a 0-cycle refinement so GSAS-II re-evaluates ycalc with
+        # the uniformly-scaled cell.  χ² will be slightly worse than
+        # the unconstrained fit if the data wanted real anisotropy, or
+        # essentially the same if the anisotropy was data-resolution
+        # noise.
+        if uniform_cell_w2c_opt and verify_refine_cell \
+                and _uniform_scale_snapshot:
+            _scaled_any = False
+            for idx_h, (a0, b0, c0, V0) in _uniform_scale_snapshot.items():
+                if idx_h >= len(gsas_phases):
+                    continue
+                _phase_obj_h = gsas_phases[idx_h]
+                try:
+                    _cell = _phase_obj_h.data['General']['Cell']
+                    a_ref = float(_cell[1])
+                    b_ref = float(_cell[2])
+                    c_ref = float(_cell[3])
+                    V_ref = a_ref * b_ref * c_ref
+                    if V0 <= 0:
+                        print(f"  Uniform-scale W2C: phase {idx_h} has "
+                              f"non-positive starting volume; skipping.",
+                              flush=True)
+                        continue
+                    s = (V_ref / V0) ** (1.0 / 3.0)
+                    a_new = s * a0
+                    b_new = s * b0
+                    c_new = s * c0
+                    print(f"  Uniform-scale W2C: phase {idx_h} — "
+                          f"refined a={a_ref:.5f}, b={b_ref:.5f}, "
+                          f"c={c_ref:.5f} (V={V_ref:.4f}); applying "
+                          f"s={s:.5f} → a={a_new:.5f}, b={b_new:.5f}, "
+                          f"c={c_new:.5f} (V={a_new*b_new*c_new:.4f})",
+                          flush=True)
+                    _cell[1] = a_new
+                    _cell[2] = b_new
+                    _cell[3] = c_new
+                    _cell[7] = a_new * b_new * c_new
+                    _scaled_any = True
+                except Exception as _e:
+                    print(f"  Uniform-scale W2C: failed for phase "
+                          f"{idx_h}: {_e}", flush=True)
+            if _scaled_any:
+                # Turn off cell refinement everywhere and run 0 cycles
+                # so ycalc re-computes with the uniformly-scaled W2C cell.
+                for _phase_obj_h in gsas_phases:
+                    try:
+                        _phase_obj_h.set_refinements({'Cell': False})
+                    except Exception:
+                        pass
+                _safe_refine('uniform-scale: refresh ycalc with '
+                             'uniformly-scaled W2C cell',
+                             [{'set': {}, 'cycles': 0}], 6)
+
+        # ── Post-Stage-6 diagnostic: actual GSAS-II parameter state ────
+        # The phase_results table reports cooked/rounded numbers from
+        # extracted dicts.  Print the raw sample + instrument parameter
+        # entries here so we can see GSAS-II's actual stored values
+        # (including refine flags) without trusting the display layer.
+        print("  Sample parameters after Stage 6:", flush=True)
+        try:
+            _sample = histogram.data.get('Sample Parameters', {})
+            for _k in sorted(_sample.keys()):
+                if any(tok in _k for tok in ('Displace', 'Shift', 'Zero')):
+                    print(f"    {_k}: {_sample[_k]}", flush=True)
+        except Exception as _e:
+            print(f"    Could not inspect sample parameters: {_e}",
+                  flush=True)
+        print("  Instrument parameters after Stage 6:", flush=True)
+        try:
+            _inst_dump = histogram.data.get('Instrument Parameters',
+                                             [{}])[0]
+            for _k in ('Zero', 'X', 'Y', 'U', 'V', 'W', 'SH/L'):
+                if _k in _inst_dump:
+                    print(f"    {_k}: {_inst_dump[_k]}", flush=True)
+        except Exception as _e:
+            print(f"    Could not inspect instrument parameters: {_e}",
+                  flush=True)
+        # Per-phase HAP scales and Pref.Ori. — confirms whether MD
+        # ratio was actually written/refined.
+        print("  Per-phase HAP state after Stage 6:", flush=True)
+        try:
+            for _idx_d, _phase_obj_d in enumerate(gsas_phases):
+                _hapData = list(_phase_obj_d.data['Histograms'].values())[0]
+                _scale = _hapData.get('Scale', [None])
+                _po = _hapData.get('Pref.Ori.')
+                _name = getattr(_phase_obj_d, 'name', f'Phase {_idx_d}')
+                print(f"    Phase {_idx_d} ({_name}): "
+                      f"Scale = {_scale}, Pref.Ori. = {_po}", flush=True)
+        except Exception as _e:
+            print(f"    Could not inspect HAP state: {_e}", flush=True)
 
         # Turn off cell refinement after final stage to avoid affecting
         # any subsequent operations
@@ -2569,46 +3678,28 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         y_bg_out = y_bg_full[rmask]
         _y_bg_gsas = y_bg_out.copy()   # preserve for unbiased phase isolation
 
-        # ── Background: preserve GSAS-II's refined background for statistics ──
-        # CRITICAL: compute fit statistics using GSAS-II's ACTUAL refined
-        # background (_y_bg_gsas), NOT the post-processed version.  The
-        # previous approach applied a "dip correction" (smoothing + raising)
-        # to y_bg_out, then computed Rwp against this modified background.
-        # This created an inconsistency: GSAS-II optimized the fit against
-        # its own background, but the reported Rwp was computed against a
-        # different one.  This artificial mismatch inflated Rwp and made it
-        # appear that the refinement was stuck, when the real GSAS-II Rwp
-        # may have been lower.
-        #
-        # The dip correction is still applied for DISPLAY purposes only
-        # (the background curve shown in plots), but statistics are always
-        # computed from the unmodified GSAS-II output.
+        # ── Background for display ──────────────────────────────────────
+        # Use GSAS-II's actual refined background directly — no post-
+        # processing.  A previous "dip correction" (trend + smoothing +
+        # max) was applied here for display, but it created visual
+        # artifacts (unphysical humps/discontinuities in the plotted
+        # background) without affecting Rwp/GoF.  Disabled as of v5.
         y_bg_display = y_bg_out.copy()
-        if len(y_bg_display) >= 3:
-            try:
-                _trend_coeffs = np.polyfit(tt_out, y_bg_display, 2)
-                _trend = np.polyval(_trend_coeffs, tt_out)
-                _resid = y_bg_display - _trend
-
-                _step = float(tt_out[1] - tt_out[0]) if len(tt_out) > 1 else 0.02
-                _sig  = max(3, int(10.0 / _step))          # 10° Gaussian sigma
-                _k    = min(3 * _sig, len(_resid) // 2)
-                if _k >= 1:
-                    _kx   = np.arange(-_k, _k + 1, dtype=float)
-                    _kern = np.exp(-0.5 * (_kx / _sig) ** 2)
-                    _kern /= _kern.sum()
-                    _padded = np.pad(_resid, _k, mode='edge')
-                    _smooth_resid = np.convolve(_padded, _kern, mode='valid')
-                    y_bg_display = _trend + np.maximum(_resid, _smooth_resid)
-            except (np.linalg.LinAlgError, ValueError):
-                pass  # skip dip correction if polyfit fails
 
         diff_out = y_obs_out - y_calc_out
 
-        # Weights for statistics — use GSAS-II's unmodified data
-        weights_out = 1.0 / np.maximum(
+        # ── REGRESSION CHECK: wtFactor must be included in chi²/GoF ────
+        # Without this, reported GoF is inflated by K (sigma inflation
+        # factor) even though Rwp/Rp are correct (overridden by GSAS-II's
+        # own R-factors below).  This was a reporting bug found 2026-04-16.
+        # If _SIGMA_INFLATION_FACTOR changes, this section automatically
+        # stays in sync because we use the constant directly rather than
+        # reading wtFactor back from histogram.data (GSAS-II may clear
+        # or relocate that key during refinement cycles).
+        base_weights = 1.0 / np.maximum(
             np.where(sig_r is not None, sig_r**2,
                      np.maximum(y_obs_out, 1.0)), 1e-6)
+        weights_out = base_weights / (_SIGMA_INFLATION_FACTOR ** 2)
 
         # Compute statistics using GSAS-II's actual background
         n_params_est = sum(
@@ -2641,6 +3732,23 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 histogram.data['Instrument Parameters'][0].get('Zero', [0, 0])[1])
         except Exception:
             zero_shift = 0.0
+
+        # Sample displacement (refined Stage 2 + Stage 6).  For
+        # bragg_brentano: DisplaceX (sample-height shift, mm).  For
+        # capillary/Synergy-S: DisplaceY (radial offset from beam axis,
+        # mm).  GSAS-II stores Sample Parameters as [value, refine_flag].
+        # We expose this so users can confirm the cell-vs-displacement
+        # trade-off didn't move position offset into the cell.
+        try:
+            _disp_param_name = ('DisplaceX' if geometry == 'bragg_brentano'
+                                else 'DisplaceY')
+            _disp_entry = histogram.data['Sample Parameters'].get(
+                _disp_param_name, [0.0, False])
+            displacement_um = float(_disp_entry[0]) if _disp_entry else 0.0
+            displacement_param_name = _disp_param_name
+        except Exception:
+            displacement_um = 0.0
+            displacement_param_name = 'unknown'
 
         # ── Per-phase results ────────────────────────────────────────────
         phase_patterns = []
@@ -2775,11 +3883,32 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
 
                     # σ²(W_α) = grad^T · Cov · grad
                     var_w = float(grad @ cov_matrix @ grad)
-                    sigma_w = math.sqrt(max(var_w, 0.0)) * 100.0
+                    sigma_w_propagated = math.sqrt(max(var_w, 0.0)) * 100.0
+
+                    # Systematic floor for routine lab XRD.
+                    # Propagated ESD captures only the LM scale-factor
+                    # uncertainty.  Real-sample wt% has additional
+                    # systematic uncertainty from: (1) atomic Uiso held
+                    # at default (no covariance), (2) sample mounting /
+                    # absorption / preferred orientation residuals,
+                    # (3) profile model imperfection (X/Y propagation
+                    # to intensity isn't included), and (4) the choice
+                    # between H&H and integrated-fraction reporting
+                    # (the displayed wt% is integrated fraction, which
+                    # is harder to bound rigorously).  Floor at the
+                    # max of (propagated, 1.0% absolute, 2% relative).
+                    _sys_floor = max(1.0, 0.02 * (P_alpha / T) * 100.0)
+                    sigma_w = max(sigma_w_propagated, _sys_floor)
                     wt_frac_sigmas[alpha] = sigma_w
+                    if sigma_w > sigma_w_propagated * 1.01:
+                        print(f"    {alpha}: propagated σ = "
+                              f"±{sigma_w_propagated:.3f}%, "
+                              f"reporting ±{sigma_w:.2f}% "
+                              f"(systematic floor applied).",
+                              flush=True)
 
                 print(f"  Weight fraction uncertainties: "
-                      f"{{ {', '.join(f'{k}: ±{v:.3f}%' for k, v in wt_frac_sigmas.items())} }}",
+                      f"{{ {', '.join(f'{k}: ±{v:.2f}%' for k, v in wt_frac_sigmas.items())} }}",
                       flush=True)
             except Exception as e:
                 print(f"  Weight fraction uncertainty propagation failed: {e}",
@@ -2881,6 +4010,12 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             # Profile / size info
             prof = _extract_profile_params(phase_obj)
             cryst_A = prof.get('crystallite_size_A')
+            # In verification_mode, Stage 4b (size refinement) was skipped,
+            # so HAP Size is at GSAS-II's default (~1 µm).  Discard that
+            # value and let the Y-based fallback below estimate size from
+            # the refined Y parameter.
+            if verification_mode:
+                cryst_A = None
 
             # GSAS-II stores profile params in centidegrees² (sig) and
             # centidegrees (gam).  Convert to degrees² / degrees for
@@ -2931,16 +4066,29 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 a, b, c, alpha, beta, gamma, sys_, sg,
                 wavelength, tt_min, tt_max, hkl_max=12,
                 sites=sites)
-            tick_positions = [round(r[0], 3) for r in phase_refs]
+            gsas_phase_refs = gsas_refs.get(phase_obj.name)
+
+            # Tick source: by default Python-filtered phase_refs (clean
+            # display).  When use_gsas_ref_ticks is True, switch to
+            # GSAS-II's RefList (all reflections including weak ones).
+            if use_gsas_ticks_opt and gsas_phase_refs:
+                tick_positions = [round(r[0], 3) for r in gsas_phase_refs
+                                   if tt_min <= r[0] <= tt_max]
+                _tick_src_label = 'GSAS-II RefList'
+            else:
+                tick_positions = [round(r[0], 3) for r in phase_refs]
+                _tick_src_label = 'Python refs'
             print(f"  Tick positions for '{ph.get('name', '?')}' (SG {sg}): "
                   f"{len(tick_positions)} reflections in "
-                  f"{tt_min:.1f}–{tt_max:.1f}° 2θ", flush=True)
-            # Use GSAS-II RefList for profile reconstruction if available
-            gsas_phase_refs = gsas_refs.get(phase_obj.name)
+                  f"{tt_min:.1f}–{tt_max:.1f}° 2θ "
+                  f"[source: {_tick_src_label}]", flush=True)
             if gsas_phase_refs:
-                print(f"    GSAS-II RefList: {len(gsas_phase_refs)} reflections "
-                      f"(used for profile reconstruction)", flush=True)
-            all_phase_refs.append(gsas_phase_refs if gsas_phase_refs else phase_refs)
+                print(f"    GSAS-II RefList: {len(gsas_phase_refs)} "
+                      f"reflections", flush=True)
+            print(f"    Python refs:    {len(phase_refs)} reflections",
+                  flush=True)
+            # Manual reconstruction fallback uses Python refs.
+            all_phase_refs.append(phase_refs)
 
             # B_iso (average over atoms; falls back to DEFAULT_B_ISO)
             b_iso_avg = DEFAULT_B_ISO
@@ -2997,18 +4145,39 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # ycalc - background.  This uses GSAS-II's own profile
         # functions (correct peak shapes, asymmetry, everything).
         #
-        # Fallback: reconstruct per-phase profiles from reflection
-        # lists and refined instrument parameters (may not exactly
-        # match GSAS-II's profile shapes).
-        #
-        # Last resort: equal split (unreliable weight fractions).
+        # ── Phase decomposition ─────────────────────────────────────────
+        # GSAS-II phase isolation is DISABLED for robustness.
+        # It used GSAS-II's internal RefList for per-phase patterns,
+        # which could disagree with the filtered Python reflection
+        # set used for ticks.  Instead, we always use manual profile
+        # reconstruction from all_phase_refs — same refs as ticks.
+        # This guarantees phase envelopes match tick positions.
+
         if len(gsas_phases) > 1:
             total_above_bg = np.maximum(y_calc_out - y_bg_out, 0.0)
             decomp_ok = False
 
-            # ── Primary: GSAS-II phase isolation ─────────────────────
-            print("  Phase isolation: computing GSAS-II per-phase "
-                  "patterns...", flush=True)
+            # ── GSAS-II phase isolation: TOGGLEABLE ───────────────────
+            # When ON: per-phase patterns come from GSAS-II's actual
+            #   internal calculation (each phase's scale set to zero
+            #   except one, ycalc recomputed, contribution extracted).
+            #   These are the physically meaningful per-phase curves.
+            # When OFF: per-phase patterns are reconstructed manually
+            #   from the Python reflection list and refined U/V/W/X/Y.
+            #   Display-only — guaranteed to match the tick positions
+            #   but does not reflect GSAS-II's internal Fc² values.
+            #
+            # Rule: if isolation succeeds, USE IT.  If it fails (count
+            # mismatch, exception, etc.), fall back to manual recon.
+            # Never append both — the count guard at the end of the
+            # block enforces this.
+            _run_isolation = phase_isolation_opt
+            if _run_isolation:
+                print("  Phase isolation: ENABLED (per-phase curves from "
+                      "GSAS-II ycalc).", flush=True)
+            else:
+                print("  Phase isolation: DISABLED (manual reconstruction "
+                      "for tick/envelope consistency).", flush=True)
 
             # Save ALL refinement flags — the main refinement left many
             # params refinable (background, U/V/W/X/Y, cell, Uiso).
@@ -3099,6 +4268,8 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
 
             try:
                 phase_patterns = []
+                if not _run_isolation:
+                    raise _IsolationSkipped()
                 for i in range(len(gsas_phases)):
                     # Activate only phase i; zero all others
                     for j, phase_obj in enumerate(gsas_phases):
@@ -3158,6 +4329,8 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
 
                 decomp_ok = True
                 print("  Phase isolation succeeded.", flush=True)
+            except _IsolationSkipped:
+                phase_patterns = []  # silently skip to fallback
             except Exception as e_iso:
                 print(f"  Phase isolation failed: {e_iso}", flush=True)
                 phase_patterns = []
@@ -3215,8 +4388,10 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                         raw_profiles = []
                         for i_ph, (phase_obj_r, fallback_refs) in enumerate(
                                 zip(gsas_phases, all_phase_refs)):
-                            refs_to_use = gsas_refs.get(
-                                phase_obj_r.name, fallback_refs) or fallback_refs
+                            # Always use all_phase_refs (same as ticks)
+                            # for consistency.  Never mix with GSAS-II
+                            # RefList which may have different reflections.
+                            refs_to_use = fallback_refs
                             if not refs_to_use:
                                 raise ValueError(
                                     f"No reflections for phase {i_ph}")
@@ -3263,6 +4438,15 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                     share = (total_above_bg / len(gsas_phases)).tolist()
                     phase_patterns.append(share)
 
+            # Hard guard: phase_patterns must match gsas_phases count
+            if len(phase_patterns) != len(gsas_phases):
+                print(f"  WARNING: phase pattern count mismatch: "
+                      f"{len(phase_patterns)} patterns for "
+                      f"{len(gsas_phases)} phases. Discarding "
+                      f"decomposition.", flush=True)
+                phase_patterns = []
+                decomp_ok = False
+
             # Use integrated pattern fractions as the displayed weight
             # fractions.  The Hill & Howard (H&H) method is the standard
             # Rietveld approach, but it requires accurate Z (formula units
@@ -3292,6 +4476,140 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             total_above_bg = np.maximum(y_calc_out - y_bg_out, 0.0)
             phase_patterns.append(total_above_bg.tolist())
 
+        # ── Per-phase Scherrer fallback ────────────────────────────────
+        # When HAP Size wasn't refined for a phase, estimate crystallite
+        # size from an isolated peak in that phase's contribution using
+        # the Scherrer equation:  D = K·λ / (β·cos θ),  K = 0.9.
+        #
+        # Picks the strongest peak in the phase pattern and validates
+        # that other phases' contributions at that 2θ are small (< 25%
+        # of this phase's value), so the FWHM measurement isn't
+        # contaminated by overlap.
+        try:
+            _SCHERRER_K = 0.9
+            _PI = math.pi
+            tt_arr = np.asarray(tt_out, dtype=float)
+            _phase_patterns_arr = [np.asarray(pp, dtype=float)
+                                    for pp in phase_patterns]
+            for _pi, _pp in enumerate(_phase_patterns_arr):
+                if _pi >= len(phase_results):
+                    continue
+                # Skip if size is already populated from refinement / Y-fallback
+                if phase_results[_pi].get('crystallite_size_A'):
+                    continue
+                if _pp.size < 3 or float(np.max(_pp)) <= 0:
+                    continue
+                # Find candidate peak: strongest local max with FWHM ≥ 2 pts
+                # AND other phases' contribution there < 25% of this phase
+                _pk_max = float(np.max(_pp))
+                _pk_idx = int(np.argmax(_pp))
+                # Overlap check: sum of OTHER phase patterns at peak position
+                _other_sum = 0.0
+                for _oi, _opp in enumerate(_phase_patterns_arr):
+                    if _oi == _pi:
+                        continue
+                    if _pk_idx < len(_opp):
+                        _other_sum += float(_opp[_pk_idx])
+                _overlap_frac = _other_sum / max(_pk_max, 1e-12)
+                if _overlap_frac > 0.25:
+                    print(f"  Scherrer (phase {_pi}): strongest peak at "
+                          f"2θ={float(tt_arr[_pk_idx]):.2f}° has "
+                          f"{_overlap_frac*100:.0f}% overlap with other "
+                          f"phases — skipping.", flush=True)
+                    continue
+                # Measure FWHM around _pk_idx
+                _half = _pk_max / 2.0
+                # Walk left
+                _li = _pk_idx
+                while _li > 0 and _pp[_li] > _half:
+                    _li -= 1
+                # Walk right
+                _ri = _pk_idx
+                while _ri < len(_pp) - 1 and _pp[_ri] > _half:
+                    _ri += 1
+                if _ri <= _li + 1:
+                    continue
+                _fwhm_deg = float(tt_arr[_ri] - tt_arr[_li])
+                _tt_peak  = float(tt_arr[_pk_idx])
+                if _fwhm_deg <= 0 or _tt_peak <= 0:
+                    continue
+                # Scherrer.  Subtract instrumental broadening if we know
+                # it from the measured instprm Y (centideg) — gives a
+                # sample-only FWHM.  Conservative: use the full FWHM if
+                # instrumental contribution is unknown.
+                _theta_rad = math.radians(_tt_peak / 2.0)
+                _beta_rad  = math.radians(_fwhm_deg)
+                _D_A = _SCHERRER_K * wavelength / (_beta_rad
+                                                    * math.cos(_theta_rad))
+                if _D_A > 0 and _D_A < 1e6:
+                    phase_results[_pi]['crystallite_size_A'] = round(
+                        float(_D_A), 1)
+                    phase_results[_pi]['crystallite_size_nm'] = round(
+                        float(_D_A) / 10.0, 2)
+                    phase_results[_pi]['size_method'] = 'Scherrer'
+                    print(f"  Scherrer (phase {_pi}): peak at "
+                          f"2θ={_tt_peak:.2f}°, FWHM={_fwhm_deg:.3f}°, "
+                          f"D = {_D_A:.0f} Å = {_D_A/10:.1f} nm "
+                          f"(overlap {_overlap_frac*100:.1f}%).",
+                          flush=True)
+        except Exception as _e:
+            print(f"  Scherrer fallback failed: {_e}", flush=True)
+
+        # ── Post-refinement sanity warnings ─────────────────────────────
+        # Flag suspicious results without failing the run.  Useful for
+        # automated screening where a low Rwp is not always trustworthy.
+        _sanity_warnings = []
+
+        # Zero shift
+        if abs(zero_shift) > 0.1:
+            _sanity_warnings.append(
+                f"Large zero shift ({zero_shift:.4f}°); check wavelength "
+                f"or instrument geometry.")
+
+        # Displacement
+        try:
+            _disp_val = float(histogram.data['Sample Parameters']
+                              .get(_displace_param, [0])[0])
+            if abs(_disp_val) > 500:
+                _sanity_warnings.append(
+                    f"Large displacement correction ({_displace_param}="
+                    f"{_disp_val:.1f} µm); check {geometry} geometry.")
+        except Exception:
+            pass
+
+        # March-Dollase ratio
+        for idx, phase_obj in enumerate(gsas_phases):
+            try:
+                hapData = list(phase_obj.data['Histograms'].values())[0]
+                md_ratio = hapData.get('Pref.Ori.', ['MD', 1.0])[1]
+                if md_ratio < 0.5 or md_ratio > 2.0:
+                    _sanity_warnings.append(
+                        f"Extreme March-Dollase ratio ({md_ratio:.3f}) for "
+                        f"phase {idx}; weight fractions may be unreliable.")
+            except Exception:
+                pass
+
+        # Near-zero weight fraction
+        for pr in phase_results:
+            wf = pr.get('weight_fraction_%', 50)
+            if wf is not None and wf < 1.0:
+                _sanity_warnings.append(
+                    f"Phase '{pr.get('name', '?')}' refined to {wf:.1f} wt% "
+                    f"— consider removing it from the model.")
+
+        if _sanity_warnings:
+            for _sw in _sanity_warnings:
+                print(f"  WARNING: {_sw}", flush=True)
+
+        # ── Hard validation: one source of truth ─────────────────────
+        _n_phases = len(gsas_phases)
+        if len(phase_patterns) != _n_phases:
+            print(f"  WARNING: phase_patterns ({len(phase_patterns)}) "
+                  f"!= gsas_phases ({_n_phases})", flush=True)
+        if len(phase_results) != _n_phases:
+            print(f"  WARNING: phase_results ({len(phase_results)}) "
+                  f"!= gsas_phases ({_n_phases})", flush=True)
+
         result = {
             'tt':             tt_out.tolist(),
             'y_obs':          y_obs_out.tolist(),
@@ -3302,11 +4620,18 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             'statistics':     stats,
             'phase_results':  phase_results,
             'zero_shift':     round(zero_shift, 5),
+            'displacement_um': round(displacement_um, 2),
+            'displacement_param': displacement_param_name,
             'wavelength':     wavelength,
             'pymatgen_used':  False,
             'method':         'GSAS-II',
+            'warnings':       _sanity_warnings,
+            'instrument':     instrument,
+            'instrument_label': profile['label'],
+            'instrument_reason': instrument_reason,
         }
 
+        print("=== GSAS-II REFINEMENT DONE ===", flush=True)
         return result
 
     finally:

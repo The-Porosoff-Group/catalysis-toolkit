@@ -4,9 +4,22 @@ Persistent disk cache for CIF files.
 
 Stores CIF text files in ~/.catalysis_toolkit_cache/ (or a custom directory
 from config.yaml). Cache is keyed by source:id strings, e.g.:
-  "cod:1010048"   → COD entry
-  "mp:mp-91"      → Materials Project entry
+  "cod:1010048"   → COD entry (raw COD CIF)
+  "mp:mp-91"      → Materials Project entry (raw MP CIF, OR the
+                    fixture-overridden CIF when one is registered in
+                    mp_api._LOCAL_FIXTURES)
   "manual:sample" → user-uploaded CIF
+
+SEPARATION RULE (raw vs. prepared):
+  Currently this cache holds whichever CIF cached_fetch_mp returned —
+  raw MP CIF when no fixture exists, or the fixture content when one
+  does.  That is convenient but conflates two roles.  The architecture
+  spec (CLAUDE OUTPUTS / Catalysis-Toolkit_Architecture_v1.md, §Step 4)
+  recommends separate cache keys for raw / prepared / preview artifacts:
+     mp:<id>:raw            — exact MP API response
+     mp:<id>:gsas:<vN>      — CIF prepared for GSAS-II refinement
+     mp:<id>:preview:<vN>   — preview reflection list
+  Future work; the current single-key cache is a known compromise.
 
 Cache never expires — CIF files don't change.
 Size is capped at max_size_mb (default 500 MB); oldest files pruned when exceeded.
@@ -173,10 +186,39 @@ def cached_fetch_mp(mp_id, api_key, fetch_fn):
     """
     Fetch a Materials Project CIF, using disk cache.
     fetch_fn: callable(mp_id, api_key) → parsed_struct_dict
+
+    Local fixtures (mp_api._LOCAL_FIXTURES) take priority over the disk
+    cache.  This ensures that for known-problematic MP entries (e.g.
+    mp-2034 W2C, where the round-tripped MP CIF can land as P1/full-cell
+    instead of Pbcn), the audited canonical CIF in fixtures/ is always
+    what reaches the refinement — regardless of whatever may have been
+    cached previously.  The cache is also refreshed with the fixture
+    so downstream consumers stay consistent.
     """
     cache = get_cache()
     key   = f'mp:{mp_id}'
-    text  = cache.get(key)
+
+    # ── Fixture takes priority over cache ─────────────────────────────
+    try:
+        from .mp_api import _fixture_cif_for
+        fixture_text = _fixture_cif_for(mp_id)
+    except Exception:
+        fixture_text = None
+    if fixture_text:
+        from .crystallography import parse_cif
+        parsed = parse_cif(fixture_text)
+        parsed['mp_id']    = mp_id
+        parsed['cod_id']   = mp_id
+        parsed['cif_text'] = fixture_text
+        parsed['source']   = 'mp'
+        parsed['cached']   = False
+        # Refresh cache with the fixture so subsequent fetches stay
+        # consistent even if this code path ever skips the fixture lookup.
+        cache.put(key, fixture_text)
+        return parsed
+
+    # No fixture → normal cache flow
+    text = cache.get(key)
     if text:
         from .crystallography import parse_cif
         parsed = parse_cif(text)

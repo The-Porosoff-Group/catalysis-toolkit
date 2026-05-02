@@ -266,7 +266,7 @@ def _filter_tick_positions(refs, I_hkl, threshold_frac=1e-3):
 
 def run_lebail(tt, y_obs, sigma, phases, wavelength,
                tt_min=None, tt_max=None,
-               n_bg_coeffs=8, max_outer=15,
+               n_bg_coeffs=6, max_outer=15,
                progress_callback=None):
     """
     Run Le Bail refinement.
@@ -778,7 +778,7 @@ def run_lebail(tt, y_obs, sigma, phases, wavelength,
 
 def run_rietveld(tt, y_obs, sigma, phases, wavelength,
                  tt_min=None, tt_max=None,
-                 n_bg_coeffs=8, max_iter=50,
+                 n_bg_coeffs=6, max_iter=50,
                  progress_callback=None):
     """
     Rietveld refinement — structure-constrained profile fitting.
