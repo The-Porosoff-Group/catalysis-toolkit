@@ -299,6 +299,7 @@
   window.mpKeySet = {{ mp_key_set | tojson }};
   window.pymatgenReady = {{ pymatgen_ready | tojson }};
 </script>
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 </head>
 <body>
 <div class="app">
@@ -590,8 +591,8 @@
               </label>
               <select id="xrd-bg-coeffs">
                 <option value="auto" selected>Auto — data-driven selection</option>
-                <option value="6">6 — clean baseline</option>
-                <option value="8">8 — standard crystalline (recommended)</option>
+                <option value="6">6 — clean baseline (recommended)</option>
+                <option value="8">8 — standard crystalline</option>
                 <option value="10">10 — moderate amorphous background</option>
                 <option value="14">14 — supported catalyst (SiO₂, Al₂O₃)</option>
                 <option value="20">20 — heavy amorphous background</option>
@@ -617,7 +618,7 @@
         <div class="card-header">
           <div class="step">3</div>
           <h2>Phase Identification</h2>
-          <span style="margin-left:auto;font-size:11px;color:var(--muted);">Searches the Crystallography Open Database (COD)</span>
+          <span style="margin-left:auto;font-size:11px;color:var(--muted);">Searches Materials Project</span>
         </div>
         <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
 
@@ -654,16 +655,10 @@
                 <button class="btn-sm" onclick="searchPhases(true)" title="Allow extra elements">+ Loose</button>
               </div>
               <div style="display:flex;gap:6px;align-items:center;">
-                <span style="font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.6px;">Source:</span>
-                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;">
-                  <input type="radio" name="xrd-source-db" value="both" checked onchange="updateSourceBadge()"> Both
-                </label>
-                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;">
-                  <input type="radio" name="xrd-source-db" value="cod" onchange="updateSourceBadge()"> COD only
-                </label>
-                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;" id="mp-radio-wrap">
-                  <input type="radio" name="xrd-source-db" value="mp" onchange="updateSourceBadge()"> MP only
-                </label>
+                <!-- COD database currently returns no results; default to MP-only.
+                     Hidden radio inputs preserve form-state compatibility for any
+                     existing JS that reads xrd-source-db. -->
+                <input type="radio" name="xrd-source-db" value="mp" checked style="display:none;">
                 <span id="mp-key-badge"></span>
               </div>
             </div>
@@ -736,6 +731,93 @@
               <span>🔬</span> GSAS-II Refinement
             </button>
             <button class="btn-sm" onclick="resetXRD()" title="Clear everything and start fresh">↺ Reset</button>
+            <label id="standard-recipe-label" style="display:none;margin-left:14px;font-size:12px;color:#56d364;font-weight:600;cursor:pointer;border-left:2px solid #56d364;padding-left:8px;" title="Production preset for Synergy-S WC/W2C. Auto-ticks: Verification + cell + Phase isolation + PO hex [001] + Refine Zero (fix Disp) + Free X + Y ≥ 0 + Fix WC PO at 0.905. Untick any member afterward to deviate.">
+              <input type="checkbox" id="xrd-standard-recipe" style="margin-right:4px;">
+              WC/W2C refinement
+            </label>
+            <button type="button" id="xrd-advanced-toggle" onclick="toggleXrdAdvanced()" style="display:none;margin-left:8px;font-size:11px;padding:2px 8px;background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;cursor:pointer;" title="Show / hide advanced GSAS-II diagnostic toggles">▶ Advanced</button>
+            <!-- Performance diagnostic preset is now superseded by the WC/W2C refinement preset; element hidden but kept in DOM for back-compat with cascade JS. -->
+            <label id="perf-recipe-label" style="display:none;">
+              <input type="checkbox" id="xrd-perf-recipe">
+            </label>
+            <select id="xrd-instrument" style="display:none;margin-left:8px;font-size:12px;padding:2px 6px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px;" title="Select instrument for geometry, displacement model, and .instprm auto-loading">
+              <option value="auto">Instrument: Auto</option>
+              <option value="smartlab">Rigaku SmartLab (BB)</option>
+              <option value="synergy_s">Synergy-S (capillary)</option>
+            </select>
+          </div>
+          <!-- Advanced settings row: hidden by default; toggled by the "▶ Advanced" button above. -->
+          <div id="xrd-advanced-row" style="display:none;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;padding:8px;border:1px dashed var(--border);border-radius:6px;background:rgba(255,255,255,0.02);">
+            <span style="font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.6px;margin-right:4px;">Advanced diagnostics:</span>
+            <label id="cal-mode-label" style="display:none;font-size:12px;color:var(--muted);cursor:pointer;" title="Calibration mode: refine instrument profile from a line standard (e.g. NIST Si 640g). Cell is fixed, U/V/W/X/Y/Zero/SH/L are refined sequentially.">
+              <input type="checkbox" id="xrd-calibration-mode" style="margin-right:4px;">
+              Calibration (instprm)
+            </label>
+            <label id="verify-mode-label" style="display:none;font-size:12px;color:var(--muted);cursor:pointer;" title="Verification mode: GSAS-II runs with bg + scales + displacement + Y only. Cell, Uiso, size, and XYZ stages are skipped. Use for first-pass tests so peak-position/width problems show up rather than being absorbed into more flexible parameters.">
+              <input type="checkbox" id="xrd-verification-mode" style="margin-right:4px;">
+              Verification mode
+            </label>
+            <label id="verify-cell-label" style="display:none;margin-left:6px;font-size:12px;color:var(--muted);cursor:pointer;" title="Only meaningful when Verification mode is on. Adds Stage 6 cell refinement on top of bg + scales + displacement + Y. Uiso, size, MD, XYZ stay off. Use after a plain verification run shows peaks land in the right place.">
+              <input type="checkbox" id="xrd-verify-cell" style="margin-right:4px;">
+              + cell
+            </label>
+            <label id="phase-iso-label" style="display:none;margin-left:6px;font-size:12px;color:var(--muted);cursor:pointer;" title="Phase isolation (default ON): per-phase curves and ticks come from GSAS-II's actual calculated pattern and RefList. When OFF, per-phase curves are reconstructed manually from the Python reflection list — guaranteed visual consistency but does not reflect GSAS-II's internal Fc².">
+              <input type="checkbox" id="xrd-phase-isolation" style="margin-right:4px;" checked>
+              Phase isolation
+            </label>
+            <label id="po-hex-label" style="display:none;margin-left:6px;font-size:12px;color:var(--muted);cursor:pointer;" title="Refines March-Dollase preferred orientation for hexagonal/trigonal phases (e.g. WC platelets along [001]). MD ratio refines in Stage 6 alongside cell. Orthorhombic phases (W2C) are unaffected.">
+              <input type="checkbox" id="xrd-po-hex" style="margin-right:4px;">
+              PO hex [001]
+            </label>
+            <label id="fix-po-label" style="display:none;margin-left:6px;font-size:12px;color:var(--muted);cursor:pointer;" title="Hold WC March-Dollase ratio at the entered value instead of refining. Use when adding Uiso to a PO-on recipe — refining MD and Uiso together is the main SVD/correlation source. Default 0.905 from Run 3. Requires PO hex [001] to also be ticked.">
+              <input type="checkbox" id="xrd-fix-po" style="margin-right:4px;">
+              Fix WC PO
+              <input type="number" id="xrd-fix-po-value" value="0.905" step="0.001" min="0.5" max="2.0" style="margin-left:4px;width:70px;font-size:11px;padding:1px 4px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:3px;">
+            </label>
+            <label id="zero-not-disp-label" style="display:none;margin-left:6px;font-size:12px;color:var(--muted);cursor:pointer;" title="Swap position handle: refine Zero (overriding the measured instprm's Zero lock) and pin DisplaceX/Y at 0. Use when DisplaceY refuses to move from 0 because the position offset is really a Zero miscalibration that doesn't transfer from the Si standard to this sample. Diagnostic.">
+              <input type="checkbox" id="xrd-zero-not-disp" style="margin-right:4px;">
+              Refine Zero (fix Disp)
+            </label>
+            <label id="cell-uniform-w2c-label" style="display:none;margin-left:6px;font-size:12px;color:var(--muted);cursor:pointer;" title="Branch B diagnostic: after Stage 6 refines W2C's a, b, c freely, override with uniform scale s = (V_refined/V_start)^(1/3) so axis ratios match mp-2034. Compare χ² against the unconstrained run: similar χ² → anisotropy was data-resolution noise, uniform scaling is enough. Much worse χ² → real anisotropic strain.">
+              <input type="checkbox" id="xrd-cell-uniform-w2c" style="margin-right:4px;">
+              Uniform W2C cell
+            </label>
+            <label id="refine-x-label" style="display:none;margin-left:6px;font-size:12px;color:var(--muted);cursor:pointer;" title="Free X (Lorentzian strain). Tests strain-like broadening on top of size (Y).">
+              <input type="checkbox" id="xrd-refine-x" style="margin-right:4px;">
+              Free X
+            </label>
+            <label id="fix-y-label" style="display:none;margin-left:6px;font-size:12px;color:var(--muted);cursor:pointer;" title="Fix Y at the entered value (centideg). Empty value uses current instprm Y. Overrides any Y-refinement.">
+              <input type="checkbox" id="xrd-fix-y" style="margin-right:4px;">
+              Fix Y
+              <input type="number" id="xrd-fix-y-value" placeholder="centideg" step="0.01" style="margin-left:4px;width:80px;font-size:11px;padding:1px 4px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:3px;">
+            </label>
+            <label id="y-nonneg-label" style="display:none;margin-left:6px;font-size:12px;color:var(--muted);cursor:pointer;" title="Clamp refined Y to ≥ 0 after Stage 6. Negative Y is unphysical (Lorentzian width can't be negative) but the optimizer can drive Y < 0 when X and Y trade off.">
+              <input type="checkbox" id="xrd-y-nonneg" style="margin-right:4px;">
+              Y ≥ 0
+            </label>
+            <label id="refine-uiso-label" style="display:none;margin-left:6px;font-size:12px;color:var(--muted);cursor:pointer;" title="Refine Uiso (atomic displacement / Debye-Waller) in Stage 4. Use after profile is settled. Heavy-atom Uiso (W) is correlated with phase scale, so watch the χ² and weight-fraction stability.">
+              <input type="checkbox" id="xrd-refine-uiso" style="margin-right:4px;">
+              Refine Uiso
+            </label>
+            <!-- Per-phase HAP refinement (size / microstrain / PO) is now
+                 controlled in the per-phase cards under "Selected phases".
+                 The legacy phase-name-specific checkboxes (WC/W2C size,
+                 WC/W2C mustrain, "Refine size (all)") were removed because
+                 they did not generalize to other phase systems.  Use the
+                 dynamic phase cards instead. -->
+            <span id="refine-size-label" style="display:none;"></span>
+            <span id="refine-wc-size-label" style="display:none;"></span>
+            <span id="refine-w2c-size-label" style="display:none;"></span>
+            <span id="refine-wc-mustrain-label" style="display:none;"></span>
+            <span id="refine-w2c-mustrain-label" style="display:none;"></span>
+            <label id="refine-xyz-label" style="display:none;margin-left:6px;font-size:12px;color:var(--muted);cursor:pointer;" title="Refine atom positions (XYZ). Off by default — without a measured instprm and tight constraints, XYZ refinement absorbs errors from PO/Uiso/background.">
+              <input type="checkbox" id="xrd-refine-xyz" style="margin-right:4px;">
+              Refine XYZ
+            </label>
+            <label id="gsas-ticks-label" style="display:none;margin-left:6px;font-size:12px;color:var(--muted);cursor:pointer;" title="Use GSAS-II RefList (all reflections) for tick marks instead of the default Python-filtered list (intensity ≥ 0.5%). Default off — Python ticks are cleaner.">
+              <input type="checkbox" id="xrd-gsas-ticks" style="margin-right:4px;">
+              GSAS ticks
+            </label>
           </div>
           <div style="font-size:11px;color:var(--muted);line-height:1.4;">
             <b>Le Bail</b> — free peak intensities, good for phase ID and cell params.<br>
@@ -760,6 +842,7 @@
             </div>
             <div class="stats-grid" id="xrd-stats-grid"></div>
             <div id="xrd-phase-results"></div>
+            <div id="xrd-interactive-plot" style="display:none;width:100%;height:500px;border-radius:8px;border:1px solid var(--border);"></div>
             <img class="plot-img" id="xrd-result-plot" src="" alt="XRD refinement plot"
                  style="display:none;">
             <div class="download-row" id="xrd-download-row"></div>
@@ -1364,6 +1447,18 @@ function updateSourceBadge() {
   }
 }
 
+// Toggle the GSAS-II Advanced settings row (collapsed by default).
+// The contents are individually revealed when GSAS-II is available;
+// this function controls the wrapper visibility independently.
+function toggleXrdAdvanced() {
+  const row = document.getElementById('xrd-advanced-row');
+  const btn = document.getElementById('xrd-advanced-toggle');
+  if (!row || !btn) return;
+  const isHidden = (row.style.display === '' || row.style.display === 'none');
+  row.style.display = isHidden ? 'flex' : 'none';
+  btn.textContent = isHidden ? '▼ Advanced' : '▶ Advanced';
+}
+
 // Set initial badge state
 document.addEventListener('DOMContentLoaded', () => {
   updateSourceBadge();
@@ -1378,6 +1473,125 @@ document.addEventListener('DOMContentLoaded', () => {
         // Show instrument parameter file upload (GSAS-II only)
         const instGrp = document.getElementById('instprm-group');
         if (instGrp) instGrp.style.display = '';
+        // Show calibration mode checkbox and instrument selector
+        const calLabel = document.getElementById('cal-mode-label');
+        if (calLabel) calLabel.style.display = '';
+        const stdRecipeLabel = document.getElementById('standard-recipe-label');
+        if (stdRecipeLabel) stdRecipeLabel.style.display = '';
+        const advBtn = document.getElementById('xrd-advanced-toggle');
+        if (advBtn) advBtn.style.display = '';
+        const verifyLabel = document.getElementById('verify-mode-label');
+        if (verifyLabel) verifyLabel.style.display = '';
+        const verifyCellLabel = document.getElementById('verify-cell-label');
+        if (verifyCellLabel) verifyCellLabel.style.display = '';
+        const phaseIsoLabel = document.getElementById('phase-iso-label');
+        if (phaseIsoLabel) phaseIsoLabel.style.display = '';
+        const poHexLabel = document.getElementById('po-hex-label');
+        if (poHexLabel) poHexLabel.style.display = '';
+        const fixPoLabel = document.getElementById('fix-po-label');
+        if (fixPoLabel) fixPoLabel.style.display = '';
+        const zeroNotDispLabel = document.getElementById('zero-not-disp-label');
+        if (zeroNotDispLabel) zeroNotDispLabel.style.display = '';
+        const cellUniformLabel = document.getElementById('cell-uniform-w2c-label');
+        if (cellUniformLabel) cellUniformLabel.style.display = '';
+        const refineXLabel = document.getElementById('refine-x-label');
+        if (refineXLabel) refineXLabel.style.display = '';
+        const fixYLabel = document.getElementById('fix-y-label');
+        if (fixYLabel) fixYLabel.style.display = '';
+        const yNonnegLabel = document.getElementById('y-nonneg-label');
+        if (yNonnegLabel) yNonnegLabel.style.display = '';
+        const refineUisoLabel = document.getElementById('refine-uiso-label');
+        if (refineUisoLabel) refineUisoLabel.style.display = '';
+        const refineSizeLabel = document.getElementById('refine-size-label');
+        if (refineSizeLabel) refineSizeLabel.style.display = '';
+        const wcSizeLabel = document.getElementById('refine-wc-size-label');
+        if (wcSizeLabel) wcSizeLabel.style.display = '';
+        const w2cSizeLabel = document.getElementById('refine-w2c-size-label');
+        if (w2cSizeLabel) w2cSizeLabel.style.display = '';
+        const wcMustLabel = document.getElementById('refine-wc-mustrain-label');
+        if (wcMustLabel) wcMustLabel.style.display = '';
+        const w2cMustLabel = document.getElementById('refine-w2c-mustrain-label');
+        if (w2cMustLabel) w2cMustLabel.style.display = '';
+        const refineXyzLabel = document.getElementById('refine-xyz-label');
+        if (refineXyzLabel) refineXyzLabel.style.display = '';
+        const gsasTicksLabel = document.getElementById('gsas-ticks-label');
+        if (gsasTicksLabel) gsasTicksLabel.style.display = '';
+        // perf-recipe-label retired; do NOT un-hide.
+        const instSel = document.getElementById('xrd-instrument');
+        if (instSel) instSel.style.display = '';
+
+        // ── WC/W2C refinement preset cascade ────────────────────────
+        // Single production preset that bundles the eight settings we
+        // converged on for Synergy-S WC/W2C samples.  When ticked,
+        // members are turned on AND Fix WC PO value is set to 0.905.
+        // When any member is toggled manually, the preset auto-unticks
+        // — the preset state always means "all eight are on, value
+        // 0.905."
+        const wcw2cRecipeMembers = [
+          'xrd-verification-mode',
+          'xrd-verify-cell',
+          'xrd-phase-isolation',
+          'xrd-po-hex',
+          'xrd-zero-not-disp',
+          'xrd-refine-x',
+          'xrd-y-nonneg',
+          'xrd-fix-po',
+        ];
+        const stdRecipe = document.getElementById('xrd-standard-recipe');
+        if (stdRecipe && !stdRecipe._wired) {
+          stdRecipe._wired = true;
+          stdRecipe.addEventListener('change', () => {
+            wcw2cRecipeMembers.forEach(id => {
+              const el = document.getElementById(id);
+              if (el) el.checked = stdRecipe.checked;
+            });
+            // When ticking on, also force the Fix WC PO value to 0.905
+            // (the value the production runs converged on).
+            if (stdRecipe.checked) {
+              const poVal = document.getElementById('xrd-fix-po-value');
+              if (poVal) poVal.value = '0.905';
+              // Also populate per-phase options based on phase identity:
+              // WC (hexagonal) → PO fixed [001] @ 0.905; W2C (Pbcn) → PO off.
+              // This is a CHEMISTRY PRESET — the only place name-based
+              // detection is allowed.  Any other phase keeps its current
+              // per-phase entry.
+              if (typeof xrdPhases !== 'undefined' && xrdPhases.length) {
+                _ensurePhaseOptions();
+                xrdPhases.forEach((ph, i) => {
+                  const formula = (ph.formula || '').toLowerCase().replace(/\s/g, '');
+                  const sys_ = (ph.system || '').toLowerCase();
+                  const isW2C = formula.includes('w2c') || formula === 'cw2';
+                  const isWC = !isW2C && formula.includes('wc') && sys_ === 'hexagonal';
+                  if (isWC) {
+                    xrdPhaseOptions[i].po_mode = 'fixed';
+                    xrdPhaseOptions[i].po_axis = '0 0 1';
+                    xrdPhaseOptions[i].po_value = 0.905;
+                  } else if (isW2C) {
+                    xrdPhaseOptions[i].po_mode = 'off';
+                  }
+                  // Always size/mustrain off for the production preset
+                  xrdPhaseOptions[i].refine_size = false;
+                  xrdPhaseOptions[i].refine_mustrain = false;
+                });
+                renderSelectedPhases();
+              }
+            }
+          });
+          wcw2cRecipeMembers.forEach(id => {
+            const el = document.getElementById(id);
+            if (el && !el._memberWired) {
+              el._memberWired = true;
+              el.addEventListener('change', () => {
+                // If user manually changes any member, untick the preset.
+                const allOn = wcw2cRecipeMembers.every(mid => {
+                  const m = document.getElementById(mid);
+                  return m && m.checked;
+                });
+                stdRecipe.checked = allOn;
+              });
+            }
+          });
+        }
       }
     })
     .catch(() => {});  // silently ignore if endpoint not available
@@ -1396,7 +1610,7 @@ async function searchPhases(allowExtra = false) {
     return;
   }
 
-  setXrdStatus('🔍 Querying Crystallography Open Database...', 'info');
+  setXrdStatus('🔍 Querying Materials Project...', 'info');
   document.getElementById('xrd-candidates-wrap').style.display = 'none';
   xrdSearchOffset = 0;
 
@@ -1548,7 +1762,17 @@ async function addPhaseFromRow(idx, e) {
   try {
     const resp = await fetch('/api/xrd/fetch_cif', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({cod_id: entryId, source: entrySrc, wavelength: parseFloat(document.getElementById('xrd-wavelength').value)||1.54056})
+      body: JSON.stringify({
+        cod_id: entryId, source: entrySrc,
+        wavelength: parseFloat(document.getElementById('xrd-wavelength').value)||1.54056,
+        phase_hint: {
+          formula: c.formula, name: c.name,
+          spacegroup: c.spacegroup, spacegroup_number: c.spacegroup_number,
+          system: c.system,
+          a: c.a, b: c.b, c: c.c,
+          alpha: c.alpha, beta: c.beta, gamma: c.gamma,
+        }
+      })
     });
     const data = await resp.json();
     if (data.error) {
@@ -1616,7 +1840,62 @@ function removePhase(idx) {
   renderCandidates();
 }
 
+// ─ Per-phase refinement options (dynamic; replaces hard-coded WC/W2C
+// checkboxes).  Each phase index in xrdPhases gets a corresponding
+// entry here.  Defaults are conservative (everything off, PO mode off).
+// Recipe presets and per-phase UI cards both write to this.
+let xrdPhaseOptions = [];
+
+function _defaultPhaseOptions(ph) {
+  // Suggest sensible PO axis defaults based on crystal system.  These
+  // are EDITABLE placeholders — the user can override.
+  const sys_ = (ph.system || '').toLowerCase();
+  let axisDefault = '0 0 1';
+  if (sys_ === 'orthorhombic') axisDefault = '0 0 1';
+  else if (sys_ === 'cubic')   axisDefault = '1 1 1';
+  return {
+    refine_size: false,
+    refine_mustrain: false,
+    po_mode: 'off',          // 'off' | 'fixed' | 'refined'
+    po_value: 1.0,
+    po_axis: axisDefault,    // string "h k l" in UI; parsed to [int,int,int] on submit
+  };
+}
+
+function _ensurePhaseOptions() {
+  // Pad / truncate xrdPhaseOptions to match xrdPhases length, preserving
+  // existing entries by index.
+  while (xrdPhaseOptions.length < xrdPhases.length) {
+    xrdPhaseOptions.push(_defaultPhaseOptions(
+      xrdPhases[xrdPhaseOptions.length]));
+  }
+  if (xrdPhaseOptions.length > xrdPhases.length) {
+    xrdPhaseOptions.length = xrdPhases.length;
+  }
+}
+
+function _phaseOptsToBackendJSON() {
+  // Convert UI-friendly entries to backend phase_options structure.
+  return xrdPhaseOptions.map(o => {
+    let axis = null;
+    if (o.po_axis && typeof o.po_axis === 'string') {
+      const parts = o.po_axis.trim().split(/[\s,]+/).map(x => parseInt(x, 10));
+      if (parts.length === 3 && parts.every(n => !isNaN(n))) axis = parts;
+    } else if (Array.isArray(o.po_axis)) {
+      axis = o.po_axis;
+    }
+    return {
+      refine_size: !!o.refine_size,
+      refine_mustrain: !!o.refine_mustrain,
+      po_mode: o.po_mode || 'off',
+      po_value: parseFloat(o.po_value || 1.0),
+      po_axis: axis,
+    };
+  });
+}
+
 function renderSelectedPhases() {
+  _ensurePhaseOptions();
   const wrap = document.getElementById('xrd-selected-wrap');
   const cont = document.getElementById('xrd-selected-phases');
   wrap.style.display = xrdPhases.length ? 'block' : 'none';
@@ -1624,11 +1903,18 @@ function renderSelectedPhases() {
   const COLORS = ['#f78166','#56d364','#e3b341','#bc8cff','#79c0ff','#ffa657'];
   xrdPhases.forEach((ph, i) => {
     const c = COLORS[i % COLORS.length];
-    const div = document.createElement('div');
-    div.style.cssText = `display:flex;align-items:center;gap:10px;padding:8px 14px;
-      background:var(--surface2);border:1px solid ${c};border-radius:6px;`;
+    const opts = xrdPhaseOptions[i];
+
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = `display:flex;flex-direction:column;gap:0;
+      background:var(--surface2);border:1px solid ${c};border-radius:6px;
+      overflow:hidden;`;
+
+    // Header row: phase identity (existing layout)
+    const head = document.createElement('div');
+    head.style.cssText = `display:flex;align-items:center;gap:10px;padding:8px 14px;`;
     const zVal = ph.Z || '';
-    div.innerHTML = `
+    head.innerHTML = `
       <span style="width:10px;height:10px;border-radius:50%;background:${c};flex-shrink:0;"></span>
       <span style="font-family:var(--mono);font-size:13px;font-weight:700;">${ph.formula||ph.name}</span>
       <span style="font-size:11px;color:var(--muted);">${ph.spacegroup||''}</span>
@@ -1640,9 +1926,58 @@ function renderSelectedPhases() {
         Z=<input type="number" min="1" max="200" value="${zVal}" placeholder="?" style="width:40px;font-size:11px;padding:1px 4px;background:var(--surface);border:1px solid var(--border);color:var(--fg);border-radius:3px;"
           onchange="xrdPhases[${i}].Z=parseInt(this.value)||null">
       </label>
-      <span style="margin-left:auto;font-size:11px;color:var(--muted);">COD ${ph.cod_id}</span>
+      <span style="margin-left:auto;font-size:11px;color:var(--muted);">${ph.mp_id||ph.cod_id||''}</span>
       <button class="btn-sm" style="padding:3px 8px;font-size:11px;" onclick="removePhase(${i})">✕</button>`;
-    cont.appendChild(div);
+    wrapper.appendChild(head);
+
+    // Per-phase refinement controls row
+    const ctrl = document.createElement('div');
+    ctrl.style.cssText = `display:flex;flex-wrap:wrap;align-items:center;gap:10px;
+      padding:6px 14px 8px;border-top:1px solid var(--border);
+      font-size:11px;color:var(--muted);background:rgba(255,255,255,0.02);`;
+    const sysLabel = (ph.system || 'unknown').toLowerCase();
+    ctrl.innerHTML = `
+      <span style="font-weight:700;text-transform:uppercase;letter-spacing:.6px;font-size:10px;">Refine ${ph.formula||ph.name}:</span>
+      <label style="display:flex;align-items:center;gap:3px;cursor:pointer;" title="Refine isotropic crystallite size for this phase only">
+        <input type="checkbox" data-pi="${i}" data-key="refine_size" ${opts.refine_size?'checked':''}> Size
+      </label>
+      <label style="display:flex;align-items:center;gap:3px;cursor:pointer;" title="Refine isotropic microstrain for this phase only">
+        <input type="checkbox" data-pi="${i}" data-key="refine_mustrain" ${opts.refine_mustrain?'checked':''}> Mustrain
+      </label>
+      <span style="border-left:1px solid var(--border);height:14px;"></span>
+      <span title="March-Dollase preferred orientation: off / hold at value / refine">PO:</span>
+      <select data-pi="${i}" data-key="po_mode" style="font-size:11px;padding:1px 4px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:3px;">
+        <option value="off" ${opts.po_mode==='off'?'selected':''}>off</option>
+        <option value="fixed" ${opts.po_mode==='fixed'?'selected':''}>fixed</option>
+        <option value="refined" ${opts.po_mode==='refined'?'selected':''}>refined</option>
+      </select>
+      <label style="display:flex;align-items:center;gap:3px;" title="PO direction h k l (space-separated). Hexagonal phases conventionally use 0 0 1.">
+        axis [<input type="text" data-pi="${i}" data-key="po_axis" value="${opts.po_axis||''}" style="width:50px;font-size:11px;padding:1px 4px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:3px;text-align:center;">]
+      </label>
+      <label style="display:flex;align-items:center;gap:3px;" title="March-Dollase ratio. <1 = preferential alignment along PO axis, =1 = no texture.">
+        value <input type="number" data-pi="${i}" data-key="po_value" value="${opts.po_value}" step="0.001" min="0.1" max="3.0" style="width:60px;font-size:11px;padding:1px 4px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:3px;">
+      </label>
+      <span style="font-size:10px;font-style:italic;color:var(--muted);">(${sysLabel})</span>
+    `;
+    wrapper.appendChild(ctrl);
+
+    // Wire up the input change handlers
+    ctrl.querySelectorAll('[data-pi][data-key]').forEach(el => {
+      el.addEventListener('change', () => {
+        const pi = parseInt(el.getAttribute('data-pi'), 10);
+        const key = el.getAttribute('data-key');
+        if (pi < 0 || pi >= xrdPhaseOptions.length) return;
+        if (el.type === 'checkbox') {
+          xrdPhaseOptions[pi][key] = el.checked;
+        } else if (el.type === 'number') {
+          xrdPhaseOptions[pi][key] = parseFloat(el.value) || 0;
+        } else {
+          xrdPhaseOptions[pi][key] = el.value;
+        }
+      });
+    });
+
+    cont.appendChild(wrapper);
   });
 }
 
@@ -1707,6 +2042,101 @@ async function runXRD(method) {
     fd.append('n_bg_coeffs', document.getElementById('xrd-bg-coeffs').value || 'auto');
     fd.append('output_dir',  document.getElementById('xrd-output-dir').value);
     fd.append('method',      method);
+    // Instrument selection
+    const instSelect = document.getElementById('xrd-instrument');
+    if (instSelect) {
+      fd.append('instrument', instSelect.value);
+    }
+    // Calibration mode — refine instrument profile from standard
+    const calCheckbox = document.getElementById('xrd-calibration-mode');
+    if (calCheckbox && calCheckbox.checked) {
+      fd.append('calibration_mode', 'true');
+    }
+    // Verification mode — skip cell/Uiso/size stages (GSAS-II only)
+    const verifyCheckbox = document.getElementById('xrd-verification-mode');
+    if (verifyCheckbox && verifyCheckbox.checked) {
+      fd.append('verification_mode', 'true');
+    }
+    // Verification + cell — turn cell refinement back on in Stage 6 only
+    const verifyCellCheckbox = document.getElementById('xrd-verify-cell');
+    if (verifyCellCheckbox && verifyCellCheckbox.checked) {
+      fd.append('verify_refine_cell', 'true');
+    }
+    // Phase isolation — per-phase curves from GSAS-II ycalc instead of manual reconstruction
+    const phaseIsoCheckbox = document.getElementById('xrd-phase-isolation');
+    if (phaseIsoCheckbox && phaseIsoCheckbox.checked) {
+      fd.append('phase_isolation', 'true');
+    }
+    // PO hex [001] — refine March-Dollase preferred orientation for hexagonal phases
+    const poHexCheckbox = document.getElementById('xrd-po-hex');
+    if (poHexCheckbox && poHexCheckbox.checked) {
+      fd.append('verify_refine_po', 'true');
+    }
+    // Fix WC PO — hold MD ratio at entered value instead of refining
+    const fixPoCheckbox = document.getElementById('xrd-fix-po');
+    if (fixPoCheckbox && fixPoCheckbox.checked) {
+      fd.append('verify_fix_po', 'true');
+      const fixPoVal = document.getElementById('xrd-fix-po-value');
+      if (fixPoVal && fixPoVal.value && !isNaN(parseFloat(fixPoVal.value))) {
+        fd.append('verify_po_fixed_value', fixPoVal.value.trim());
+      }
+    }
+    // Refine Zero (fix Disp) — diagnostic swap of position handle
+    const zeroNotDispCheckbox = document.getElementById('xrd-zero-not-disp');
+    if (zeroNotDispCheckbox && zeroNotDispCheckbox.checked) {
+      fd.append('verify_use_zero_not_displace', 'true');
+    }
+    // Uniform W2C cell — Branch B diagnostic
+    const cellUniformCheckbox = document.getElementById('xrd-cell-uniform-w2c');
+    if (cellUniformCheckbox && cellUniformCheckbox.checked) {
+      fd.append('verify_cell_uniform_w2c', 'true');
+    }
+    // Free X — Lorentzian strain diagnostic
+    const refineXCheckbox = document.getElementById('xrd-refine-x');
+    if (refineXCheckbox && refineXCheckbox.checked) {
+      fd.append('verify_refine_x', 'true');
+    }
+    // Fix Y — overrides any Y refinement
+    const fixYCheckbox = document.getElementById('xrd-fix-y');
+    if (fixYCheckbox && fixYCheckbox.checked) {
+      fd.append('verify_fix_y', 'true');
+      const fixYVal = document.getElementById('xrd-fix-y-value');
+      if (fixYVal && fixYVal.value && !isNaN(parseFloat(fixYVal.value))) {
+        fd.append('verify_y_fixed_value', fixYVal.value.trim());
+      }
+    }
+    // Y ≥ 0 — post-Stage-6 clamp of negative Y
+    const yNonnegCheckbox = document.getElementById('xrd-y-nonneg');
+    if (yNonnegCheckbox && yNonnegCheckbox.checked) {
+      fd.append('verify_y_nonnegative', 'true');
+    }
+    // Refine Uiso (Stage 4)
+    const refineUisoCheckbox = document.getElementById('xrd-refine-uiso');
+    if (refineUisoCheckbox && refineUisoCheckbox.checked) {
+      fd.append('verify_refine_uiso', 'true');
+    }
+    // Refine size (Stage 4b) — legacy: all phases
+    const refineSizeCheckbox = document.getElementById('xrd-refine-size');
+    if (refineSizeCheckbox && refineSizeCheckbox.checked) {
+      fd.append('verify_refine_size', 'true');
+    }
+    // Per-phase refinement options (preferred: phase_options array).
+    // Legacy WC/W2C checkboxes are no longer present in the UI; if you
+    // see fields below, an old cached HTML is still in use.
+    const _phaseOptsBackend = _phaseOptsToBackendJSON();
+    if (_phaseOptsBackend && _phaseOptsBackend.length) {
+      fd.append('phase_options', JSON.stringify(_phaseOptsBackend));
+    }
+    // Refine XYZ (Stage 5)
+    const refineXyzCheckbox = document.getElementById('xrd-refine-xyz');
+    if (refineXyzCheckbox && refineXyzCheckbox.checked) {
+      fd.append('refine_xyz', 'true');
+    }
+    // GSAS ticks — use GSAS-II RefList instead of Python refs
+    const gsasTicksCheckbox = document.getElementById('xrd-gsas-ticks');
+    if (gsasTicksCheckbox && gsasTicksCheckbox.checked) {
+      fd.append('use_gsas_ref_ticks', 'true');
+    }
     // Include instrument parameter file if provided (GSAS-II only)
     const instprmInput = document.getElementById('xrd-instprm-file');
     if (instprmInput && instprmInput.files.length > 0) {
@@ -1776,8 +2206,19 @@ function showXRDResults(data) {
   // Stats grid
   const sg = document.getElementById('xrd-stats-grid');
   sg.innerHTML = '';
-  [{l:'Rwp',v:st.Rwp+'%'},{l:'Rp',v:st.Rp+'%'},{l:'χ²',v:st.chi2},
-   {l:'GoF',v:st.GoF},{l:'Zero shift',v:data.zero_shift+'°'}].forEach(s => {
+  const statBoxes = [
+    {l:'Rwp',v:st.Rwp+'%'}, {l:'Rp',v:st.Rp+'%'}, {l:'χ²',v:st.chi2},
+    {l:'GoF',v:st.GoF}, {l:'Zero shift',v:data.zero_shift+'°'}
+  ];
+  // Sample displacement (DisplaceX for BB, DisplaceY for capillary).
+  // Surfaces the cell-vs-displacement trade-off in verify+cell runs.
+  if (data.displacement_um != null && data.displacement_param) {
+    statBoxes.push({
+      l: data.displacement_param,
+      v: Number(data.displacement_um).toFixed(1) + ' µm'
+    });
+  }
+  statBoxes.forEach(s => {
     sg.innerHTML += `<div class="stat-box">
       <div class="stat-label">${s.l}</div>
       <div class="stat-val" style="font-size:18px;">${s.v}</div></div>`;
@@ -1819,9 +2260,103 @@ function showXRDResults(data) {
       </div>`;
   });
 
-  // Plot
+  // Plot — interactive if plot_data available, static fallback
   const plotEl = document.getElementById('xrd-result-plot');
-  if (data.plot_b64) {
+  const interactivePlot = document.getElementById('xrd-interactive-plot');
+
+  if (data.plot_data && data.plot_data.tt && data.plot_data.tt.length > 0) {
+    const pd = data.plot_data;
+    const phColors = ['#f78166','#56d364','#e3b341','#bc8cff','#79c0ff','#ffa657'];
+
+    // Main traces: observed, calculated, background
+    const traces = [
+      { x: pd.tt, y: pd.y_obs, name: 'I_obs', type: 'scattergl',
+        mode: 'lines', line: { color: '#58a6ff', width: 1 } },
+      { x: pd.tt, y: pd.y_calc, name: 'I_calc', type: 'scattergl',
+        mode: 'lines', line: { color: '#ffffff', width: 1.2 } },
+      { x: pd.tt, y: pd.y_background, name: 'Background', type: 'scattergl',
+        mode: 'lines', line: { color: '#8b949e', width: 1, dash: 'dash' } },
+    ];
+
+    // Phase envelope traces (individual species contributions)
+    if (pd.phase_patterns && data.phase_results) {
+      for (let i = 0; i < pd.phase_patterns.length; i++) {
+        const pp = pd.phase_patterns[i];
+        const pr = data.phase_results[i] || {};
+        const col = phColors[i % phColors.length];
+        const label = `${pr.name || 'Phase '+(i+1)} ${pr.spacegroup || ''}`.trim();
+        const wt = pr['weight_fraction_%'];
+        const wtStr = wt != null ? ` ${wt}%` : '';
+        // Add background to phase pattern for display (same as static plot)
+        const ppWithBg = pp.map((v, j) => v + (pd.y_background[j] || 0));
+        traces.push({
+          x: pd.tt, y: ppWithBg,
+          name: `${label}${wtStr}`,
+          type: 'scattergl', mode: 'lines',
+          line: { color: col, width: 1 },
+          fill: 'tonexty', fillcolor: col + '20',
+        });
+      }
+    }
+
+    // Residual trace (separate y-axis)
+    traces.push(
+      { x: pd.tt, y: pd.residuals, name: 'Residuals', type: 'scattergl',
+        mode: 'lines', line: { color: '#f0883e', width: 0.8 },
+        yaxis: 'y2' }
+    );
+
+    // Tick marks as shapes (vertical lines in the tick panel)
+    const shapes = [];
+    if (data.phase_results) {
+      const yTickBase = 0.21;  // just above residual panel
+      const yTickH = 0.03;
+      for (let i = 0; i < data.phase_results.length; i++) {
+        const pr = data.phase_results[i];
+        const col = phColors[i % phColors.length];
+        const ticks = pr.tick_positions || [];
+        for (const tt of ticks) {
+          shapes.push({
+            type: 'line', xref: 'x', yref: 'paper',
+            x0: tt, x1: tt,
+            y0: yTickBase + i * yTickH,
+            y1: yTickBase + (i + 1) * yTickH,
+            line: { color: col, width: 1 },
+          });
+        }
+      }
+    }
+
+    const layout = {
+      paper_bgcolor: 'rgba(0,0,0,0)',
+      plot_bgcolor: '#161b22',
+      font: { color: '#c9d1d9', size: 11 },
+      margin: { l: 60, r: 20, t: 40, b: 50 },
+      title: { text: `${data.method || 'Refinement'} — Rwp=${data.statistics?.Rwp || '?'}%`,
+               font: { size: 13 } },
+      xaxis: { title: '2θ (degrees)', gridcolor: '#30363d', zeroline: false },
+      yaxis: { title: 'Intensity', gridcolor: '#30363d', zeroline: false,
+               domain: [0.28, 1.0] },
+      yaxis2: { title: 'Residual', gridcolor: '#30363d', zeroline: true,
+                zerolinecolor: '#58a6ff',
+                domain: [0.0, 0.18], anchor: 'x' },
+      legend: { x: 0.01, y: 0.99, bgcolor: 'rgba(22,27,34,0.8)',
+                font: { size: 10 } },
+      shapes: shapes,
+      dragmode: 'zoom',
+    };
+    const config = {
+      responsive: true,
+      displayModeBar: true,
+      modeBarButtonsToAdd: ['pan2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d'],
+      displaylogo: false,
+    };
+    interactivePlot.style.display = 'block';
+    plotEl.style.display = 'none';
+    Plotly.newPlot(interactivePlot, traces, layout, config);
+  } else if (data.plot_b64) {
+    // Static fallback
+    interactivePlot.style.display = 'none';
     plotEl.src = 'data:image/png;base64,' + data.plot_b64;
     plotEl.style.display = 'block';
   }
