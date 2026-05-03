@@ -1992,6 +1992,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
     if y_nonneg_opt:
         print(f"  Y control: post-Stage-6 will clamp Y to >= 0 "
               f"(verify_y_nonnegative=True).", flush=True)
+    _y_nonnegative_clamped = False
     # Explicit toggles for structural refinement (Phase B).  These
     # OVERRIDE the verification_mode default of "off" — they let the
     # user run a near-verification recipe with one extra structural
@@ -2569,10 +2570,10 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                         f"imported {_imported_atoms}.")
                 if _expected_sg > 1 and _imported_atoms > _expected_atoms:
                     _validation_failures.append(_msg)
-                    print(f"  âš  VALIDATION FAIL: {_msg}", flush=True)
+                    print(f"  VALIDATION FAIL: {_msg}", flush=True)
                 else:
                     _validation_warnings.append(_msg)
-                    print(f"  âš  VALIDATION WARN: {_msg}", flush=True)
+                    print(f"  VALIDATION WARN: {_msg}", flush=True)
 
             def _close(x, y, tol=0.05):
                 if x <= 0 or y <= 0:
@@ -3503,6 +3504,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                         print(f"  Y nonneg: refined Y = {_y_now:.4f} < 0; "
                               f"clamping to 0 and refreshing ycalc.",
                               flush=True)
+                        _y_nonnegative_clamped = True
                         _inst_dict_y['Y'][1] = 0.0
                         if len(_inst_dict_y['Y']) >= 3:
                             _inst_dict_y['Y'][2] = False
@@ -4227,6 +4229,31 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             except Exception:
                 pass
 
+            # Preferred orientation is a reusable refinement output, not just
+            # a submitted phase-card control.  Read the final GSAS-II HAP
+            # value so the GUI can show the converged March-Dollase ratio for
+            # the next run/preset.
+            pref_ori_mode = 'off'
+            pref_ori_value = None
+            pref_ori_axis = None
+            pref_ori_refined = False
+            pref_ori_source = None
+            try:
+                hap_data = list(phase_obj.data['Histograms'].values())[0]
+                pref_ori = hap_data.get('Pref.Ori.')
+                if isinstance(pref_ori, (list, tuple)) and len(pref_ori) >= 2:
+                    pref_ori_mode = _po_phase_modes.get(
+                        i, 'global' if i in _pref_ori_phases else 'off')
+                    pref_ori_value = float(pref_ori[1])
+                    pref_ori_refined = (
+                        bool(pref_ori[2]) if len(pref_ori) >= 3 else False)
+                    if len(pref_ori) >= 4 and isinstance(
+                            pref_ori[3], (list, tuple)):
+                        pref_ori_axis = [int(x) for x in pref_ori[3]]
+                    pref_ori_source = 'gsas_hap_pref_ori'
+            except Exception:
+                pass
+
             # Build a display name that always includes the space group symbol
             # so that phases with the same formula are clearly distinguishable.
             _sg_sym = (ph.get('spacegroup', '') or
@@ -4271,6 +4298,13 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 'U': round(U_deg, 5), 'V': round(V_deg, 5),
                 'W': round(W_deg, 5),
                 'X': round(X_deg, 5), 'Y': round(Y_deg, 5),
+                'preferred_orientation_mode': pref_ori_mode,
+                'preferred_orientation_value': (
+                    round(pref_ori_value, 5)
+                    if pref_ori_value is not None else None),
+                'preferred_orientation_axis': pref_ori_axis,
+                'preferred_orientation_refined': pref_ori_refined,
+                'preferred_orientation_source': pref_ori_source,
                 'eta_at_strongest':  round(eta_rep, 3),
                 'eta_at_40deg':      round(eta_rep, 3),
                 'eta_at_fwhm_reference': round(eta_rep, 3),
@@ -4752,6 +4786,90 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # Flag suspicious results without failing the run.  Useful for
         # automated screening where a low Rwp is not always trustworthy.
         _sanity_warnings = []
+
+        # Zero shift
+        if _y_nonnegative_clamped:
+            _sanity_warnings.append(
+                "Refined Y became negative and was clamped to 0; this is a "
+                "sign that X/Y broadening terms may be trading off.")
+
+        # High-leverage knobs enabled in a new-sample recipe
+        if refine_xyz:
+            _sanity_warnings.append(
+                "XYZ atom-position refinement was enabled. Lab XRD usually "
+                "does not constrain atom coordinates strongly enough unless "
+                "the structure, instrument profile, and constraints are "
+                "already well validated; XYZ can otherwise absorb CIF or "
+                "instrument errors and make a wrong structure look better.")
+        if refine_uiso_opt:
+            _sanity_warnings.append(
+                "Uiso refinement was enabled. Uiso changes calculated peak "
+                "intensities through the Debye-Waller factor, especially at "
+                "higher angle; a lower Rwp can therefore come from intensity "
+                "reweighting rather than a better phase fraction. Check that "
+                "B_iso values are physically plausible and that wt% changes "
+                "remain stable against the baseline.")
+        if refine_size_opt:
+            _sanity_warnings.append(
+                "Global size refinement was enabled. Size broadening can "
+                "compensate for instrument/profile errors or unresolved "
+                "microstrain, so keep it only if peak widths improve in a "
+                "physically expected way versus the baseline.")
+        for _idx_opt, _popts_warn in enumerate(phase_options_list or []):
+            if not isinstance(_popts_warn, dict):
+                continue
+            if _popts_warn.get('refine_size'):
+                _sanity_warnings.append(
+                    f"Phase {_idx_opt + 1} size refinement is active. It "
+                    f"changes that phase's peak widths and can trade off "
+                    f"with profile/instrument broadening; confirm this phase "
+                    f"is visibly broader than the others.")
+            if _popts_warn.get('refine_mustrain'):
+                _sanity_warnings.append(
+                    f"Phase {_idx_opt + 1} microstrain refinement is active. "
+                    f"Microstrain and size both broaden peaks, but with "
+                    f"different angle/hkl trends; confirm the residuals show "
+                    f"strain-like broadening before interpreting it.")
+            if _popts_warn.get('po_mode') == 'refined':
+                _sanity_warnings.append(
+                    f"Phase {_idx_opt + 1} preferred orientation is refined. "
+                    f"PO changes relative reflection intensities and can "
+                    f"trade off with phase fraction; compare against off or "
+                    f"fixed-PO fits and check wt% stability.")
+            if _popts_warn.get('uniform_cell'):
+                _sanity_warnings.append(
+                    f"Phase {_idx_opt + 1} uniform-cell post-scaling is "
+                    f"active. This is a diagnostic constraint: small fit "
+                    f"penalty supports uniform contraction/expansion, while "
+                    f"a large penalty suggests real anisotropic cell change "
+                    f"or an inadequate model.")
+
+        for pr in phase_results:
+            _name_warn = pr.get('name', '?')
+            for _axis_label, _key_warn in (
+                    ('a', 'delta_a_pct'), ('b', 'delta_b_pct'),
+                    ('c', 'delta_c_pct'), ('V', 'delta_volume_pct')):
+                _dv = pr.get(_key_warn)
+                if _dv is not None and abs(float(_dv)) > 3.0:
+                    _sanity_warnings.append(
+                        f"Large {_axis_label} cell change for '{_name_warn}' "
+                        f"({_dv}% vs input CIF); check phase identity and "
+                        f"sample displacement/zero correction.")
+            _wf = pr.get('weight_fraction_%')
+            _we = pr.get('weight_fraction_err_%')
+            if _wf is not None and _we is not None:
+                if float(_we) > 5.0 or (
+                        abs(float(_wf)) > 1e-9
+                        and float(_we) / abs(float(_wf)) > 0.25):
+                    _sanity_warnings.append(
+                        f"Large weight-fraction uncertainty for "
+                        f"'{_name_warn}' ({_wf} +/- {_we} wt%).")
+            _src_warn = str(pr.get('crystallite_size_source') or '').lower()
+            if 'fallback' in _src_warn:
+                _sanity_warnings.append(
+                    f"Crystallite size for '{_name_warn}' came from a "
+                    f"fallback estimate; do not treat it as a direct "
+                    f"refined size parameter.")
 
         # Zero shift
         if abs(zero_shift) > 0.1:

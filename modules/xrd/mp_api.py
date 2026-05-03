@@ -20,6 +20,43 @@ from .cod_api import infer_system, _sf
 MP_SUMMARY = "https://api.materialsproject.org/materials/summary/"
 TIMEOUT    = 15
 
+_VALID_ELEMENTS = {
+    'H','He','Li','Be','B','C','N','O','F','Ne','Na','Mg','Al','Si',
+    'P','S','Cl','Ar','K','Ca','Sc','Ti','V','Cr','Mn','Fe','Co','Ni',
+    'Cu','Zn','Ga','Ge','As','Se','Br','Kr','Rb','Sr','Y','Zr','Nb',
+    'Mo','Tc','Ru','Rh','Pd','Ag','Cd','In','Sn','Sb','Te','I','Xe',
+    'Cs','Ba','La','Ce','Pr','Nd','Pm','Sm','Eu','Gd','Tb','Dy','Ho',
+    'Er','Tm','Yb','Lu','Hf','Ta','W','Re','Os','Ir','Pt','Au','Hg',
+    'Tl','Pb','Bi','Po','At','Rn','Fr','Ra','Ac','Th','Pa','U','Np',
+    'Pu','Am','Cm','Bk','Cf','Es','Fm','Md','No','Lr','Rf','Db','Sg',
+    'Bh','Hs','Mt','Ds','Rg','Cn','Nh','Fl','Mc','Lv','Ts','Og',
+}
+
+
+def _normalize_formula_case(formula):
+    formula = (formula or '').strip().replace(' ', '')
+    if not formula or re.search(r'[A-Z]', formula):
+        return formula
+    out = []
+    i = 0
+    while i < len(formula):
+        if formula[i].isdigit():
+            out.append(formula[i])
+            i += 1
+            continue
+        two = formula[i:i+2].capitalize()
+        one = formula[i].upper()
+        if i + 1 < len(formula) and two in _VALID_ELEMENTS:
+            out.append(two)
+            i += 2
+        elif one in _VALID_ELEMENTS:
+            out.append(one)
+            i += 1
+        else:
+            out.append(formula[i].upper())
+            i += 1
+    return ''.join(out)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Local CIF fixtures override
 # ─────────────────────────────────────────────────────────────────────────────
@@ -110,7 +147,7 @@ def search_by_elements(elements, api_key, strict=True,
 def search_by_formula(formula, api_key, max_results=50, sort_by="formula"):
     if not api_key:
         return {"error": "No Materials Project API key. Add to config.yaml."}
-    formula = formula.strip().replace(" ", "")
+    formula = _normalize_formula_case(formula)
     if not formula:
         return []
     try:
@@ -166,8 +203,11 @@ def search_by_name(name, api_key, max_results=50, sort_by="formula"):
     }
 
     # If it looks like a formula (starts uppercase, only letters/digits, no spaces)
-    if re.match(r"^[A-Z][a-zA-Z0-9]*$", name.replace(" ", "")):
-        return search_by_formula(name, api_key, max_results, sort_by)
+    _compact_name = name.replace(" ", "")
+    _maybe_formula = _normalize_formula_case(_compact_name)
+    if (len(_compact_name) <= 8
+            and re.match(r"^[A-Z][a-zA-Z0-9]*$", _maybe_formula)):
+        return search_by_formula(_maybe_formula, api_key, max_results, sort_by)
 
     # Try to extract element symbols — first from capitalised tokens (e.g. "W C Mo")
     words = name.replace("-", " ").split()

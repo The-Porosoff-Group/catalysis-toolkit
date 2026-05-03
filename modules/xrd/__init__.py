@@ -825,6 +825,7 @@ def run(filepath, output_dir, metadata, params):
         'zero_shift':   result['zero_shift'],
         'displacement_um':    result.get('displacement_um'),
         'displacement_param': result.get('displacement_param'),
+        'warnings':     result.get('warnings', []),
         'pymatgen_used': result.get('pymatgen_used', False),
         'method':        method_label,
         'result':       result,
