@@ -2076,6 +2076,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             'po_mode': 'off',
             'po_value': 1.0,
             'po_axis': None,
+            'uniform_cell': False,
         }
         # Layer 1: legacy name-based fallback
         _n = (name or '').lower()
@@ -2097,6 +2098,17 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                     if k in _explicit:
                         defaults[k] = _explicit[k]
         return defaults
+
+    _uniform_cell_phase_idxs = set()
+    for _idx_uc, _ph_uc in enumerate(phases):
+        _name_uc = (_ph_uc.get('name') or _ph_uc.get('formula') or '')
+        if bool(_phase_opts_for(_idx_uc, _name_uc).get('uniform_cell')):
+            _uniform_cell_phase_idxs.add(_idx_uc)
+    if _uniform_cell_phase_idxs:
+        uniform_cell_w2c_opt = True
+        print(f"  Cell constraint: uniform-cell scaling requested for "
+              f"phase index(es) {sorted(_uniform_cell_phase_idxs)}.",
+              flush=True)
     if verification_mode:
         if verify_refine_cell:
             print("  VERIFICATION + CELL MODE: Uiso, MD, size, and XYZ "
@@ -2945,6 +2957,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # Track which phases want PO held at a fixed value (per-phase).
         # Used by the refine-flag loop later to skip setting Pref.Ori.→True.
         _po_fixed_phases = set()
+        _po_phase_modes = {}
         for idx, (phase_obj, ph_input) in enumerate(zip(gsas_phases, phases)):
             if idx in _negligible_phases:
                 continue
@@ -2956,11 +2969,15 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             _po_mode_p = _popts.get('po_mode', 'off')
             _po_axis_p = _popts.get('po_axis')
             _po_value_p = _popts.get('po_value', 1.0)
+            _has_phase_options_entry = (
+                idx < len(phase_options_list)
+                and isinstance(phase_options_list[idx], dict))
             _has_per_phase_po = (_po_mode_p in ('fixed', 'refined'))
 
             # Legacy global path: preferred_orientation + fix_po_opt.
             _enable_md_global = False
-            if not _has_per_phase_po and preferred_orientation != 'off':
+            if (not _has_phase_options_entry and not _has_per_phase_po
+                    and preferred_orientation != 'off'):
                 if preferred_orientation == 'force':
                     _enable_md_global = True
                 elif preferred_orientation == 'auto':
@@ -2999,6 +3016,8 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 po[3] = _po_dir
                 hapData['Pref.Ori.'] = po
                 _pref_ori_phases.add(idx)
+                _po_phase_modes[idx] = (
+                    _po_mode_p if _has_per_phase_po else 'global')
                 if _is_fixed:
                     _po_fixed_phases.add(idx)
                 _src = 'phase_options' if _has_per_phase_po else 'auto/global'
@@ -3131,7 +3150,9 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # legacy fix_po_opt) keep refine_flag=False.  Others get the
         # refine flag set when verification mode allows it.
         for idx in _pref_ori_phases:
-            if verification_mode and not verify_refine_po_opt:
+            _po_mode_for_idx = _po_phase_modes.get(idx, 'global')
+            if (verification_mode and not verify_refine_po_opt
+                    and _po_mode_for_idx != 'refined'):
                 continue
             if idx in _po_fixed_phases:
                 # Defensive: keep refine flag cleared.
@@ -3366,6 +3387,8 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         if uniform_cell_w2c_opt and verify_refine_cell:
             for _idx_s, (_phase_obj_s, _ph_input_s) in enumerate(
                     zip(gsas_phases, phases)):
+                if _uniform_cell_phase_idxs and _idx_s not in _uniform_cell_phase_idxs:
+                    continue
                 _sg_n = int(_ph_input_s.get('spacegroup_number', 0) or 0)
                 _formula = str(_ph_input_s.get('formula', '')).replace(' ', '')
                 _is_pbcn_w2c = (_sg_n == 60
@@ -3845,6 +3868,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # this correlation drastically underestimates the uncertainties
         # (e.g. 0.05% instead of the true ~1-3%).
         wt_frac_sigmas = {}   # phase_name → σ(wt%) in percentage points
+        wt_frac_sigma_sources = {}
         if scale_sigmas and len(zmv_values) >= 2:
             try:
                 T = total_zmv
@@ -3931,12 +3955,34 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                     _sys_floor = max(1.0, 0.02 * (P_alpha / T) * 100.0)
                     sigma_w = max(sigma_w_propagated, _sys_floor)
                     wt_frac_sigmas[alpha] = sigma_w
+                    _cov_src = ('full_covariance' if have_full_cov
+                                else 'diagonal_covariance')
+                    if sigma_w > sigma_w_propagated * 1.01:
+                        wt_frac_sigma_sources[alpha] = (
+                            f'{_cov_src}+systematic_floor')
+                    else:
+                        wt_frac_sigma_sources[alpha] = _cov_src
                     if sigma_w > sigma_w_propagated * 1.01:
                         print(f"    {alpha}: propagated σ = "
                               f"±{sigma_w_propagated:.3f}%, "
                               f"reporting ±{sigma_w:.2f}% "
                               f"(systematic floor applied).",
                               flush=True)
+
+                # For a closed binary mixture, wt%(B) = 100 - wt%(A), so
+                # the absolute uncertainty in percentage points must be
+                # the same for both displayed fractions. The per-phase
+                # systematic floor above can otherwise make the major
+                # phase report a larger floor than the minor phase.
+                if n_ph == 2 and len(wt_frac_sigmas) == 2:
+                    _binary_sigma = max(wt_frac_sigmas.values())
+                    for _binary_name in phase_names:
+                        wt_frac_sigmas[_binary_name] = _binary_sigma
+                        _src = wt_frac_sigma_sources.get(
+                            _binary_name, 'scale_covariance')
+                        if 'binary_closure' not in _src:
+                            wt_frac_sigma_sources[_binary_name] = (
+                                f'{_src}+binary_closure')
 
                 print(f"  Weight fraction uncertainties: "
                       f"{{ {', '.join(f'{k}: ±{v:.2f}%' for k, v in wt_frac_sigmas.items())} }}",
@@ -4037,16 +4083,39 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 alpha, beta, gamma = _orig_alpha, _orig_beta, _orig_gamma
 
             V = cell_volume(a, b, c, alpha, beta, gamma)
+            V0 = cell_volume(_orig_a, _orig_b, _orig_c,
+                             _orig_alpha, _orig_beta, _orig_gamma)
+
+            def _pct_delta(val, ref):
+                try:
+                    val = float(val)
+                    ref = float(ref)
+                    if not math.isfinite(val) or not math.isfinite(ref):
+                        return None
+                    if abs(ref) < 1e-12:
+                        return None
+                    return (val - ref) / ref * 100.0
+                except Exception:
+                    return None
+
+            _cell_delta = {
+                'a_pct': _pct_delta(a, _orig_a),
+                'b_pct': _pct_delta(b, _orig_b),
+                'c_pct': _pct_delta(c, _orig_c),
+                'volume_pct': _pct_delta(V, V0),
+            }
 
             # Profile / size info
             prof = _extract_profile_params(phase_obj)
             cryst_A = prof.get('crystallite_size_A')
+            cryst_source = 'gsas_hap_size' if cryst_A else None
             # In verification_mode, Stage 4b (size refinement) was skipped,
             # so HAP Size is at GSAS-II's default (~1 µm).  Discard that
             # value and let the Y-based fallback below estimate size from
             # the refined Y parameter.
             if verification_mode:
                 cryst_A = None
+                cryst_source = None
 
             # GSAS-II stores profile params in centidegrees² (sig) and
             # centidegrees (gam).  Convert to degrees² / degrees for
@@ -4061,16 +4130,22 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             # If GSAS-II size extraction failed, estimate from Y
             if cryst_A is None and Y_deg > 0.01:
                 cryst_A = size_from_Y(Y_deg, wavelength)
+                if cryst_A:
+                    cryst_source = 'Y_fallback'
 
             # FWHM and eta at a representative angle (40°)
+            fwhm_reference_two_theta = 40.0
+            fwhm_reference_hkl = None
+            fwhm_reference_source = 'fallback_40deg'
             fwhm_rep, eta_rep = tch_fwhm_eta(
-                40.0, U_deg, V_deg, W_deg, X_deg, Y_deg)
+                fwhm_reference_two_theta, U_deg, V_deg, W_deg, X_deg, Y_deg)
 
             # Weight fraction (Hill & Howard or raw-scale fallback)
             scale_val = raw_scales.get(phase_obj.name, 1.0)
             zmv_val = zmv_values.get(phase_obj.name, scale_val)
             wt_pct = (zmv_val / total_zmv) * 100 if total_zmv > 0 else 0
             wt_pct_err = wt_frac_sigmas.get(phase_obj.name)  # may be None
+            wt_pct_err_source = wt_frac_sigma_sources.get(phase_obj.name)
 
             # ── Generate tick positions / reflection list ─────────────────
             # Always use generate_reflections() for tick positions — this
@@ -4098,6 +4173,26 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 wavelength, tt_min, tt_max, hkl_max=12,
                 sites=sites)
             gsas_phase_refs = gsas_refs.get(phase_obj.name)
+
+            # Report FWHM at a phase-relevant angle: the strongest
+            # calculated reflection used for that phase's tick pattern.
+            # The 40 deg value above is only a no-reflection fallback.
+            try:
+                _fwhm_ref = None
+                if phase_refs:
+                    _fwhm_ref = max(phase_refs, key=lambda r: float(r[3]))
+                elif gsas_phase_refs:
+                    _fwhm_ref = max(gsas_phase_refs,
+                                    key=lambda r: float(r[3]))
+                if _fwhm_ref:
+                    fwhm_reference_two_theta = float(_fwhm_ref[0])
+                    fwhm_reference_hkl = list(_fwhm_ref[2])
+                    fwhm_reference_source = 'strongest_calculated_reflection'
+                    fwhm_rep, eta_rep = tch_fwhm_eta(
+                        fwhm_reference_two_theta,
+                        U_deg, V_deg, W_deg, X_deg, Y_deg)
+            except Exception:
+                pass
 
             # Tick source: by default Python-filtered phase_refs (clean
             # display).  When use_gsas_ref_ticks is True, switch to
@@ -4151,6 +4246,23 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 'a': round(a, 5), 'b': round(b, 5), 'c': round(c, 5),
                 'alpha': round(alpha, 3), 'beta': round(beta, 3),
                 'gamma': round(gamma, 3),
+                'a0': round(_orig_a, 5), 'b0': round(_orig_b, 5),
+                'c0': round(_orig_c, 5),
+                'volume': round(V, 5),
+                'volume0': round(V0, 5) if V0 else None,
+                'delta_a_pct': (
+                    round(_cell_delta['a_pct'], 3)
+                    if _cell_delta['a_pct'] is not None else None),
+                'delta_b_pct': (
+                    round(_cell_delta['b_pct'], 3)
+                    if _cell_delta['b_pct'] is not None else None),
+                'delta_c_pct': (
+                    round(_cell_delta['c_pct'], 3)
+                    if _cell_delta['c_pct'] is not None else None),
+                'delta_volume_pct': (
+                    round(_cell_delta['volume_pct'], 3)
+                    if _cell_delta['volume_pct'] is not None else None),
+                'cell_reference': 'input_cif',
                 'system':            (ph.get('system') or 'triclinic').lower(),
                 'spacegroup_number': ph.get('spacegroup_number', 1),
                 'spacegroup':        ph.get('spacegroup', ''),
@@ -4160,11 +4272,19 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 'W': round(W_deg, 5),
                 'X': round(X_deg, 5), 'Y': round(Y_deg, 5),
                 'eta_at_strongest':  round(eta_rep, 3),
+                'eta_at_40deg':      round(eta_rep, 3),
+                'eta_at_fwhm_reference': round(eta_rep, 3),
+                'fwhm_reference_two_theta': fwhm_reference_two_theta,
+                'fwhm_reference_hkl': fwhm_reference_hkl,
+                'fwhm_reference_source': fwhm_reference_source,
                 'fwhm_deg':          round(fwhm_rep, 4),
                 'crystallite_size_A':  round(cryst_A, 1) if cryst_A else None,
                 'crystallite_size_nm': round(cryst_A / 10, 2) if cryst_A else None,
+                'crystallite_size_source': cryst_source,
                 'weight_fraction_%':       round(wt_pct, 1),
                 'weight_fraction_err_%':   round(wt_pct_err, 2) if wt_pct_err is not None else None,
+                'weight_fraction_err_source': wt_pct_err_source,
+                'weight_fraction_method': 'hill_howard',
                 'n_reflections':           len(tick_positions),
                 'tick_positions':      tick_positions,
                 'seeded_by':           'gsas2',
@@ -4502,10 +4622,50 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 # Overwrite with integrated fraction for display
                 if i_wp < len(phase_results):
                     phase_results[i_wp]['weight_fraction_%'] = round(integ_frac, 1)
+                    phase_results[i_wp]['weight_fraction_method'] = (
+                        'integrated_phase_pattern')
         else:
             # Single phase — entire signal above background
             total_above_bg = np.maximum(y_calc_out - y_bg_out, 0.0)
             phase_patterns.append(total_above_bg.tolist())
+
+        # Use the actual per-phase calculated pattern to choose the FWHM
+        # reference angle shown in the GUI. This avoids reporting a generic
+        # 40 deg width when the phase pattern has a clear strongest peak.
+        try:
+            _tt_for_fwhm = np.asarray(tt_out, dtype=float)
+            for _pi, _pp in enumerate(phase_patterns):
+                if _pi >= len(phase_results):
+                    continue
+                _pp_arr = np.asarray(_pp, dtype=float)
+                _n = min(_pp_arr.size, _tt_for_fwhm.size)
+                if _n <= 0:
+                    continue
+                _pk_idx = int(np.argmax(_pp_arr[:_n]))
+                if (not np.isfinite(_pp_arr[_pk_idx])
+                        or float(_pp_arr[_pk_idx]) <= 0):
+                    continue
+                _tt_ref = float(_tt_for_fwhm[_pk_idx])
+                _pr = phase_results[_pi]
+                _U = float(_pr.get('U', 0.0) or 0.0)
+                _V = float(_pr.get('V', 0.0) or 0.0)
+                _W = float(_pr.get('W', 0.0) or 0.0)
+                _X = float(_pr.get('X', 0.0) or 0.0)
+                _Y = float(_pr.get('Y', 0.0) or 0.0)
+                _fwhm, _eta = tch_fwhm_eta(_tt_ref, _U, _V, _W, _X, _Y)
+                _pr['fwhm_reference_two_theta'] = round(_tt_ref, 4)
+                _pr['fwhm_reference_source'] = (
+                    'strongest_phase_pattern_peak')
+                _pr['fwhm_deg'] = round(_fwhm, 4)
+                _pr['eta_at_fwhm_reference'] = round(_eta, 3)
+                _refs = all_phase_refs[_pi] if _pi < len(all_phase_refs) else []
+                if _refs:
+                    _nearest = min(_refs, key=lambda r: abs(float(r[0]) - _tt_ref))
+                    if abs(float(_nearest[0]) - _tt_ref) <= 0.5:
+                        _pr['fwhm_reference_hkl'] = list(_nearest[2])
+        except Exception as _e:
+            print(f"  FWHM reference update from phase patterns failed: {_e}",
+                  flush=True)
 
         # ── Per-phase Scherrer fallback ────────────────────────────────
         # When HAP Size wasn't refined for a phase, estimate crystallite
@@ -4578,6 +4738,8 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                     phase_results[_pi]['crystallite_size_nm'] = round(
                         float(_D_A) / 10.0, 2)
                     phase_results[_pi]['size_method'] = 'Scherrer'
+                    phase_results[_pi]['crystallite_size_source'] = (
+                        'scherrer_phase_pattern')
                     print(f"  Scherrer (phase {_pi}): peak at "
                           f"2θ={_tt_peak:.2f}°, FWHM={_fwhm_deg:.3f}°, "
                           f"D = {_D_A:.0f} Å = {_D_A/10:.1f} nm "
