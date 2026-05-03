@@ -259,6 +259,183 @@
   .sel-item .sel-sp { font-size: 11px; font-family: var(--mono); color: var(--muted); }
   .sel-item .sel-val { font-size: 16px; font-weight: 700; font-family: var(--mono); }
 
+  .fit-guide-btn {
+    border-color: rgba(88,166,255,0.55);
+    color: var(--accent);
+  }
+  .reusable-fit {
+    background: rgba(88,166,255,0.06);
+    border: 1px solid rgba(88,166,255,0.22);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .reusable-fit h4 {
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--text);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+  }
+  .reusable-fit .hint {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.45;
+    margin-bottom: 10px;
+  }
+  .reusable-fit-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 8px;
+  }
+  .reusable-fit-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  .reusable-fit-card .phase-name {
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 800;
+    margin-bottom: 4px;
+  }
+  .reusable-fit-card .muted { color: var(--muted); }
+  .reuse-metrics {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+    margin-top: 8px;
+  }
+  .reuse-metric {
+    min-width: 0;
+    border-top: 1px solid rgba(255,255,255,0.07);
+    padding-top: 6px;
+  }
+  .reuse-label {
+    color: var(--muted);
+    font-family: var(--sans);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .reuse-value {
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+  .reuse-chip {
+    display: inline-block;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1px 7px;
+    margin: 2px 4px 0 0;
+    color: var(--text);
+    background: rgba(255,255,255,0.03);
+  }
+  .xrd-preset-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    border: 1px solid rgba(88,166,255,0.18);
+    border-radius: 8px;
+    background: rgba(88,166,255,0.04);
+  }
+  .xrd-preset-row select {
+    width: min(340px, 100%);
+    padding: 5px 10px;
+    font-size: 12px;
+  }
+  .xrd-preset-status {
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.35;
+  }
+  .fit-warning-panel {
+    display: none;
+    background: rgba(227,179,65,0.08);
+    border: 1px solid rgba(227,179,65,0.32);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .fit-warning-panel.visible { display: block; }
+  .fit-warning-panel h4 {
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--warn);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+  }
+  .fit-warning-panel ul {
+    margin-left: 18px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.45;
+  }
+  .baseline-panel {
+    background: rgba(88,166,255,0.055);
+    border: 1px solid rgba(88,166,255,0.24);
+    border-radius: 8px;
+    padding: 13px 15px;
+  }
+  .baseline-panel h4 {
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--accent);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+  }
+  .baseline-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  .baseline-summary {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.45;
+  }
+  .baseline-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .baseline-metric {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .baseline-metric .label {
+    color: var(--muted);
+    font-family: var(--sans);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 3px;
+  }
+  .baseline-detail {
+    margin-top: 8px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
   .plot-img { width: 100%; border-radius: 8px; border: 1px solid var(--border); display: block; }
   .download-row { display: flex; gap: 10px; flex-wrap: wrap; }
 
@@ -719,7 +896,7 @@
               <b>PO</b> controls March-Dollase preferred orientation: <b>off</b> disables it,
               <b>fixed</b> applies the entered axis/value without refining, and <b>refined</b> lets the value vary.
               <b>axis</b> is the preferred-orientation direction as h k l.
-              <b>value</b> is the March-Dollase ratio, where 1.0 means no texture.
+              <b>value</b> is the March-Dollase ratio, where 1.0 means no texture. Fixed values should come from a validated prior or repeated comparison workflow.
               <b>Uniform cell</b>, shown only for W2C-like phases, preserves starting axis ratios while keeping the refined volume.
               It is off in the WC/W2C preset because it changes the fit and is meant for explicit diagnostic comparisons.
             </div>
@@ -737,10 +914,8 @@
               <span>🔬</span> GSAS-II Refinement
             </button>
             <button class="btn-sm" onclick="resetXRD()" title="Clear everything and start fresh">↺ Reset</button>
-            <label id="standard-recipe-label" style="display:none;margin-left:14px;font-size:12px;color:#56d364;font-weight:600;cursor:pointer;border-left:2px solid #56d364;padding-left:8px;" title="Production preset for Synergy-S WC/W2C. Enables quick constrained fit + cell, phase isolation, zero correction, free X, Y nonnegative, and WC [001] PO fixed at 0.905. W2C uniform-cell scaling remains an explicit optional phase-card control.">
-              <input type="checkbox" id="xrd-standard-recipe" style="margin-right:4px;">
-              WC/W2C refinement
-            </label>
+            <input type="checkbox" id="xrd-standard-recipe" style="display:none;">
+            <button type="button" class="btn-sm fit-guide-btn" onclick="openXrdFittingGuide()" title="Open a workflow guide for building and validating GSAS-II fits">Fitting Guide</button>
             <button type="button" id="xrd-advanced-toggle" onclick="toggleXrdAdvanced()" style="display:none;margin-left:8px;font-size:11px;padding:2px 8px;background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;cursor:pointer;" title="Show / hide GSAS-II refinement controls">▶ GSAS controls</button>
             <!-- Performance diagnostic preset is now superseded by the WC/W2C refinement preset; element hidden but kept in DOM for back-compat with cascade JS. -->
             <label id="perf-recipe-label" style="display:none;">
@@ -751,6 +926,14 @@
               <option value="smartlab">Rigaku SmartLab (BB)</option>
               <option value="synergy_s">Synergy-S (capillary)</option>
             </select>
+          </div>
+          <div class="xrd-preset-row">
+            <span style="font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase;letter-spacing:.7px;">Presets</span>
+            <select id="xrd-preset-select" title="Load a saved refinement recipe"></select>
+            <button type="button" class="btn-sm" onclick="loadSelectedXrdPreset()" title="Apply the selected saved phases and GSAS controls">Load</button>
+            <button type="button" class="btn-sm green" onclick="saveCurrentXrdPreset()" title="Save the current phases, phase-card settings, GSAS controls, and last fit summary">Save current</button>
+            <button type="button" class="btn-sm" onclick="deleteSelectedXrdPreset()" title="Delete the selected preset">Delete</button>
+            <span id="xrd-preset-status" class="xrd-preset-status"></span>
           </div>
           <!-- Advanced settings row: hidden by default; toggled by the "▶ GSAS controls" button above. -->
           <div id="xrd-advanced-row" style="display:none;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;padding:8px;border:1px dashed var(--border);border-radius:6px;background:rgba(255,255,255,0.02);">
@@ -818,7 +1001,7 @@
               <b>Y ≥ 0</b> prevents unphysical negative size broadening.
               <b>Refine Uiso</b> lets atomic displacement factors refine.
               <b>Refine XYZ</b> lets atom coordinates refine and should usually stay off unless the structure is trusted and the data justify it.
-              <b>WC/W2C refinement</b> ticks Quick constrained fit, Refine cell too, Phase isolation, Refine Zero, Free X, and Y ≥ 0;
+              <b>WC/W2C Synergy-S production preset</b> ticks Quick constrained fit, Refine cell too, Phase isolation, Refine Zero, Free X, and Y ≥ 0;
               it sets WC PO to fixed [001] at 0.905 and leaves W2C uniform-cell scaling off unless you tick it in the W2C card.
             </div>
           </div>
@@ -844,6 +1027,9 @@
               <div id="xrd-pymatgen-pill"></div>
             </div>
             <div class="stats-grid" id="xrd-stats-grid"></div>
+            <div id="xrd-fit-warnings" class="fit-warning-panel"></div>
+            <div id="xrd-baseline-comparison"></div>
+            <div id="xrd-reusable-fit"></div>
             <div id="xrd-phase-results"></div>
             <div id="xrd-interactive-plot" style="display:none;width:100%;height:500px;border-radius:8px;border:1px solid var(--border);"></div>
             <img class="plot-img" id="xrd-result-plot" src="" alt="XRD refinement plot"
@@ -1064,6 +1250,132 @@ function downloadFile(path) {
   window.location = '/api/download?path=' + encodeURIComponent(path);
 }
 function escPath(p) { return (p || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+function escHtml(v) {
+  return String(v ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+}
+
+function openXrdFittingGuide() {
+  const guide = window.open('', 'xrdFittingGuide',
+    'width=980,height=760,menubar=no,toolbar=no,location=no,status=no,scrollbars=yes,resizable=yes');
+  if (!guide) {
+    alert('The fitting guide was blocked by the browser. Allow popups for this page and click Fitting Guide again.');
+    return;
+  }
+  guide.document.open();
+  guide.document.write(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>XRD Fitting Guide</title>
+<style>
+  :root {
+    --bg:#0d1117; --surface:#161b22; --surface2:#1c2128; --border:#2d333b;
+    --accent:#58a6ff; --good:#39d353; --warn:#e3b341; --danger:#f78166;
+    --text:#e6edf3; --muted:#8b949e; --mono:"JetBrains Mono", Consolas, monospace;
+  }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:Arial, sans-serif; line-height:1.55; }
+  main { max-width:920px; margin:0 auto; padding:28px; }
+  h1 { font-size:24px; margin:0 0 10px; }
+  h2 { font-size:15px; margin:24px 0 8px; color:var(--accent); }
+  p, li { font-size:14px; color:var(--text); }
+  .muted { color:var(--muted); }
+  .panel { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px 18px; margin:14px 0; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+  .tag { display:inline-block; font-family:var(--mono); font-size:12px; border:1px solid var(--border); border-radius:16px; padding:2px 8px; color:var(--muted); margin:2px 4px 2px 0; }
+  code { font-family:var(--mono); background:var(--surface2); border:1px solid var(--border); border-radius:4px; padding:1px 4px; }
+  ol, ul { padding-left:22px; }
+  strong { color:#fff; }
+  .warn { border-color:rgba(227,179,65,.45); background:rgba(227,179,65,.08); }
+  .danger { border-color:rgba(247,129,102,.45); background:rgba(247,129,102,.08); }
+</style>
+</head>
+<body>
+<main>
+  <h1>XRD fitting workflow</h1>
+  <p class="muted">Use this widget to build a fit gradually. The goal is not the lowest Rwp by itself; the goal is the simplest physically defensible model that explains the measured pattern.</p>
+
+  <div class="panel">
+    <h2>Valid new-sample workflow</h2>
+    <ol>
+      <li><strong>Load data and phases.</strong> Import CIFs, then confirm the preview ticks land near real peaks before refinement.</li>
+      <li><strong>Start constrained.</strong> Use <code>Quick constrained fit</code> first. It refines background, phase scales, sample position, and shared width without changing the structure.</li>
+      <li><strong>Add cell only after tick alignment is credible.</strong> Turn on <code>Refine cell too</code> when peak positions are consistently shifted but the CIF identity looks right.</li>
+      <li><strong>Add one physical correction at a time.</strong> Preferred orientation, size, microstrain, Uiso, and XYZ can all improve statistics for the wrong reason. Enable them only when the residual pattern supports that mechanism.</li>
+      <li><strong>Check physical outputs.</strong> Weight fractions should be stable, cell shifts should be plausible, FWHM should be referenced to a real phase peak, and size/strain values should not just be compensating for bad structure or instrument settings.</li>
+      <li><strong>Mark a baseline.</strong> Once the constrained fit is physically plausible, click <code>Mark current as baseline</code> in the results panel.</li>
+      <li><strong>Record the reusable parameters.</strong> The results panel lists phase-card settings and fitted quantities worth carrying into the next run. Use saved presets for validated recipes.</li>
+    </ol>
+  </div>
+
+  <div class="panel">
+    <h2>Baseline comparison</h2>
+    <p>A baseline is a temporary reference fit for the current browser session. It does not save to disk and it does not change refinement settings.</p>
+    <ol>
+      <li>Run the simplest defensible fit: good CIF/tick alignment, plausible phase fractions, reasonable cell changes, and no unexplained warnings.</li>
+      <li>Click <code>Mark current as baseline</code>.</li>
+      <li>Add one new correction, such as PO, size, microstrain, Uiso, or XYZ.</li>
+      <li>Run again and compare Rwp, GoF, warnings, phase fractions, cell changes, and size/FWHM outputs against the baseline.</li>
+      <li>Keep the added correction only if the residual pattern improves for the expected physical reason and the fitted outputs remain plausible.</li>
+    </ol>
+    <p class="muted">For WC/W2C Synergy-S production, fixed WC [001] PO at 0.905 can be part of the baseline because it is already validated. For a new material system, do not assume a PO/size/strain correction until the comparison supports it.</p>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>Safer early parameters</h2>
+      <span class="tag">background</span>
+      <span class="tag">phase scale</span>
+      <span class="tag">zero/displacement</span>
+      <span class="tag">shared Y width</span>
+      <span class="tag">cell after verification</span>
+      <p>These parameters are usually reasonable during setup because they test intensity, position, and broadening without immediately changing atomic coordinates.</p>
+    </div>
+    <div class="panel warn">
+      <h2>High-leverage parameters</h2>
+      <span class="tag">preferred orientation</span>
+      <span class="tag">phase size</span>
+      <span class="tag">microstrain</span>
+      <span class="tag">Uiso</span>
+      <span class="tag">XYZ</span>
+      <p>These can be valid, but they can also hide wrong CIFs, wrong background, or bad instrument assumptions. Add them deliberately and compare against the previous fit.</p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Phase-card controls</h2>
+    <ul>
+      <li><strong>Size:</strong> per-phase isotropic crystallite-size broadening. Use when one phase is visibly broader than another.</li>
+      <li><strong>Mustrain:</strong> per-phase microstrain broadening. Use when broadening increases in a strain-like way and size alone is not sufficient.</li>
+      <li><strong>PO:</strong> March-Dollase preferred orientation. <code>fixed</code> uses the entered value; <code>refined</code> lets GSAS-II vary it; <code>off</code> disables it. PO changes relative reflection intensities, so it can trade off with phase fraction.</li>
+      <li><strong>Axis/value:</strong> the orientation direction and March-Dollase ratio. A value of 1.0 means no preferred orientation. Fixed values should come from a prior validated refinement, repeated related samples, or independent texture evidence.</li>
+      <li><strong>Uniform cell:</strong> a diagnostic constraint for W2C-like phases. It changes the fit and should not be part of a general preset unless validated for that sample family.</li>
+    </ul>
+  </div>
+
+  <div class="panel">
+    <h2>Inferring preferred orientation</h2>
+    <p>Do not guess a PO value from the formula alone. Establish a baseline first, then set the suspected textured phase to <code>PO refined</code> along a physically plausible axis. If the residuals improve in the affected reflections, wt% remains stable, and the March-Dollase value repeats across related samples, save or fix that value in a preset.</p>
+    <p class="muted">The WC/W2C Synergy-S preset uses WC [001] PO = 0.905 because that value came from this comparison workflow and was then fixed to avoid PO/Uiso/scale correlation. It is a production prior for that recipe, not a universal WC constant.</p>
+  </div>
+
+  <div class="panel danger">
+    <h2>Warning signs</h2>
+    <ul>
+      <li>Rwp/GoF improves only slightly after adding a high-leverage parameter.</li>
+      <li>Weight fractions move a lot while residuals barely improve.</li>
+      <li>Cell contraction/expansion is large or inconsistent with chemistry.</li>
+      <li>Y is negative before clamping, or size comes only from a fallback estimate.</li>
+      <li>Uiso/XYZ/PO absorb errors that should have been caught by CIF validation or instrument calibration.</li>
+    </ul>
+  </div>
+</main>
+</body>
+</html>`);
+  guide.document.close();
+  guide.focus();
+}
 
 // ── UI helpers ────────────────────────────────────────────────────────────
 function showProgress(msg) {
@@ -1476,6 +1788,11 @@ let xrdCandidates = [];   // full result list from last search
 let xrdFiltered   = [];   // after client-side filter
 let xrdPhases     = [];   // phases queued for refinement
 let xrdSearchOffset = 0;  // for pagination
+let xrdPresets    = [];   // saved refinement recipes from project JSON
+let xrdLastResult = null; // most recent refinement result, for preset metadata
+let xrdLastFitSnapshot = null; // result + submitted settings at completion time
+let xrdBaselineFit = null; // session-only comparison reference
+let xrdActiveRecipeKey = null; // built-in recipe applied to current/next phases
 
 // Drag-and-drop
 function onDragOver2(e)  { e.preventDefault(); document.getElementById('xrd-dropzone').classList.add('dragover'); }
@@ -1536,6 +1853,7 @@ function toggleXrdAdvanced() {
 // Set initial badge state
 document.addEventListener('DOMContentLoaded', () => {
   updateSourceBadge();
+  refreshXrdPresets();
 
   // Check GSAS-II availability and show/hide button
   fetch('/api/xrd/gsas2_status')
@@ -1550,8 +1868,6 @@ document.addEventListener('DOMContentLoaded', () => {
         // Show calibration mode checkbox and instrument selector
         const calLabel = document.getElementById('cal-mode-label');
         if (calLabel) calLabel.style.display = '';
-        const stdRecipeLabel = document.getElementById('standard-recipe-label');
-        if (stdRecipeLabel) stdRecipeLabel.style.display = '';
         const advBtn = document.getElementById('xrd-advanced-toggle');
         if (advBtn) advBtn.style.display = '';
         const verifyLabel = document.getElementById('verify-mode-label');
@@ -1586,41 +1902,18 @@ document.addEventListener('DOMContentLoaded', () => {
         const instSel = document.getElementById('xrd-instrument');
         if (instSel) instSel.style.display = '';
 
-        // ── WC/W2C refinement preset cascade ────────────────────────
-        // Single production preset for Synergy-S WC/W2C samples. Global
-        // diagnostics stay here; WC PO is applied through the phase cards.
-        // W2C uniform-cell scaling is intentionally not part of this preset:
-        // it is fit-affecting and remains an explicit diagnostic choice.
+        // Built-in WC/W2C now lives in the preset dropdown. Keep the
+        // old hidden checkbox only for compatibility with stale state.
         const stdRecipe = document.getElementById('xrd-standard-recipe');
         if (stdRecipe && !stdRecipe._wired) {
           stdRecipe._wired = true;
-          stdRecipe.addEventListener('change', () => {
-            applyWcW2cPresetGlobals(stdRecipe.checked);
-            // When ticking on, also force the Fix WC PO value to 0.905
-            // (the value the production runs converged on).
-            if (stdRecipe.checked) {
-              // Also populate per-phase options based on phase identity:
-              // WC (hexagonal) → PO fixed [001] @ 0.905; W2C (Pbcn) → PO off.
-              // This is a CHEMISTRY PRESET — the only place name-based
-              // detection is allowed.  Any other phase keeps its current
-              // per-phase entry.
-              if (typeof xrdPhases !== 'undefined' && xrdPhases.length) {
-                applyWcW2cPresetPhaseOptions();
-                renderSelectedPhases();
-              }
-            }
-          });
           WCW2C_RECIPE_MEMBERS.forEach(id => {
             const el = document.getElementById(id);
             if (el && !el._memberWired) {
               el._memberWired = true;
               el.addEventListener('change', () => {
-                // If user manually changes any member, untick the preset.
-                const allOn = WCW2C_RECIPE_MEMBERS.every(mid => {
-                  const m = document.getElementById(mid);
-                  return m && m.checked;
-                });
-                stdRecipe.checked = allOn;
+                xrdActiveRecipeKey = null;
+                stdRecipe.checked = false;
               });
             }
           });
@@ -2001,7 +2294,9 @@ function applyWcW2cPresetPhaseOptions() {
 function renderSelectedPhases() {
   _ensurePhaseOptions();
   const stdRecipe = document.getElementById('xrd-standard-recipe');
-  if (stdRecipe && stdRecipe.checked) applyWcW2cPresetPhaseOptions();
+  if ((stdRecipe && stdRecipe.checked) || xrdActiveRecipeKey === 'wc_w2c_synergy_s') {
+    applyWcW2cPresetPhaseOptions();
+  }
   const wrap = document.getElementById('xrd-selected-wrap');
   const cont = document.getElementById('xrd-selected-phases');
   wrap.style.display = xrdPhases.length ? 'block' : 'none';
@@ -2060,16 +2355,16 @@ function renderSelectedPhases() {
         <input type="checkbox" data-pi="${i}" data-key="refine_mustrain" ${opts.refine_mustrain?'checked':''}> Mustrain
       </label>
       <span style="border-left:1px solid var(--border);height:14px;"></span>
-      <span title="March-Dollase preferred orientation: off / hold at value / refine">PO:</span>
+      <span title="March-Dollase preferred orientation: off / hold at value / refine. PO changes relative reflection intensities and can trade off with phase fraction.">PO:</span>
       <select data-pi="${i}" data-key="po_mode" style="font-size:11px;padding:1px 4px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:3px;">
         <option value="off" ${opts.po_mode==='off'?'selected':''}>off</option>
         <option value="fixed" ${opts.po_mode==='fixed'?'selected':''}>fixed</option>
         <option value="refined" ${opts.po_mode==='refined'?'selected':''}>refined</option>
       </select>
-      <label style="display:flex;align-items:center;gap:3px;" title="PO direction h k l (space-separated). Hexagonal phases conventionally use 0 0 1.">
+      <label style="display:flex;align-items:center;gap:3px;" title="PO direction h k l (space-separated). Use a physically plausible texture axis; hexagonal plate/needle textures often involve 0 0 1, but this is not automatic.">
         axis [<input type="text" data-pi="${i}" data-key="po_axis" value="${opts.po_axis||''}" style="width:50px;font-size:11px;padding:1px 4px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:3px;text-align:center;">]
       </label>
-      <label style="display:flex;align-items:center;gap:3px;" title="March-Dollase ratio. <1 = preferential alignment along PO axis, =1 = no texture.">
+      <label style="display:flex;align-items:center;gap:3px;" title="March-Dollase ratio. 1 = no texture. Refine to infer a repeatable value, then fix only after validating against baseline fits or independent texture evidence.">
         value <input type="number" data-pi="${i}" data-key="po_value" value="${opts.po_value}" step="0.001" min="0.1" max="3.0" style="width:60px;font-size:11px;padding:1px 4px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:3px;">
       </label>
       ${isW2C ? `
@@ -2097,11 +2392,258 @@ function renderSelectedPhases() {
         if (stdRecipe && ['po_mode','po_axis','po_value','uniform_cell'].includes(key)) {
           stdRecipe.checked = false;
         }
+        if (['po_mode','po_axis','po_value','uniform_cell'].includes(key)) {
+          xrdActiveRecipeKey = null;
+        }
       });
     });
 
     cont.appendChild(wrapper);
   });
+}
+
+const XRD_PRESET_CHECKBOX_IDS = [
+  'xrd-calibration-mode',
+  'xrd-verification-mode',
+  'xrd-verify-cell',
+  'xrd-phase-isolation',
+  'xrd-zero-not-disp',
+  'xrd-refine-x',
+  'xrd-fix-y',
+  'xrd-y-nonneg',
+  'xrd-refine-uiso',
+  'xrd-refine-xyz',
+];
+
+function setXrdPresetStatus(msg, type = 'info') {
+  const el = document.getElementById('xrd-preset-status');
+  if (!el) return;
+  const colors = {info:'var(--muted)', ok:'var(--accent2)', warn:'var(--warn)', error:'var(--danger)'};
+  el.textContent = msg || '';
+  el.style.color = colors[type] || colors.info;
+}
+
+function renderXrdPresetSelect() {
+  const sel = document.getElementById('xrd-preset-select');
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Select saved refinement preset...</option>';
+  xrdPresets.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    const stats = p.result_summary?.statistics;
+    const score = stats?.Rwp != null ? `, Rwp ${stats.Rwp}%` : '';
+    const updated = p.updated_at ? `, ${String(p.updated_at).slice(0, 10)}` : '';
+    const tag = p.builtin ? 'built-in' : 'saved';
+    opt.textContent = `${p.name} (${tag}${score}${updated})`;
+    sel.appendChild(opt);
+  });
+  if (current && xrdPresets.some(p => p.id === current)) sel.value = current;
+}
+
+async function refreshXrdPresets() {
+  try {
+    const resp = await fetch('/api/xrd/presets');
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    xrdPresets = data.presets || [];
+    renderXrdPresetSelect();
+    setXrdPresetStatus(xrdPresets.length ? `${xrdPresets.length} preset${xrdPresets.length !== 1 ? 's' : ''} available.` : 'No saved presets yet.', 'info');
+  } catch (e) {
+    setXrdPresetStatus('Could not load presets: ' + e.message, 'warn');
+  }
+}
+
+function getXrdControlState() {
+  const controls = {
+    wavelength: document.getElementById('xrd-wavelength')?.value || '',
+    wavelength_source: document.getElementById('xrd-source')?.value || '',
+    tt_min: document.getElementById('xrd-tt-min')?.value || '',
+    tt_max: document.getElementById('xrd-tt-max')?.value || '',
+    n_bg_coeffs: document.getElementById('xrd-bg-coeffs')?.value || 'auto',
+    instrument: document.getElementById('xrd-instrument')?.value || 'auto',
+    fix_y_value: document.getElementById('xrd-fix-y-value')?.value || '',
+    checkboxes: {},
+  };
+  XRD_PRESET_CHECKBOX_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) controls.checkboxes[id] = !!el.checked;
+  });
+  return controls;
+}
+
+function applyXrdControlState(controls = {}) {
+  const setVal = (id, value) => {
+    const el = document.getElementById(id);
+    if (el && value !== undefined && value !== null) el.value = value;
+  };
+  setVal('xrd-source', controls.wavelength_source);
+  setVal('xrd-wavelength', controls.wavelength);
+  setVal('xrd-tt-min', controls.tt_min);
+  setVal('xrd-tt-max', controls.tt_max);
+  setVal('xrd-bg-coeffs', controls.n_bg_coeffs);
+  setVal('xrd-instrument', controls.instrument);
+  setVal('xrd-fix-y-value', controls.fix_y_value);
+  Object.entries(controls.checkboxes || {}).forEach(([id, checked]) => {
+    const el = document.getElementById(id);
+    if (el) el.checked = !!checked;
+  });
+  const stdRecipe = document.getElementById('xrd-standard-recipe');
+  if (stdRecipe) stdRecipe.checked = false;
+}
+
+function stripPhaseForPreset(phase) {
+  const keep = [
+    'name', 'formula', 'source', 'cod_id', 'mp_id', 'cache_key',
+    'a', 'b', 'c', 'alpha', 'beta', 'gamma',
+    'system', 'spacegroup', 'spacegroup_number', 'Z',
+    'stick_pattern', 'tick_positions', 'cif_check', 'validation',
+    '_plot_color'
+  ];
+  const out = {};
+  keep.forEach(k => {
+    if (phase[k] !== undefined) out[k] = phase[k];
+  });
+  if ((phase.cod_id || '') === 'manual' && phase.cif_text) {
+    out.cif_text = phase.cif_text;
+  }
+  return out;
+}
+
+function summarizeResultForPreset(data) {
+  if (!data) return {};
+  return {
+    method: data.method || '',
+    statistics: data.statistics || {},
+    fit_warnings: data.fit_warnings || data.warnings || [],
+    zero_shift: data.zero_shift,
+    displacement_um: data.displacement_um,
+    displacement_param: data.displacement_param,
+    phase_results: (data.phase_results || []).map(ph => ({
+      name: ph.name,
+      formula: ph.formula,
+      spacegroup: ph.spacegroup,
+      weight_fraction_pct: ph['weight_fraction_%'],
+      weight_fraction_err_pct: ph['weight_fraction_err_%'],
+      weight_fraction_err_source: ph.weight_fraction_err_source,
+      crystallite_size_nm: ph.crystallite_size_nm,
+      crystallite_size_source: ph.crystallite_size_source,
+      fwhm_reference_two_theta: ph.fwhm_reference_two_theta,
+      fwhm_reference_hkl: ph.fwhm_reference_hkl,
+      fwhm_reference_source: ph.fwhm_reference_source,
+      preferred_orientation_value: ph.preferred_orientation_value,
+      preferred_orientation_axis: ph.preferred_orientation_axis,
+      preferred_orientation_mode: ph.preferred_orientation_mode,
+      preferred_orientation_refined: ph.preferred_orientation_refined,
+      delta_a_pct: ph.delta_a_pct,
+      delta_b_pct: ph.delta_b_pct,
+      delta_c_pct: ph.delta_c_pct,
+      delta_volume_pct: ph.delta_volume_pct,
+    })),
+  };
+}
+
+async function saveCurrentXrdPreset() {
+  if (!xrdPhases.length) {
+    setXrdPresetStatus('Add phases before saving a preset.', 'warn');
+    return;
+  }
+  _ensurePhaseOptions();
+  const sel = document.getElementById('xrd-preset-select');
+  const existing = xrdPresets.find(p => p.id === sel?.value);
+  const defaultName = existing?.name || [
+    ...new Set(xrdPhases.map(p => p.formula || p.name).filter(Boolean))
+  ].join(' + ') || 'XRD preset';
+  const name = prompt('Preset name:', existing?.builtin ? `${defaultName} copy` : defaultName);
+  if (!name || !name.trim()) return;
+
+  const payload = {
+    id: existing && !existing.builtin && existing.name === name.trim() ? existing.id : '',
+    name: name.trim(),
+    description: '',
+    phases: xrdPhases.map(stripPhaseForPreset),
+    phase_options: xrdPhaseOptions.map(o => ({...o})),
+    controls: getXrdControlState(),
+    result_summary: summarizeResultForPreset(xrdLastResult),
+  };
+
+  try {
+    const resp = await fetch('/api/xrd/presets', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok || data.error) throw new Error(data.error || 'Save failed');
+    await refreshXrdPresets();
+    const presetSel = document.getElementById('xrd-preset-select');
+    if (presetSel) presetSel.value = data.preset.id;
+    setXrdPresetStatus(`Saved "${data.preset.name}".`, 'ok');
+  } catch (e) {
+    setXrdPresetStatus('Could not save preset: ' + e.message, 'error');
+  }
+}
+
+function applyXrdPreset(preset) {
+  applyXrdControlState(preset.controls || {});
+  if (preset.recipe_key === 'wc_w2c_synergy_s') {
+    xrdActiveRecipeKey = 'wc_w2c_synergy_s';
+    applyWcW2cPresetGlobals(true);
+    if (xrdPhases.length) {
+      applyWcW2cPresetPhaseOptions();
+      renderSelectedPhases();
+    }
+    setXrdPresetStatus(`Loaded built-in "${preset.name}". It will apply to current and newly added WC/W2C phases.`, 'ok');
+    return;
+  }
+  xrdActiveRecipeKey = null;
+  xrdPhases = (preset.phases || []).map(p => ({...p}));
+  xrdPhaseOptions = (preset.phase_options || []).map(o => ({...o}));
+  _ensurePhaseOptions();
+  _stickPhases = [];
+  xrdPhases.forEach(ph => {
+    ensurePhaseVisuals(ph);
+    addStickPhase(ph);
+  });
+  renderSelectedPhases();
+  renderCandidates();
+  if (_previewData) drawPreview();
+  setXrdPresetStatus(`Loaded "${preset.name}". Add/select an XRD data file, then run GSAS-II.`, 'ok');
+}
+
+function loadSelectedXrdPreset() {
+  const id = document.getElementById('xrd-preset-select')?.value;
+  const preset = xrdPresets.find(p => p.id === id);
+  if (!preset) {
+    setXrdPresetStatus('Select a preset to load.', 'warn');
+    return;
+  }
+  applyXrdPreset(preset);
+}
+
+async function deleteSelectedXrdPreset() {
+  const id = document.getElementById('xrd-preset-select')?.value;
+  const preset = xrdPresets.find(p => p.id === id);
+  if (!preset) {
+    setXrdPresetStatus('Select a preset to delete.', 'warn');
+    return;
+  }
+  if (preset.builtin) {
+    setXrdPresetStatus('Built-in presets cannot be deleted. Save a modified copy if needed.', 'warn');
+    return;
+  }
+  if (!confirm(`Delete preset "${preset.name}"?`)) return;
+  try {
+    const resp = await fetch('/api/xrd/presets/' + encodeURIComponent(id), {
+      method: 'DELETE',
+    });
+    const data = await resp.json();
+    if (!resp.ok || data.error) throw new Error(data.error || 'Delete failed');
+    await refreshXrdPresets();
+    setXrdPresetStatus(`Deleted "${preset.name}".`, 'ok');
+  } catch (e) {
+    setXrdPresetStatus('Could not delete preset: ' + e.message, 'error');
+  }
 }
 
 // ── Run Refinement ──────────────────────────────────────────────────────────
@@ -2122,7 +2664,7 @@ async function runXRD(method) {
   document.getElementById('xrd-progress-wrap').classList.add('visible');
 
   const stdRecipe = document.getElementById('xrd-standard-recipe');
-  if (stdRecipe && stdRecipe.checked) {
+  if ((stdRecipe && stdRecipe.checked) || xrdActiveRecipeKey === 'wc_w2c_synergy_s') {
     applyWcW2cPresetGlobals(true);
     applyWcW2cPresetPhaseOptions();
     renderSelectedPhases();
@@ -2296,7 +2838,367 @@ async function runXRD(method) {
   if (document.getElementById('btn-xrd-gsas2')) document.getElementById('btn-xrd-gsas2').disabled = false;
 }
 
+function fmtResultValue(v, digits = 3) {
+  if (v === null || v === undefined || v === '') return '—';
+  const n = Number(v);
+  if (!Number.isFinite(n)) return escHtml(v);
+  return Number(n.toFixed(digits)).toString();
+}
+
+function fmtPhaseAxis(axis) {
+  if (Array.isArray(axis)) return axis.join(' ');
+  return String(axis || '').trim();
+}
+
+function renderReusableFitParameters(data) {
+  const box = document.getElementById('xrd-reusable-fit');
+  if (!box) return;
+  const phases = data.phase_results || [];
+  if (!phases.length) {
+    box.innerHTML = '';
+    return;
+  }
+
+  const cards = phases.map((ph, i) => {
+    const color = (xrdPhases[i] && xrdPhases[i]._plot_color) || PHASE_COLORS[i % PHASE_COLORS.length];
+    const opts = (xrdPhaseOptions && xrdPhaseOptions[i]) || {};
+    const poMode = opts.po_mode || 'off';
+    const poAxis = fmtPhaseAxis(opts.po_axis);
+    const poVal = opts.po_value != null ? fmtResultValue(opts.po_value, 3) : '1';
+    const poText = poMode === 'off'
+      ? 'PO off'
+      : `PO ${escHtml(poMode)} [${escHtml(poAxis || 'not set')}] value ${poVal}`;
+    const poResultAxis = Array.isArray(ph.preferred_orientation_axis)
+      ? ph.preferred_orientation_axis.join(' ')
+      : '';
+    const poResultMode = ph.preferred_orientation_mode
+      ? String(ph.preferred_orientation_mode).replace(/_/g, ' ')
+      : '';
+    const poResultLine = ph.preferred_orientation_value != null
+      ? `${fmtResultValue(ph.preferred_orientation_value, 4)}${poResultAxis ? ` [${escHtml(poResultAxis)}]` : ''}${poResultMode ? ` (${escHtml(poResultMode)})` : ''}`
+      : 'not active';
+
+    const hapBits = [
+      opts.refine_size ? 'Size on' : 'Size off',
+      opts.refine_mustrain ? 'Strain on' : 'Strain off',
+      opts.uniform_cell ? 'Uniform cell on' : 'Uniform cell off',
+    ];
+
+    const fwhmRef = ph.fwhm_reference_two_theta != null
+      ? `${fmtResultValue(ph.fwhm_reference_two_theta, 2)}&deg;`
+      : '—';
+    const fwhmHkl = Array.isArray(ph.fwhm_reference_hkl)
+      ? ` (${escHtml(ph.fwhm_reference_hkl.join(''))})`
+      : '';
+    const fwhmSource = ph.fwhm_reference_source
+      ? `, ${escHtml(String(ph.fwhm_reference_source).replace(/_/g, ' '))}`
+      : '';
+    const sizeLine = ph.crystallite_size_nm != null
+      ? `${fmtResultValue(ph.crystallite_size_nm, 2)} nm`
+      : '—';
+    const sizeSource = ph.crystallite_size_source
+      ? ` (${escHtml(String(ph.crystallite_size_source).replace(/_/g, ' '))})`
+      : '';
+    const wtErr = ph['weight_fraction_err_%'] != null
+      ? ` &plusmn; ${fmtResultValue(ph['weight_fraction_err_%'], 2)}`
+      : '';
+    const wtSource = ph.weight_fraction_err_source
+      ? ` (${escHtml(String(ph.weight_fraction_err_source).replace(/_/g, ' '))})`
+      : '';
+    const cellBits = [];
+    if (ph.delta_volume_pct != null) cellBits.push(`dV/V0 ${fmtResultValue(ph.delta_volume_pct, 3)}%`);
+    if (ph.delta_a_pct != null) cellBits.push(`da/a0 ${fmtResultValue(ph.delta_a_pct, 3)}%`);
+    if (ph.delta_b_pct != null) cellBits.push(`db/b0 ${fmtResultValue(ph.delta_b_pct, 3)}%`);
+    if (ph.delta_c_pct != null) cellBits.push(`dc/c0 ${fmtResultValue(ph.delta_c_pct, 3)}%`);
+
+    return `<div class="reusable-fit-card" style="border-color:${color};box-shadow:inset 3px 0 0 ${color};">
+      <div class="phase-name" style="color:${color};">${escHtml(ph.name || ph.formula || `Phase ${i + 1}`)}</div>
+      <div><span class="reuse-chip">${poText}</span>${hapBits.map(x => `<span class="reuse-chip">${escHtml(x)}</span>`).join('')}</div>
+      <div class="reuse-metrics">
+        <div class="reuse-metric">
+          <div class="reuse-label">Cell change</div>
+          <div class="reuse-value">${cellBits.length ? cellBits.join('<br>') : 'no deltas reported'}</div>
+        </div>
+        <div class="reuse-metric">
+          <div class="reuse-label">FWHM reference</div>
+          <div class="reuse-value">${fwhmRef}${fwhmHkl}${fwhmSource}</div>
+        </div>
+        <div class="reuse-metric">
+          <div class="reuse-label">PO result</div>
+          <div class="reuse-value">${poResultLine}</div>
+        </div>
+        <div class="reuse-metric">
+          <div class="reuse-label">Size output</div>
+          <div class="reuse-value">${sizeLine}${sizeSource}</div>
+        </div>
+        <div class="reuse-metric">
+          <div class="reuse-label">Wt% uncertainty</div>
+          <div class="reuse-value">${fmtResultValue(ph['weight_fraction_%'], 1)}${wtErr}%${wtSource}</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  box.innerHTML = `<div class="reusable-fit">
+    <h4>Reusable Fit Parameters</h4>
+    <div class="hint">
+      These are the phase-card settings submitted for this run plus fitted outputs worth checking before the next run.
+      Treat them as a record of the validated recipe; named preset save/load is the next stage.
+    </div>
+    <div class="reusable-fit-grid">${cards}</div>
+  </div>`;
+}
+
+function renderFitWarnings(data) {
+  const panel = document.getElementById('xrd-fit-warnings');
+  if (!panel) return;
+  const warnings = data.fit_warnings || data.warnings || [];
+  if (!warnings.length) {
+    panel.classList.remove('visible');
+    panel.innerHTML = '';
+    return;
+  }
+  panel.innerHTML = `<h4>Fit Warnings</h4>
+    <ul>${warnings.map(w => `<li>${escHtml(w)}</li>`).join('')}</ul>`;
+  panel.classList.add('visible');
+}
+
+function _fitNum(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function _signed(v, digits = 2, suffix = '') {
+  if (v === null || v === undefined || !Number.isFinite(Number(v))) return '—';
+  const n = Number(v);
+  return `${n > 0 ? '+' : ''}${Number(n.toFixed(digits))}${suffix}`;
+}
+
+function _cmpPhaseKey(ph, idx) {
+  const raw = ph?.formula || (ph?.name || '').split(/\s+/)[0] || `phase-${idx}`;
+  return String(raw).toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function buildXrdFitSnapshot(data) {
+  const controls = getXrdControlState();
+  const phaseOptions = (xrdPhaseOptions || []).map(o => ({...o}));
+  const phaseSummaries = (data.phase_results || []).map((ph, i) => ({
+    key: _cmpPhaseKey(ph, i),
+    name: ph.name || ph.formula || `Phase ${i + 1}`,
+    formula: ph.formula || xrdPhases[i]?.formula || '',
+    wt: _fitNum(ph['weight_fraction_%']),
+    wt_err: _fitNum(ph['weight_fraction_err_%']),
+    dv: _fitNum(ph.delta_volume_pct),
+    da: _fitNum(ph.delta_a_pct),
+    db: _fitNum(ph.delta_b_pct),
+    dc: _fitNum(ph.delta_c_pct),
+    b_iso: _fitNum(ph.B_iso),
+    size: _fitNum(ph.crystallite_size_nm),
+    fwhm: _fitNum(ph.fwhm_deg),
+    po_value: _fitNum(ph.preferred_orientation_value),
+    po_axis: Array.isArray(ph.preferred_orientation_axis)
+      ? ph.preferred_orientation_axis.join(' ')
+      : '',
+    po_mode: ph.preferred_orientation_mode || '',
+  }));
+  return {
+    id: `fit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    label: document.getElementById('xrd-sample-id')?.value || xrdFile?.name || 'XRD fit',
+    method: data.method || 'GSAS-II',
+    created_at: new Date().toLocaleString(),
+    statistics: data.statistics || {},
+    warnings: data.fit_warnings || data.warnings || [],
+    controls,
+    phase_options: phaseOptions,
+    phases: phaseSummaries,
+  };
+}
+
+function fitFeatureSet(snapshot) {
+  const features = new Set();
+  const cb = snapshot?.controls?.checkboxes || {};
+  const add = (on, label) => { if (on) features.add(label); };
+  add(cb['xrd-verification-mode'], 'quick constrained fit');
+  add(cb['xrd-verify-cell'], 'cell refinement');
+  add(cb['xrd-phase-isolation'], 'phase isolation');
+  add(cb['xrd-zero-not-disp'], 'zero shift instead of displacement');
+  add(cb['xrd-refine-x'], 'free X broadening');
+  add(cb['xrd-fix-y'], 'fixed Y');
+  add(cb['xrd-y-nonneg'], 'Y nonnegative clamp');
+  add(cb['xrd-refine-uiso'], 'Uiso refinement');
+  add(cb['xrd-refine-xyz'], 'XYZ refinement');
+  (snapshot?.phase_options || []).forEach((o, i) => {
+    if (o.refine_size) features.add(`phase ${i + 1} size`);
+    if (o.refine_mustrain) features.add(`phase ${i + 1} microstrain`);
+    if (o.uniform_cell) features.add(`phase ${i + 1} uniform cell`);
+    if (o.po_mode === 'fixed') features.add(`phase ${i + 1} fixed PO`);
+    if (o.po_mode === 'refined') features.add(`phase ${i + 1} refined PO`);
+  });
+  return features;
+}
+
+function compareXrdFits(current, baseline) {
+  const st = current.statistics || {};
+  const bst = baseline.statistics || {};
+  const rwpDelta = _fitNum(st.Rwp) !== null && _fitNum(bst.Rwp) !== null
+    ? _fitNum(st.Rwp) - _fitNum(bst.Rwp) : null;
+  const gofDelta = _fitNum(st.GoF) !== null && _fitNum(bst.GoF) !== null
+    ? _fitNum(st.GoF) - _fitNum(bst.GoF) : null;
+  const chiDelta = _fitNum(st.chi2) !== null && _fitNum(bst.chi2) !== null
+    ? _fitNum(st.chi2) - _fitNum(bst.chi2) : null;
+
+  const curFeatures = fitFeatureSet(current);
+  const baseFeatures = fitFeatureSet(baseline);
+  const added = [...curFeatures].filter(x => !baseFeatures.has(x));
+  const removed = [...baseFeatures].filter(x => !curFeatures.has(x));
+  const uisoAdded = added.includes('Uiso refinement');
+
+  const baseByKey = new Map(baseline.phases.map((p, i) => [p.key || `idx-${i}`, p]));
+  const phaseLines = [];
+  const interpretation = [];
+  current.phases.forEach((ph, i) => {
+    const base = baseByKey.get(ph.key) || baseline.phases[i];
+    if (!base) return;
+    const bits = [];
+    if (ph.wt !== null && base.wt !== null) {
+      const d = ph.wt - base.wt;
+      if (Math.abs(d) >= 0.05) bits.push(`wt ${_signed(d, 2, ' pp')}`);
+      const errScale = Math.max(ph.wt_err || 0, base.wt_err || 0);
+      if (errScale > 0 && Math.abs(d) > errScale) {
+        interpretation.push(`${ph.name} weight fraction shifted more than its reported uncertainty.`);
+      }
+    }
+    if (ph.dv !== null && base.dv !== null) {
+      const d = ph.dv - base.dv;
+      if (Math.abs(d) >= 0.05) bits.push(`dV/V0 ${_signed(d, 2, '%')}`);
+    }
+    if (ph.size !== null && base.size !== null) {
+      const d = ph.size - base.size;
+      if (Math.abs(d) >= 0.05) bits.push(`size ${_signed(d, 2, ' nm')}`);
+    }
+    if (ph.po_value !== null) {
+      if (base.po_value !== null) {
+        const d = ph.po_value - base.po_value;
+        if (Math.abs(d) >= 0.001) bits.push(`PO ${fmtResultValue(ph.po_value, 4)} (${_signed(d, 4)})`);
+      } else if (Math.abs(ph.po_value - 1.0) >= 0.001) {
+        bits.push(`PO ${fmtResultValue(ph.po_value, 4)}${ph.po_axis ? ` [${ph.po_axis}]` : ''}`);
+      }
+    }
+    if (ph.b_iso !== null && base.b_iso !== null) {
+      const d = ph.b_iso - base.b_iso;
+      if (Math.abs(d) >= 0.02) bits.push(`B_iso ${_signed(d, 3, ' A^2')}`);
+    }
+    if (ph.b_iso !== null && (ph.b_iso < 0 || ph.b_iso > 3.0)) {
+      interpretation.push(`${ph.name} has B_iso=${fmtResultValue(ph.b_iso, 3)} A^2; check whether Uiso is physically plausible for this phase.`);
+    }
+    if (bits.length) phaseLines.push(`${ph.name}: ${bits.join(', ')}`);
+  });
+
+  if (uisoAdded) {
+    interpretation.push('Uiso was added. A better Rwp may reflect Debye-Waller intensity reweighting, especially at high angle, rather than a more accurate composition. Check B_iso values and whether wt% shifts are chemically plausible.');
+    if (rwpDelta !== null && rwpDelta < 0) {
+      interpretation.push(`Rwp improved by ${Math.abs(rwpDelta).toFixed(2)}%, but that improvement should be judged against B_iso and wt% stability, not the statistic alone.`);
+    }
+  }
+  if (added.some(x => x.includes('refined PO'))) {
+    interpretation.push('Preferred orientation was refined. This can correct real texture, but it also changes relative reflection intensities and can trade off with phase fraction; keep it only if the refined value is repeatable and wt% stays stable.');
+  }
+  if (added.some(x => x.includes('fixed PO'))) {
+    interpretation.push('A fixed preferred-orientation value was added. Fixed PO should come from a prior validated refinement, repeated related samples, or an independent texture measurement, not from a one-off guess.');
+  }
+  if (added.some(x => x.includes('size'))) {
+    interpretation.push('Phase-size refinement was added. Size can compensate for profile or instrument broadening; look for peak-width residuals specific to that phase, not just a lower Rwp.');
+  }
+  if (added.some(x => x.includes('microstrain'))) {
+    interpretation.push('Microstrain was added. Size and strain broadening can trade off; strain should be supported by angle/hkl-dependent broadening in the residuals.');
+  }
+  if (added.includes('XYZ refinement')) {
+    interpretation.push('XYZ refinement was added. Atom positions are high risk in lab XRD and can absorb wrong CIF, symmetry, background, or instrument errors.');
+  }
+  if (added.some(x => x.includes('uniform cell'))) {
+    interpretation.push('Uniform-cell scaling was added. Treat it as a diagnostic constraint: a small penalty may support uniform contraction, while a larger penalty suggests anisotropic cell change or model mismatch.');
+  }
+  if (added.length && rwpDelta !== null && rwpDelta > -0.3) {
+    interpretation.push('Small Rwp improvement for added fit freedoms; possible overfitting unless residuals improve in the expected region.');
+  }
+  if ((current.warnings || []).length > (baseline.warnings || []).length) {
+    interpretation.push('The current fit has more warnings than the baseline.');
+  }
+  if (!interpretation.length) {
+    interpretation.push('No obvious comparison warning from the stored baseline.');
+  }
+
+  return {
+    rwpDelta, gofDelta, chiDelta,
+    warningDelta: (current.warnings || []).length - (baseline.warnings || []).length,
+    added, removed, phaseLines, interpretation,
+  };
+}
+
+function markCurrentXrdBaseline() {
+  if (!xrdLastFitSnapshot) return;
+  xrdBaselineFit = JSON.parse(JSON.stringify(xrdLastFitSnapshot));
+  renderBaselineComparison();
+}
+
+function clearXrdBaseline() {
+  xrdBaselineFit = null;
+  renderBaselineComparison();
+}
+
+function renderBaselineComparison() {
+  const box = document.getElementById('xrd-baseline-comparison');
+  if (!box) return;
+  if (!xrdLastFitSnapshot) {
+    box.innerHTML = '';
+    return;
+  }
+
+  if (!xrdBaselineFit) {
+    box.innerHTML = `<div class="baseline-panel">
+      <h4>Baseline Comparison</h4>
+      <div class="baseline-row">
+        <span class="baseline-summary">Baseline: none set. Mark a constrained, physically plausible fit before testing extra corrections.</span>
+        <button type="button" class="btn-sm fit-guide-btn" onclick="markCurrentXrdBaseline()">Mark current as baseline</button>
+      </div>
+      <div class="baseline-summary">Session-only: this does not save to disk and does not change refinement settings.</div>
+    </div>`;
+    return;
+  }
+
+  const sameFit = xrdBaselineFit.id === xrdLastFitSnapshot.id;
+  const cmp = compareXrdFits(xrdLastFitSnapshot, xrdBaselineFit);
+  const baseStats = xrdBaselineFit.statistics || {};
+  const baseLabel = `${escHtml(xrdBaselineFit.label)} · Rwp ${escHtml(baseStats.Rwp ?? '—')}% · GoF ${escHtml(baseStats.GoF ?? '—')}`;
+  const comparisonHtml = sameFit
+    ? `<div class="baseline-summary">Current fit is marked as the baseline. Run another fit to compare.</div>`
+    : `<div class="baseline-grid">
+        <div class="baseline-metric"><div class="label">Rwp</div><div>${_signed(cmp.rwpDelta, 2, '%')}</div></div>
+        <div class="baseline-metric"><div class="label">GoF</div><div>${_signed(cmp.gofDelta, 2)}</div></div>
+        <div class="baseline-metric"><div class="label">Chi2</div><div>${_signed(cmp.chiDelta, 3)}</div></div>
+        <div class="baseline-metric"><div class="label">Warnings</div><div>${_signed(cmp.warningDelta, 0)}</div></div>
+      </div>
+      <div class="baseline-detail">
+        ${cmp.added.length ? `<div><span style="color:var(--muted);">Added settings:</span> ${cmp.added.map(escHtml).join(', ')}</div>` : ''}
+        ${cmp.removed.length ? `<div><span style="color:var(--muted);">Removed settings:</span> ${cmp.removed.map(escHtml).join(', ')}</div>` : ''}
+        ${cmp.phaseLines.length ? `<div><span style="color:var(--muted);">Phase shifts:</span><br>${cmp.phaseLines.map(escHtml).join('<br>')}</div>` : ''}
+        <div><span style="color:var(--muted);">Interpretation:</span><br>${cmp.interpretation.map(escHtml).join('<br>')}</div>
+      </div>`;
+
+  box.innerHTML = `<div class="baseline-panel">
+    <h4>Baseline Comparison</h4>
+    <div class="baseline-row">
+      <span class="baseline-summary">Baseline: ${baseLabel}</span>
+      <button type="button" class="btn-sm" onclick="markCurrentXrdBaseline()">${sameFit ? 'Replace baseline' : 'Replace baseline'}</button>
+      <button type="button" class="btn-sm" onclick="clearXrdBaseline()">Clear</button>
+    </div>
+    ${comparisonHtml}
+  </div>`;
+}
+
 function showXRDResults(data) {
+  xrdLastResult = data;
+  xrdLastFitSnapshot = buildXrdFitSnapshot(data);
   const panel = document.getElementById('xrd-results-panel');
   panel.classList.add('visible');
 
@@ -2333,6 +3235,10 @@ function showXRDResults(data) {
       <div class="stat-val" style="font-size:18px;">${s.v}</div></div>`;
   });
 
+  renderFitWarnings(data);
+  renderBaselineComparison();
+  renderReusableFitParameters(data);
+
   // Phase results
   const pr = document.getElementById('xrd-phase-results');
   pr.innerHTML = '';
@@ -2363,6 +3269,15 @@ function showXRDResults(data) {
     const cellDeltaHtml = cellDeltaParts.length
       ? `<div style="grid-column:1/-1;padding-top:4px;border-top:1px solid rgba(255,255,255,0.06);"><span style="color:var(--muted);">Cell change vs input CIF = </span>${cellDeltaParts.join(' · ')}</div>`
       : '';
+    const poAxis = Array.isArray(ph.preferred_orientation_axis)
+      ? ph.preferred_orientation_axis.join(' ')
+      : '';
+    const poMode = ph.preferred_orientation_mode
+      ? String(ph.preferred_orientation_mode).replace(/_/g, ' ')
+      : '';
+    const poResultHtml = ph.preferred_orientation_value != null
+      ? `<div><span style="color:var(--muted);">PO = </span>${fmtResultValue(ph.preferred_orientation_value, 4)}${poAxis ? ` [${poAxis}]` : ''}${poMode ? ` (${poMode})` : ''}</div>`
+      : '';
     pr.innerHTML += `
       <div style="background:var(--surface2);border:1px solid ${c};
                   border-radius:8px;padding:14px 16px;margin-bottom:8px;">
@@ -2388,6 +3303,7 @@ function showXRDResults(data) {
           <div><span style="color:var(--muted);">η @ ${Number(fwhmRef).toFixed(2)}° = </span>${ph.eta_at_fwhm_reference ?? ph.eta_at_40deg ?? ph.eta_at_strongest ?? ph.eta ?? '—'}</div>
           ${ph.Y != null ? `<div><span style="color:var(--muted);">Y = </span>${ph.Y} (size)</div>` : ''}
           ${ph.X != null ? `<div><span style="color:var(--muted);">X = </span>${ph.X} (strain)</div>` : ''}
+          ${poResultHtml}
           <div${wtErrSource}><span style="color:var(--muted);">Wt% = </span>${ph['weight_fraction_%']}${ph['weight_fraction_err_%'] != null ? ' ± ' + ph['weight_fraction_err_%'] : ''}%${wtSource}</div>
           ${cellDeltaHtml}
         </div>
@@ -2506,6 +3422,8 @@ function showXRDResults(data) {
 // ── Reset ───────────────────────────────────────────────────────────────────
 function resetXRD() {
   xrdFile = null; xrdCandidates = []; xrdFiltered = []; xrdPhases = [];
+  xrdPhaseOptions = []; xrdLastResult = null; xrdLastFitSnapshot = null;
+  xrdBaselineFit = null; xrdActiveRecipeKey = null;
 
   // Reset preview plot
   _previewData = null; _stickPhases = [];
