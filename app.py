@@ -81,8 +81,50 @@ BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 MODULES_DIR = os.path.join(BASE_DIR, 'modules')
 UPLOAD_DIR  = os.path.join(BASE_DIR, 'uploads')
 CONFIG_PATH = os.path.join(BASE_DIR, 'config.yaml')
+XRD_PRESETS_PATH = os.path.join(BASE_DIR, 'xrd_refinement_presets.json')
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 sys.path.insert(0, MODULES_DIR)
+
+
+def _normalize_formula_case(formula):
+    """Allow all-lowercase formula input for formula searches."""
+    formula = (formula or '').strip().replace(' ', '')
+    if not formula or re.search(r'[A-Z]', formula):
+        return formula
+    valid = {
+        'H','He','Li','Be','B','C','N','O','F','Ne','Na','Mg','Al','Si',
+        'P','S','Cl','Ar','K','Ca','Sc','Ti','V','Cr','Mn','Fe','Co','Ni',
+        'Cu','Zn','Ga','Ge','As','Se','Br','Kr','Rb','Sr','Y','Zr','Nb',
+        'Mo','Tc','Ru','Rh','Pd','Ag','Cd','In','Sn','Sb','Te','I','Xe',
+        'Cs','Ba','La','Ce','Pr','Nd','Pm','Sm','Eu','Gd','Tb','Dy','Ho',
+        'Er','Tm','Yb','Lu','Hf','Ta','W','Re','Os','Ir','Pt','Au','Hg',
+        'Tl','Pb','Bi','Po','At','Rn','Fr','Ra','Ac','Th','Pa','U','Np',
+        'Pu','Am','Cm','Bk','Cf','Es','Fm','Md','No','Lr','Rf','Db','Sg',
+        'Bh','Hs','Mt','Ds','Rg','Cn','Nh','Fl','Mc','Lv','Ts','Og',
+    }
+    out = []
+    i = 0
+    while i < len(formula):
+        if formula[i].isdigit():
+            out.append(formula[i])
+            i += 1
+            continue
+        if not formula[i].isalpha():
+            out.append(formula[i])
+            i += 1
+            continue
+        two = formula[i:i+2].capitalize()
+        one = formula[i].upper()
+        if i + 1 < len(formula) and two in valid:
+            out.append(two)
+            i += 2
+        elif one in valid:
+            out.append(one)
+            i += 1
+        else:
+            out.append(formula[i].upper())
+            i += 1
+    return ''.join(out)
 
 # ── Load config ───────────────────────────────────────────────────────────────
 def load_config():
@@ -276,7 +318,7 @@ def xrd_search():
         data       = request.get_json()
         elements   = [e.strip() for e in data.get('elements', []) if e.strip()]
         name       = data.get('name', '').strip()
-        formula    = data.get('formula', '').strip()
+        formula    = _normalize_formula_case(data.get('formula', ''))
         wavelength = float(data.get('wavelength', 1.54056))
         sort_by    = data.get('sort_by', 'formula')
         strict     = bool(data.get('strict', True))
@@ -630,6 +672,139 @@ def gsas2_status():
         return jsonify({'available': False, 'error': str(e)})
 
 
+def _load_xrd_presets():
+    if not os.path.exists(XRD_PRESETS_PATH):
+        return []
+    try:
+        with open(XRD_PRESETS_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            presets = data.get('presets', [])
+        else:
+            presets = data
+        return presets if isinstance(presets, list) else []
+    except Exception as e:
+        print(f"  Warning: could not read XRD presets: {e}", flush=True)
+        return []
+
+
+def _builtin_xrd_presets():
+    return [{
+        'id': 'builtin-wc-w2c-synergy-s',
+        'name': 'WC/W2C Synergy-S production',
+        'description': (
+            'Built-in recipe for validated WC/W2C GSAS-II fits. Applies '
+            'quick constrained fit + cell, phase isolation, zero correction, '
+            'free X, Y nonnegative, and WC [001] PO fixed at 0.905.'),
+        'builtin': True,
+        'locked': True,
+        'recipe_only': True,
+        'recipe_key': 'wc_w2c_synergy_s',
+        'version': 1,
+        'phases': [],
+        'phase_options': [],
+        'controls': {
+            'wavelength': '1.54056',
+            'wavelength_source': '1.54056',
+            'tt_min': '20',
+            'tt_max': '60',
+            'n_bg_coeffs': 'auto',
+            'instrument': 'synergy_s',
+            'fix_y_value': '',
+            'checkboxes': {
+                'xrd-calibration-mode': False,
+                'xrd-verification-mode': True,
+                'xrd-verify-cell': True,
+                'xrd-phase-isolation': True,
+                'xrd-zero-not-disp': True,
+                'xrd-refine-x': True,
+                'xrd-fix-y': False,
+                'xrd-y-nonneg': True,
+                'xrd-refine-uiso': False,
+                'xrd-refine-xyz': False,
+            },
+        },
+        'result_summary': {},
+    }]
+
+
+def _save_xrd_presets(presets):
+    tmp_path = XRD_PRESETS_PATH + '.tmp'
+    payload = {'schema': 'catalysis-toolkit.xrd-presets.v1',
+               'presets': presets}
+    with open(tmp_path, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+    os.replace(tmp_path, XRD_PRESETS_PATH)
+
+
+def _preset_id_from_name(name):
+    slug = re.sub(r'[^a-z0-9]+', '-', (name or '').lower()).strip('-')
+    slug = slug[:48] or 'xrd-preset'
+    return f"{slug}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+
+@app.route('/api/xrd/presets', methods=['GET'])
+def xrd_list_presets():
+    presets = _builtin_xrd_presets() + _load_xrd_presets()
+    return jsonify({'presets': presets})
+
+
+@app.route('/api/xrd/presets', methods=['POST'])
+def xrd_save_preset():
+    payload = request.get_json(silent=True) or {}
+    name = (payload.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'Preset name is required.'}), 400
+
+    presets = _load_xrd_presets()
+    preset_id = (payload.get('id') or '').strip()
+    if preset_id.startswith('builtin-'):
+        return jsonify({'error': 'Built-in presets cannot be overwritten.'}), 400
+    now = datetime.now().isoformat(timespec='seconds')
+
+    existing = None
+    if preset_id:
+        existing = next((p for p in presets if p.get('id') == preset_id), None)
+    if existing is None:
+        existing = next((p for p in presets if p.get('name') == name), None)
+
+    preset = {
+        'id': preset_id or (existing or {}).get('id') or _preset_id_from_name(name),
+        'name': name,
+        'description': (payload.get('description') or '').strip(),
+        'created_at': (existing or {}).get('created_at') or now,
+        'updated_at': now,
+        'version': 1,
+        'phases': payload.get('phases') if isinstance(payload.get('phases'), list) else [],
+        'phase_options': (
+            payload.get('phase_options')
+            if isinstance(payload.get('phase_options'), list) else []),
+        'controls': (
+            payload.get('controls')
+            if isinstance(payload.get('controls'), dict) else {}),
+        'result_summary': (
+            payload.get('result_summary')
+            if isinstance(payload.get('result_summary'), dict) else {}),
+    }
+
+    presets = [p for p in presets if p.get('id') != preset['id']]
+    presets.append(preset)
+    _save_xrd_presets(presets)
+    return jsonify({'ok': True, 'preset': preset})
+
+
+@app.route('/api/xrd/presets/<preset_id>', methods=['DELETE'])
+def xrd_delete_preset(preset_id):
+    if str(preset_id).startswith('builtin-'):
+        return jsonify({'error': 'Built-in presets cannot be deleted.'}), 400
+    presets = _load_xrd_presets()
+    kept = [p for p in presets if p.get('id') != preset_id]
+    if len(kept) == len(presets):
+        return jsonify({'error': 'Preset not found.'}), 404
+    _save_xrd_presets(kept)
+    return jsonify({'ok': True})
+
+
 @app.route('/api/process_xrd', methods=['POST'])
 def process_xrd():
     print("\n=== /api/process_xrd START ===", flush=True)
@@ -944,6 +1119,7 @@ def process_xrd():
             'zero_shift':    result['zero_shift'],
             'displacement_um':    result.get('displacement_um'),
             'displacement_param': result.get('displacement_param'),
+            'fit_warnings':  result.get('warnings', []),
             'pymatgen_used': result.get('pymatgen_used', False),
             'method':        result.get('method', 'Le Bail'),
             'summary_path':  result['summary_path'],
