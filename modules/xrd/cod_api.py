@@ -53,6 +53,64 @@ SORT_OPTIONS = {
 }
 
 
+_F_CUBIC_SGS = {196, 202, 203, 209, 210, 216, 219, 225, 226, 227, 228}
+
+
+def _nearly_equal(a, b, tol=1e-3):
+    try:
+        return abs(float(a) - float(b)) <= tol
+    except Exception:
+        return False
+
+
+def _looks_like_f_cubic_primitive_cell(a, b, c, al, be, ga, sg):
+    """Detect the rhombohedral primitive cell often returned for F-cubic MP data."""
+    return (
+        int(sg or 0) in _F_CUBIC_SGS
+        and _nearly_equal(a, b)
+        and _nearly_equal(a, c)
+        and _nearly_equal(al, 60.0, 1e-2)
+        and _nearly_equal(be, 60.0, 1e-2)
+        and _nearly_equal(ga, 60.0, 1e-2)
+    )
+
+
+def _f_cubic_primitive_to_conventional(a_prim, primitive_sites):
+    """Convert an F-cubic primitive/rhombohedral cell to conventional sites.
+
+    MP can return rock-salt/cF structures as a two-atom P1 primitive cell
+    with a=b=c and alpha=beta=gamma=60. The UI tick generator, however,
+    labels and spaces Fm-3m reflections in the conventional cubic setting.
+    """
+    if not primitive_sites:
+        return None, None
+    conv_a = float(a_prim) * math.sqrt(2.0)
+    f_trans = [
+        (0.0, 0.0, 0.0),
+        (0.0, 0.5, 0.5),
+        (0.5, 0.0, 0.5),
+        (0.5, 0.5, 0.0),
+    ]
+    conv_sites = []
+    seen = set()
+    for el, u, v, w, occ in primitive_sites:
+        # Primitive F basis vectors in conventional coordinates:
+        # a_p=(0,1/2,1/2), b_p=(1/2,0,1/2), c_p=(1/2,1/2,0).
+        x0 = (float(v) + float(w)) / 2.0
+        y0 = (float(u) + float(w)) / 2.0
+        z0 = (float(u) + float(v)) / 2.0
+        for tx, ty, tz in f_trans:
+            x = (x0 + tx) % 1.0
+            y = (y0 + ty) % 1.0
+            z = (z0 + tz) % 1.0
+            key = (el, round(x, 6), round(y, 6), round(z, 6))
+            if key in seen:
+                continue
+            seen.add(key)
+            conv_sites.append((el, x, y, z, occ))
+    return conv_a, conv_sites
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SEARCH
 # ─────────────────────────────────────────────────────────────────────────────
@@ -294,6 +352,20 @@ def save_cif_temp(cif_text, cod_id='manual'):
 # ─────────────────────────────────────────────────────────────────────────────
 # STICK PATTERN PREVIEW  (no pymatgen needed — uses our crystallography engine)
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# SEPARATION RULE (display vs. refinement):
+#   This module produces reflections for the *display layer* only — the
+#   tick marks and stick-pattern overlay shown next to the experimental
+#   pattern.  It MUST NOT mutate the phase dict's `cif_text`, cell
+#   parameters, or space group.  The CIF that GSAS-II refines lives in
+#   gsasii_backend.py and must be prepared independently.
+#
+#   If the preview is wrong, fix it here.  Do NOT "fix" it by rewriting
+#   the CIF that goes to GSAS-II — that path led to the W2C-as-P1
+#   regression.  See CLAUDE OUTPUTS / Catalysis-Toolkit_Architecture_v1.md
+#   for the design contract.
+#
+# ─────────────────────────────────────────────────────────────────────────────
 
 def get_stick_pattern(structure, wavelength, tt_min=5.0, tt_max=90.0):
     """
@@ -315,57 +387,127 @@ def get_stick_pattern(structure, wavelength, tt_min=5.0, tt_max=90.0):
     sys_  = structure.get('system', 'triclinic') or 'triclinic'
     sg    = structure.get('spacegroup_number', 1) or 1
 
-    # Try to get atom sites for structure factor calculation.
-    # Use pymatgen expansion for correct F² (asymmetric unit → full cell),
-    # then fall back to raw parse_cif.  Without sites, generate_reflections
-    # uses multiplicity-only weighting which shows many F²≈0 "ghost" sticks.
+    # ── Determine policy FIRST — controls site handling strategy ───────
+    _sp = 'auto'
+    try:
+        from .gsasii_backend import _cif_policy
+        _policy = _cif_policy(structure)
+        if _policy == 'mp_w2c_pbcn_compat':
+            _sp = 'legacy_direct_sites'
+    except Exception:
+        _policy = 'default'
+
+    # ── Get atom sites for structure factor calculation ─────────────────
     sites = structure.get('sites')
+
     if not sites and structure.get('cif_text'):
-        sites = expand_sites_from_cif(structure['cif_text'])
-        if not sites:
+        if _sp == 'legacy_direct_sites':
+            # Legacy path: use raw CIF-parsed sites directly
             try:
                 parsed = parse_cif(structure['cif_text'])
                 sites = parsed.get('sites')
             except Exception:
                 sites = None
+        else:
+            # Default: expand to full cell for correct F²
+            sites = expand_sites_from_cif(structure['cif_text'])
+            if not sites:
+                try:
+                    parsed = parse_cif(structure['cif_text'])
+                    sites = parsed.get('sites')
+                except Exception:
+                    sites = None
 
-    # If we still have no sites but have cell + space group info, build
-    # a minimal pymatgen structure for expansion.  This catches cases where
-    # the structure dict has lattice parameters and formula but no cif_text.
-    if not sites:
+    if structure.get('cif_text'):
+        cif_text = structure['cif_text']
         try:
-            from pymatgen.core import Lattice, Structure
-            lattice = Lattice.from_parameters(a, b, c, al, be, ga)
-            formula = structure.get('formula', '')
-            if formula:
-                import re
-                elements = re.findall(r'[A-Z][a-z]?', formula)
-                # Use ALL unique elements, not just the first — omitting
-                # elements (e.g. C in W2C) produces wrong structure factors
-                # and ghost reflections where F² should be zero.
-                unique_els = list(dict.fromkeys(elements))  # preserve order, dedupe
-                if unique_els:
-                    # Place each element at a distinct general position.
-                    # Positions are approximate but allow F² cancellation
-                    # from multi-element interference to take effect.
-                    gen_pos = [
-                        [0.0,  0.0,  0.0 ],
-                        [0.25, 0.25, 0.25],
-                        [0.5,  0.0,  0.25],
-                        [0.0,  0.5,  0.5 ],
-                    ]
-                    coords = [gen_pos[i % len(gen_pos)] for i in range(len(unique_els))]
-                    struct = Structure.from_spacegroup(
-                        sg, lattice, unique_els, coords)
-                    sites = [(str(s.specie), *[float(c) for c in s.frac_coords % 1.0], 1.0)
-                             for s in struct]
+            parsed = parse_cif(cif_text)
+            raw_sites = parsed.get('sites') or []
+            raw_sg = int(parsed.get('spacegroup_number', 1) or 1)
         except Exception:
-            pass
+            raw_sites = []
+            raw_sg = 1
+
+        if (raw_sg == 1
+                and _looks_like_f_cubic_primitive_cell(a, b, c, al, be, ga, sg)
+                and raw_sites):
+            conv_a, conv_sites = _f_cubic_primitive_to_conventional(a, raw_sites)
+            if conv_a and conv_sites:
+                a = b = c = conv_a
+                al = be = ga = 90.0
+                sys_ = 'cubic'
+                sites = conv_sites
+                _sp = 'direct_full_cell_sites'
+        elif _sp == 'legacy_direct_sites':
+            sites = raw_sites or sites
+        elif raw_sg > 1:
+            # Symmetry-bearing CIFs list the asymmetric unit. Let the
+            # reflection generator expand it exactly once.
+            sites = raw_sites or None
+            _sp = 'auto'
+        else:
+            # P1/no-symmetry CIFs from MP/CifWriter usually contain the
+            # full unit cell. Use those positions directly while keeping
+            # the selected phase SG for reflection-condition filtering.
+            sites = expand_sites_from_cif(cif_text) or raw_sites or None
+            if sites:
+                if (int(sg or 0) == 60
+                        and (sys_ or '').lower() == 'orthorhombic'
+                        and _nearly_equal(al, 90.0)
+                        and _nearly_equal(be, 90.0)
+                        and _nearly_equal(ga, 90.0)
+                        and len(sites) >= 8):
+                    _sp = 'direct_full_cell_sites'
+                else:
+                    _sp = 'legacy_direct_sites'
+
+    # If we still have no sites, try building from formula + cell.
+    # BUT: refuse to fabricate approximate sites for W2C Pbcn —
+    # invented positions produce the wrong dense stick pattern.
+    if not sites:
+        import re as _re
+        formula = structure.get('formula', '')
+        _elements = _re.findall(r'([A-Z][a-z]?)(\d*)', formula)
+        _comp = {}
+        for el, n in _elements:
+            if el:
+                _comp[el] = _comp.get(el, 0) + (int(n) if n else 1)
+        _is_wc = (_comp.get('W', 0) > 0 and _comp.get('C', 0) > 0
+                   and len(_comp) == 2)
+
+        if int(sg) == 60 and _is_wc:
+            print(f"  W2C/Pbcn stick pattern: no real CIF sites "
+                  f"available; refusing approximate or "
+                  f"multiplicity-only sticks.", flush=True)
+            return []
+        else:
+            try:
+                from pymatgen.core import Lattice, Structure
+                lattice = Lattice.from_parameters(a, b, c, al, be, ga)
+                if formula:
+                    elements = _re.findall(r'[A-Z][a-z]?', formula)
+                    unique_els = list(dict.fromkeys(elements))
+                    if unique_els:
+                        gen_pos = [
+                            [0.0, 0.0, 0.0], [0.25, 0.25, 0.25],
+                            [0.5, 0.0, 0.25], [0.0, 0.5, 0.5],
+                        ]
+                        coords = [gen_pos[i % len(gen_pos)]
+                                  for i in range(len(unique_els))]
+                        struct = Structure.from_spacegroup(
+                            sg, lattice, unique_els, coords)
+                        sites = [
+                            (str(s.specie),
+                             *[float(c) for c in s.frac_coords % 1.0],
+                             1.0) for s in struct]
+            except Exception:
+                pass
 
     try:
         refs = generate_reflections(a, b, c, al, be, ga, sys_, sg,
                                      wavelength, tt_min, tt_max, hkl_max=8,
-                                     sites=sites or None)
+                                     sites=sites or None,
+                                     site_policy=_sp)
     except Exception:
         return []
 
@@ -378,3 +520,12 @@ def get_stick_pattern(structure, wavelength, tt_min=5.0, tt_max=90.0):
              'hkl':       f'({r[2][0]}{r[2][1]}{r[2][2]})',
              'rel_int':   round(r[3] / max_w, 3)}
             for r in refs if r[3] / max_w >= 0.01]  # drop sticks < 1% rel intensity
+
+
+def get_preview_reflections(phase, wavelength, tt_min=5.0, tt_max=90.0):
+    """Display-only reflection list for the UI preview.
+
+    This wrapper intentionally works on a copy so callers cannot
+    accidentally mutate the CIF or phase metadata used for refinement.
+    """
+    return get_stick_pattern(dict(phase or {}), wavelength, tt_min, tt_max)

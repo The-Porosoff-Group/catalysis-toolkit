@@ -116,7 +116,9 @@ def make_xrd_plot(result, metadata, output_path):
                             ec=GRID, alpha=0.9))
 
     # Title
-    lam_label = metadata.get('wavelength_label', f"λ={result['wavelength']:.4f} Å")
+    lam_label = metadata.get('wavelength_label')
+    if not lam_label:
+        lam_label = f"λ={result.get('wavelength', 1.54056):.4f} Å"
     method_label = metadata.get('method', 'Le Bail')
     ax_main.set_title(
         f"{metadata.get('sample_id','Sample')}   ·   "
@@ -135,7 +137,14 @@ def make_xrd_plot(result, metadata, output_path):
     for i, ph in enumerate(phases):
         c  = PHASE_COLORS[i % len(PHASE_COLORS)]
         wt = ph.get('weight_fraction_%', '')
-        wt_str = f"  {wt} wt%" if wt != '' else ''
+        wt_err = ph.get('weight_fraction_err_%')
+        if wt != '':
+            wt_str = f"  {wt}"
+            if wt_err is not None:
+                wt_str += f" ± {wt_err}"
+            wt_str += " wt%"
+        else:
+            wt_str = ''
         # ph['name'] already includes the space group for disambiguation
         label  = f"{ph['name']}{wt_str}"
         handles.append(Line2D([0],[0], color=c, lw=2, label=label))
@@ -158,9 +167,16 @@ def make_xrd_plot(result, metadata, output_path):
         for tt_tick in ticks:
             ax_ticks.axvline(tt_tick, ymin=y_pos-0.08, ymax=y_pos+0.08,
                               color=color, linewidth=1.0, alpha=0.8)
-        # Phase label: name (already includes SG) + wt%
+        # Phase label: name (already includes SG) + wt% ± err
         wt   = ph.get('weight_fraction_%', '')
-        wt_str = f"  {wt} wt%" if wt != '' else ''
+        wt_err = ph.get('weight_fraction_err_%')
+        if wt != '':
+            wt_str = f"  {wt}"
+            if wt_err is not None:
+                wt_str += f" ± {wt_err}"
+            wt_str += " wt%"
+        else:
+            wt_str = ''
         label  = f"{ph['name']}{wt_str}"
         ax_ticks.text(0.005, y_pos, label,
                       transform=ax_ticks.transAxes,

@@ -145,67 +145,13 @@ def is_allowed(h, k, l, spacegroup_number):
     # lattice centering, plus specific glide rules; (b) common monoclinic,
     # orthorhombic, tetragonal, and hexagonal SGs encountered in catalysis.
 
-    # ── Monoclinic ──────────────────────────────────────────────────────────
-
-    # P21/c (#14): 21-screw ∥ b, c-glide ⊥ b
-    #   h0l: l = 2n   (c-glide)
-    #   0k0: k = 2n   (21 screw)
-    if sg == 14:
-        if h == 0 and l == 0 and k % 2 != 0: return False
-        if k == 0 and (h + l) % 2 != 0:
-            # Standard setting P21/c: h0l: l = 2n
-            # Alternate setting P21/n: h0l: h+l = 2n — use h+l to cover both
-            pass  # handled below per-setting
-        # P21/c standard: h0l: l = 2n
-        if k == 0 and l % 2 != 0: return False
+    # ── Monoclinic (non-duplicated SGs) ──────────────────────────────────
 
     # P21 (#4): 0k0: k = 2n
     if sg == 4:
         if h == 0 and l == 0 and k % 2 != 0: return False
 
-    # C2/c (#15): C-centering handled above, plus c-glide
-    #   h0l: l = 2n  (c-glide)
-    #   0k0: k = 2n  (implied by C + 21)
-    if sg == 15:
-        if k == 0 and l % 2 != 0: return False
-
-    # ── Orthorhombic P-lattice with glide planes ───────────────────────────
-
-    # Pbcn (#60, W2C orthorhombic):
-    #   0kl: k = 2n   (b-glide ⊥ a)
-    #   h0l: l = 2n   (c-glide ⊥ b)
-    #   hk0: h+k = 2n (n-glide ⊥ c)
-    #   h00: h = 2n,  0k0: k = 2n,  00l: l = 2n  (implied serials)
-    if sg == 60:
-        if h == 0 and k % 2 != 0: return False               # 0kl: k=2n
-        if k == 0 and l % 2 != 0: return False               # h0l: l=2n
-        if l == 0 and (h + k) % 2 != 0: return False         # hk0: h+k=2n
-        if k == 0 and l == 0 and h % 2 != 0: return False    # h00: h=2n
-        if h == 0 and l == 0 and k % 2 != 0: return False    # 0k0: k=2n
-        if h == 0 and k == 0 and l % 2 != 0: return False    # 00l: l=2n
-
-    # Pnma (#62, Fe3C cementite, common orthorhombic):
-    #   0kl: k+l = 2n (n-glide ⊥ a)
-    #   hk0: h = 2n   (a-glide ⊥ c)
-    #   h00: h = 2n,  0k0: k = 2n,  00l: l = 2n  (screws)
-    if sg == 62:
-        if h == 0 and (k + l) % 2 != 0: return False         # 0kl: k+l=2n
-        if l == 0 and h % 2 != 0: return False               # hk0: h=2n
-        if k == 0 and l == 0 and h % 2 != 0: return False    # h00: h=2n
-        if h == 0 and l == 0 and k % 2 != 0: return False    # 0k0: k=2n
-        if h == 0 and k == 0 and l % 2 != 0: return False    # 00l: l=2n
-
-    # Pbca (#61, common orthorhombic):
-    #   0kl: k = 2n (b-glide ⊥ a)
-    #   h0l: l = 2n (c-glide ⊥ b)  — wait, it's actually:
-    #   0kl: k = 2n, h0l: l = 2n, hk0: h = 2n (all three glide planes)
-    if sg == 61:
-        if h == 0 and k % 2 != 0: return False               # 0kl: k=2n
-        if k == 0 and l % 2 != 0: return False               # h0l: l=2n
-        if l == 0 and h % 2 != 0: return False               # hk0: h=2n
-        if k == 0 and l == 0 and h % 2 != 0: return False
-        if h == 0 and l == 0 and k % 2 != 0: return False
-        if h == 0 and k == 0 and l % 2 != 0: return False
+    # ── Orthorhombic (non-duplicated SGs) ─────────────────────────────────
 
     # Pna21 (#33): n-glide ⊥ a, a-glide ⊥ b, 21 screw ∥ c
     #   0kl: k+l = 2n (n-glide)
@@ -271,10 +217,26 @@ def is_allowed(h, k, l, spacegroup_number):
         if h == 0 and l == 0 and k % 4 != 0: return False
         if k == 0 and l == 0 and h % 4 != 0: return False
 
+    # Fd-3m (#227, diamond, Si, Ge, spinels): F-centred + d-glide
+    # F-centering is handled above (h,k,l all odd or all even).
+    # d-glide adds: when h,k,l are ALL EVEN, h+k+l must be 4n.
+    # Without this, reflections like (200), (222), (442) appear as
+    # spurious zero-intensity ticks.
+    if sg == 227:
+        if h % 2 == 0 and k % 2 == 0 and l % 2 == 0:
+            if (h + k + l) % 4 != 0:
+                return False
+
+    # Fd-3 (#203): same d-glide rule as 227
+    if sg == 203:
+        if h % 2 == 0 and k % 2 == 0 and l % 2 == 0:
+            if (h + k + l) % 4 != 0:
+                return False
+
     # Im-3m (#229), Pm-3m (#221): handled by lattice centering above
 
-    # ── P-lattice orthorhombic glide-plane absences ───────────────────────────
-    # These are critical for transition metal carbides, oxides, and ceramics.
+    # ── Orthorhombic glide-plane absences ────────────────────────────────────
+    # Critical for transition metal carbides, oxides, and ceramics.
 
     # Pbcn (#60, W2C, Mo2C):  b-glide ⊥ a, c-glide ⊥ b, n-glide ⊥ c
     #   0kl: k = 2n   |   h0l: l = 2n   |   hk0: h+k = 2n
@@ -341,17 +303,6 @@ def is_allowed(h, k, l, spacegroup_number):
         if k == 0 and l == 0 and h % 2 != 0: return False
         if h == 0 and l == 0 and k % 2 != 0: return False
         if h == 0 and k == 0 and l % 2 != 0: return False
-
-    # Fd-3m (#227, spinel, diamond):  F-centring already handled + d-glide
-    #   0kl: k+l = 4n   |   hhl: 2h+l = 4n
-    if sg == 227:
-        if h == 0 and (k + l) % 4 != 0: return False
-        if k == 0 and (h + l) % 4 != 0: return False
-        if l == 0 and (h + k) % 4 != 0: return False
-        ah, ak, al = abs(h), abs(k), abs(l)
-        if ah == ak and (2*ah + al) % 4 != 0: return False
-        if ah == al and (2*ah + ak) % 4 != 0: return False
-        if ak == al and (2*ak + ah) % 4 != 0: return False
 
     return True
 
@@ -512,12 +463,44 @@ def structure_factor_sq_dw(h, k, l, sites, sin_theta_over_lambda, B_iso_map=None
 # PATTERN GENERATION
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _expand_sites_by_symmetry(sites, spacegroup_number, a, b, c, al, be, ga):
+    """Expand asymmetric-unit sites to full unit cell using pymatgen.
+
+    Returns a list of (element, x, y, z, occupancy) for all atoms in the
+    conventional unit cell, or None if expansion fails.
+    """
+    try:
+        from pymatgen.core import Structure, Lattice
+        lat = Lattice.from_parameters(a, b, c, al, be, ga)
+        species = [s[0] for s in sites]
+        coords = [[s[1], s[2], s[3]] for s in sites]
+        struct = Structure.from_spacegroup(
+            spacegroup_number, lat, species, coords, tol=0.01)
+        full_sites = []
+        for site in struct:
+            fc = site.frac_coords % 1.0
+            el = str(site.specie)
+            full_sites.append((el, float(fc[0]), float(fc[1]),
+                               float(fc[2]), 1.0))
+        return full_sites
+    except Exception:
+        return None
+
+
 def generate_reflections(a, b, c, al, be, ga, system, spacegroup_number,
                           wavelength, two_theta_min, two_theta_max, hkl_max=10,
-                          sites=None):
+                          sites=None, site_policy='auto'):
     """
     Generate list of [two_theta, d, (h,k,l), intensity_weight] for all
     allowed reflections in the given 2θ range.
+
+    site_policy controls how sites are used for structure factor F²:
+      'auto' (default) — expand asymmetric unit by symmetry before F²
+      'legacy_direct_sites' — use sites directly, while still applying the
+          SG absence filter
+      'direct_full_cell_sites' — use sites directly and let their structure
+          factors encode extinctions without SG pre-filtering
+      'structure_expanded' — always expand (same as auto)
 
     If `sites` is provided (list of (element, x, y, z, occupancy) tuples),
     the intensity weight is:  multiplicity × |F(hkl)|² × LP
@@ -530,7 +513,48 @@ def generate_reflections(a, b, c, al, be, ga, system, spacegroup_number,
     (h,k,l) in the full sphere that passes the systematic-absence filter
     and maps to the same d-spacing.
     """
-    seen_d = {}   # d_key → [two_theta, d, (h,k,l), count, F2_representative]
+    # ── Expand asymmetric-unit sites to full unit cell ──────────────────
+    # structure_factor_sq needs ALL atoms in the unit cell, not just the
+    # asymmetric unit.  CIF sites from parse_cif are typically the
+    # asymmetric unit, so we expand by space-group symmetry here.
+    #
+    # site_policy controls this:
+    #   'auto'/'structure_expanded' — expand (default, needed for Si etc.)
+    #   'legacy_direct_sites' — use sites directly (MP W2C Pbcn compat)
+    full_sites = None
+    direct_full_cell_sites = (
+        sites is not None
+        and site_policy in ('direct_full_cell_sites', 'source_full_cell')
+    )
+    use_direct_sites = (
+        sites is not None
+        and site_policy in ('legacy_direct_sites',
+                            'direct_full_cell_sites',
+                            'source_full_cell')
+    )
+    if sites is not None:
+        if use_direct_sites:
+            # Use sites as-is. legacy_direct_sites still applies the SG absence
+            # filter. direct_full_cell_sites is for source/conventional cells
+            # whose atom positions should decide extinctions directly.
+            full_sites = sites
+        elif spacegroup_number > 1:
+            full_sites = _expand_sites_by_symmetry(
+                sites, spacegroup_number, a, b, c, al, be, ga)
+            if full_sites is None:
+                full_sites = None  # expansion failed, skip F²
+
+    # Use full_sites for F² if available, else skip F² calculation
+    f2_sites = full_sites if full_sites is not None else None
+
+    # Default B_iso for Debye-Waller damping in the theoretical pattern.
+    # Without this, high-angle peaks are too intense because thermal
+    # motion is ignored.  0.5 Å² is a reasonable room-temperature default
+    # for most inorganic materials.
+    _DEFAULT_B_ISO = 0.5
+    _b_iso_map = {'_all': _DEFAULT_B_ISO}
+
+    seen_d = {}   # d_key → [two_theta, d, (h,k,l), count, weight]
 
     for h in range(-hkl_max, hkl_max + 1):
         for k in range(-hkl_max, hkl_max + 1):
@@ -538,7 +562,8 @@ def generate_reflections(a, b, c, al, be, ga, system, spacegroup_number,
                 if h == 0 and k == 0 and l == 0:
                     continue
 
-                if not is_allowed(h, k, l, spacegroup_number):
+                if (not direct_full_cell_sites
+                        and not is_allowed(h, k, l, spacegroup_number)):
                     continue
 
                 d = d_spacing(h, k, l, a, b, c, al, be, ga, system)
@@ -557,38 +582,46 @@ def generate_reflections(a, b, c, al, be, ga, system, spacegroup_number,
                 if d_key in seen_d:
                     seen_d[d_key][3] += 1        # count this equivalent
                 else:
-                    # Compute |F|² once per unique d-spacing (representative hkl)
-                    F2 = None
-                    if sites is not None:
+                    # Compute |F|² with Debye-Waller damping, plus LP factor,
+                    # so the theoretical stick intensities match a measured
+                    # powder pattern visually.
+                    F2_LP = None
+                    if f2_sites is not None:
                         s = sin_theta / wavelength
-                        F2 = structure_factor_sq(h, k, l, sites, s)
-                    seen_d[d_key] = [two_theta, d, (abs(h), abs(k), abs(l)), 1, F2]
+                        F2 = structure_factor_sq_dw(h, k, l, f2_sites, s,
+                                                     _b_iso_map)
+                        # Lorentz-polarisation factor
+                        theta_r = math.radians(two_theta / 2)
+                        cos2t = math.cos(math.radians(two_theta))
+                        sin_t = math.sin(theta_r)
+                        cos_t = math.cos(theta_r)
+                        LP = ((1 + cos2t**2) / (sin_t**2 * cos_t)
+                              if sin_t > 0 and cos_t > 0 else 1.0)
+                        F2_LP = F2 * LP
+                    seen_d[d_key] = [two_theta, d, (abs(h), abs(k), abs(l)),
+                                     1, F2_LP]
 
     # Build final list with intensity weights.
-    # Use a two-pass filter: absolute threshold removes truly extinct peaks,
-    # then a relative threshold removes ghost reflections whose F² is
-    # negligible compared to the strongest peak (common in multi-element
-    # compounds like W2C where W-C cancellation produces near-zero F²).
     entries = sorted(seen_d.values(), key=lambda x: x[0])
 
-    max_F2 = 0.0
-    if sites is not None:
+    max_w = 0.0
+    if f2_sites is not None:
         for entry in entries:
-            F2 = entry[4]
-            if F2 is not None and F2 > max_F2:
-                max_F2 = F2
-    rel_threshold = max_F2 * 1e-2  # 1% of strongest reflection
+            w = entry[4]
+            if w is not None and w > max_w:
+                max_w = w
+    rel_threshold = max_w * 1e-2  # 1% of strongest reflection
 
     reflections = []
     for entry in entries:
-        two_theta, d, hkl, mult, F2 = entry
-        if sites is not None:
-            # Skip reflections with negligible structure factor
-            if F2 is not None and F2 < max(1e-4, rel_threshold):
+        two_theta, d, hkl, mult, F2_LP = entry
+        if f2_sites is not None and F2_LP is not None:
+            # Skip reflections with negligible intensity
+            if F2_LP < max(1e-4, rel_threshold):
                 continue
-            # Intensity weight = mult × |F|² (LP applied later in compute_phase_pattern)
-            weight = mult * (F2 if F2 is not None else 1.0)
+            weight = mult * F2_LP
         else:
+            # No F² available — use multiplicity only
             weight = mult
         reflections.append([two_theta, d, hkl, weight])
 
@@ -597,13 +630,16 @@ def generate_reflections(a, b, c, al, be, ga, system, spacegroup_number,
 
 def generate_reflections_rietveld(a, b, c, al, be, ga, system, spacegroup_number,
                                    wavelength, two_theta_min, two_theta_max,
-                                   sites, hkl_max=12):
+                                   sites, hkl_max=12, site_policy='auto'):
     """
     Generate reflection list for Rietveld refinement.
 
     Unlike generate_reflections(), this returns per-reflection components
     that allow recomputing intensities when B_iso changes without
     re-enumerating all hkl:
+
+    site_policy: 'auto', 'legacy_direct_sites', or 'structure_expanded'
+        (see generate_reflections docstring).
 
     Returns list of dicts:
         {'two_theta', 'd', 'hkl', 'mult', 'sin_theta_over_lambda',
@@ -612,6 +648,17 @@ def generate_reflections_rietveld(a, b, c, al, be, ga, system, spacegroup_number
     The representative (h,k,l) is stored so structure_factor_sq_dw() can
     be called with varying B_iso during refinement.
     """
+    # Expand asymmetric-unit sites to full unit cell for correct F²
+    full_sites = sites
+    if sites and spacegroup_number > 1:
+        if site_policy == 'legacy_direct_sites':
+            full_sites = sites
+        else:
+            expanded = _expand_sites_by_symmetry(
+                sites, spacegroup_number, a, b, c, al, be, ga)
+            if expanded is not None:
+                full_sites = expanded
+
     seen_d = {}
 
     for h in range(-hkl_max, hkl_max + 1):
@@ -638,9 +685,9 @@ def generate_reflections_rietveld(a, b, c, al, be, ga, system, spacegroup_number
                 if d_key in seen_d:
                     seen_d[d_key]['mult'] += 1
                 else:
-                    # Check if this reflection has nonzero F² (skip extinct peaks)
+                    # Check if this reflection has nonzero F²
                     s = sin_theta / wavelength
-                    F2_test = structure_factor_sq(h, k, l, sites, s)
+                    F2_test = structure_factor_sq(h, k, l, full_sites, s)
                     if F2_test < 1e-4:
                         seen_d[d_key] = {'skip': True, 'mult': 1}
                         continue
@@ -659,22 +706,39 @@ def generate_reflections_rietveld(a, b, c, al, be, ga, system, spacegroup_number
     return refs
 
 
-def compute_rietveld_intensities(refs, sites, B_iso_map=None):
+def compute_rietveld_intensities(refs, sites, B_iso_map=None,
+                                  spacegroup_number=None,
+                                  a=None, b=None, c=None,
+                                  al=None, be=None, ga=None):
     """
     Compute per-reflection intensities for a Rietveld model:
       I_hkl = mult × |F(hkl)|² × LP
 
     refs: output of generate_reflections_rietveld()
-    sites: atom site list
+    sites: atom site list (asymmetric unit or full cell)
     B_iso_map: {element: B_iso} or {'_all': B_iso}
+    spacegroup_number, a, b, c, al, be, ga: if provided, sites are
+        expanded from asymmetric unit to full cell before computing F².
+        This ensures consistency with generate_reflections_rietveld().
 
     Returns np.array of intensities, same length as refs.
     """
+    # Expand asymmetric-unit sites to full cell if SG info provided
+    full_sites = sites
+    if (sites and spacegroup_number is not None and spacegroup_number > 1
+            and a is not None):
+        expanded = _expand_sites_by_symmetry(
+            sites, spacegroup_number,
+            a, b or a, c or a,
+            al or 90.0, be or 90.0, ga or 90.0)
+        if expanded is not None:
+            full_sites = expanded
+
     intensities = np.zeros(len(refs))
     for i, ref in enumerate(refs):
         s = ref['sin_theta_over_lambda']
         h, k, l = ref['h_rep'], ref['k_rep'], ref['l_rep']
-        F2 = structure_factor_sq_dw(h, k, l, sites, s, B_iso_map)
+        F2 = structure_factor_sq_dw(h, k, l, full_sites, s, B_iso_map)
         # Lorentz-polarisation factor
         tt = ref['two_theta']
         theta_r = math.radians(tt / 2)
@@ -898,7 +962,7 @@ def expand_sites_from_cif(cif_text):
                               float(frac[2]), occ))
             if sites:
                 return sites
-    except Exception:
+    except BaseException:
         pass
 
     # ── Fallback: expand using built-in symmetry operations ─────────────

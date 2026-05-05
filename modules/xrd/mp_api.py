@@ -13,12 +13,82 @@ Key rule for the new API: do NOT request 'structure' in the fields parameter
 via raw REST — it causes a 400. Only request scalar/simple fields.
 """
 
-import re, requests, json
+import os, re, requests, json
 from .crystallography import parse_cif
 from .cod_api import infer_system, _sf
 
 MP_SUMMARY = "https://api.materialsproject.org/materials/summary/"
 TIMEOUT    = 15
+
+_VALID_ELEMENTS = {
+    'H','He','Li','Be','B','C','N','O','F','Ne','Na','Mg','Al','Si',
+    'P','S','Cl','Ar','K','Ca','Sc','Ti','V','Cr','Mn','Fe','Co','Ni',
+    'Cu','Zn','Ga','Ge','As','Se','Br','Kr','Rb','Sr','Y','Zr','Nb',
+    'Mo','Tc','Ru','Rh','Pd','Ag','Cd','In','Sn','Sb','Te','I','Xe',
+    'Cs','Ba','La','Ce','Pr','Nd','Pm','Sm','Eu','Gd','Tb','Dy','Ho',
+    'Er','Tm','Yb','Lu','Hf','Ta','W','Re','Os','Ir','Pt','Au','Hg',
+    'Tl','Pb','Bi','Po','At','Rn','Fr','Ra','Ac','Th','Pa','U','Np',
+    'Pu','Am','Cm','Bk','Cf','Es','Fm','Md','No','Lr','Rf','Db','Sg',
+    'Bh','Hs','Mt','Ds','Rg','Cn','Nh','Fl','Mc','Lv','Ts','Og',
+}
+
+
+def _normalize_formula_case(formula):
+    formula = (formula or '').strip().replace(' ', '')
+    if not formula or re.search(r'[A-Z]', formula):
+        return formula
+    out = []
+    i = 0
+    while i < len(formula):
+        if formula[i].isdigit():
+            out.append(formula[i])
+            i += 1
+            continue
+        two = formula[i:i+2].capitalize()
+        one = formula[i].upper()
+        if i + 1 < len(formula) and two in _VALID_ELEMENTS:
+            out.append(two)
+            i += 2
+        elif one in _VALID_ELEMENTS:
+            out.append(one)
+            i += 1
+        else:
+            out.append(formula[i].upper())
+            i += 1
+    return ''.join(out)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Local CIF fixtures override
+# ─────────────────────────────────────────────────────────────────────────────
+# Some Materials Project entries import incorrectly into GSAS-II when the raw
+# structure JSON is round-tripped through pymatgen's CifWriter (e.g. mp-2034
+# W2C used to land as P1/full-cell, blowing up the cell DoF count).  Audited
+# canonical CIFs live in fixtures/ at the toolkit root.  When fetch_cif() sees
+# one of these mp_ids, it substitutes the fixture text for the round-tripped
+# CIF, but keeps everything else (formula, symmetry metadata, etc.) from MP.
+#
+# To add a new fixture: drop the .cif into fixtures/ and add an entry below.
+_FIXTURE_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    'fixtures')
+_LOCAL_FIXTURES = {
+    'mp-2034': 'w2c_pbcn_mp_2034.cif',   # W2C Pbcn — see CIF-Audit_v1.md
+}
+
+
+def _fixture_cif_for(mp_id):
+    """Return canonical fixture CIF text for an mp_id, or None if no override."""
+    fname = _LOCAL_FIXTURES.get(mp_id)
+    if not fname:
+        return None
+    path = os.path.join(_FIXTURE_DIR, fname)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path) as f:
+            return f.read()
+    except Exception:
+        return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -77,7 +147,7 @@ def search_by_elements(elements, api_key, strict=True,
 def search_by_formula(formula, api_key, max_results=50, sort_by="formula"):
     if not api_key:
         return {"error": "No Materials Project API key. Add to config.yaml."}
-    formula = formula.strip().replace(" ", "")
+    formula = _normalize_formula_case(formula)
     if not formula:
         return []
     try:
@@ -133,8 +203,11 @@ def search_by_name(name, api_key, max_results=50, sort_by="formula"):
     }
 
     # If it looks like a formula (starts uppercase, only letters/digits, no spaces)
-    if re.match(r"^[A-Z][a-zA-Z0-9]*$", name.replace(" ", "")):
-        return search_by_formula(name, api_key, max_results, sort_by)
+    _compact_name = name.replace(" ", "")
+    _maybe_formula = _normalize_formula_case(_compact_name)
+    if (len(_compact_name) <= 8
+            and re.match(r"^[A-Z][a-zA-Z0-9]*$", _maybe_formula)):
+        return search_by_formula(_maybe_formula, api_key, max_results, sort_by)
 
     # Try to extract element symbols — first from capitalised tokens (e.g. "W C Mo")
     words = name.replace("-", " ").split()
@@ -276,6 +349,14 @@ def fetch_cif(mp_id, api_key):
     # Convert pymatgen structure dict to CIF text
     cif_text = _structure_dict_to_cif(struct, mp_id, formula, sym)
 
+    # Local-fixture override: for known-problematic MP entries, substitute
+    # the audited canonical CIF (see _LOCAL_FIXTURES at top of this file).
+    fixture_text = _fixture_cif_for(mp_id)
+    if fixture_text:
+        print(f"  fetch_cif: using local fixture for {mp_id} "
+              f"(overrides round-tripped MP CIF)", flush=True)
+        cif_text = fixture_text
+
     parsed = parse_cif(cif_text)
     parsed.update({"mp_id": mp_id, "cod_id": mp_id,
                    "formula": formula, "cif_text": cif_text, "source": "mp"})
@@ -299,38 +380,98 @@ def _structure_dict_to_cif(struct_dict, mp_id, formula, sym):
     """
     Convert a pymatgen structure JSON dict to CIF text.
     Tries pymatgen first; falls back to hand-building minimal CIF.
+
+    CRITICAL: The CIF must be self-consistent — the atom sites and the
+    declared space group must match.  If CifWriter detects a different
+    space group than MP declares, we must NOT patch the SG tags because
+    that would create a mismatch (asymmetric unit reduced for SG_detected
+    but declared as SG_MP → GSAS-II expands with wrong symmetry).
+
+    Similarly, if CifWriter falls back to P1 (full cell), we must NOT
+    patch in the real SG because that would cause double-expansion
+    (full-cell sites + non-P1 SG → GSAS-II expands all atoms again).
     """
     # Try pymatgen CifWriter with symmetry detection so the CIF
     # contains the correct space group (not P1).
     try:
         from pymatgen.core import Structure
-        from pymatgen.io.cif import CifWriter
+        from pymatgen.io.cif import CifWriter, CifParser
         struct = Structure.from_dict(struct_dict)
-        # Use symprec to detect symmetry; fall back to plain write
         sg_num = sym.get("number", 1)
+        full_cell_n = len(struct)  # total atoms in the structure
+
+        # Try multiple symprec values — tight first (preserves distinct
+        # Wyckoff sites in compact cells like W2C), then looser.
+        for symprec in (0.01, 0.05, 0.1, 0.2):
+            try:
+                writer = CifWriter(struct, symprec=symprec)
+                import tempfile, os
+                with tempfile.NamedTemporaryFile(
+                        suffix=".cif", delete=False, mode="w") as f:
+                    tmp = f.name
+                writer.write_file(tmp)
+                with open(tmp) as f:
+                    cif_text = f.read()
+                os.unlink(tmp)
+
+                # Parse what CifWriter produced to check consistency
+                from .crystallography import parse_cif as _pc
+                written_parsed = _pc(cif_text)
+                written_sg = written_parsed.get('spacegroup_number', 1)
+                written_sites = written_parsed.get('sites') or []
+
+                # Check if CifWriter actually reduced the structure
+                if written_sg > 1 and len(written_sites) < full_cell_n:
+                    # CifWriter succeeded in finding symmetry and reducing.
+                    # Check if the detected SG matches what MP declares.
+                    if written_sg == sg_num:
+                        # Perfect match — use as-is
+                        return cif_text
+                    else:
+                        # Different SG detected.  DO NOT keep this CIF — the
+                        # sites are reduced for SG_detected, but downstream
+                        # code (_build_conventional_cif) will declare them as
+                        # SG_declared (from the phase dict), causing GSAS-II
+                        # to expand with the WRONG symmetry operations.
+                        # Instead, let it fall through to the P1 fallback,
+                        # which _build_conventional_cif handles safely.
+                        print(f"  MP CIF ({mp_id}): CifWriter detected "
+                              f"SG {written_sg} (MP declares {sg_num}) "
+                              f"at symprec={symprec} — DISCARDING to avoid "
+                              f"SG mismatch", flush=True)
+                        continue
+                elif written_sg <= 1 or len(written_sites) >= full_cell_n:
+                    # CifWriter fell back to P1 (no symmetry detected) or
+                    # didn't reduce the sites.  DO NOT patch in the real SG
+                    # — that would cause GSAS-II to double-expand.
+                    continue
+
+            except Exception:
+                continue
+
+        # No symprec produced a matching-SG reduction — try plain CifWriter (no symprec).
+        # This writes P1 with all atoms, which is the safest fallback:
+        # GSAS-II's _build_conventional_cif will detect the P1 + full cell
+        # and handle it appropriately.
         try:
-            writer = CifWriter(struct, symprec=0.1)
-        except Exception:
             writer = CifWriter(struct)
-        import tempfile, os
-        with tempfile.NamedTemporaryFile(suffix=".cif", delete=False, mode="w") as f:
-            tmp = f.name
-        writer.write_file(tmp)
-        with open(tmp) as f:
-            cif_text = f.read()
-        os.unlink(tmp)
-        # If pymatgen still wrote P1 but MP knows the real SG, patch the tags
-        if sg_num > 1 and ("_symmetry_Int_Tables_number 1" in cif_text
-                           or "'P 1'" in cif_text):
-            sg_sym = sym.get("symbol", "P 1")
-            import re
-            cif_text = re.sub(
-                r"_symmetry_Int_Tables_number\s+\d+",
-                f"_symmetry_Int_Tables_number {sg_num}", cif_text)
-            cif_text = re.sub(
-                r"_symmetry_space_group_name_H-M\s+'[^']*'",
-                f"_symmetry_space_group_name_H-M '{sg_sym}'", cif_text)
-        return cif_text
+            import tempfile, os
+            with tempfile.NamedTemporaryFile(
+                    suffix=".cif", delete=False, mode="w") as f:
+                tmp = f.name
+            writer.write_file(tmp)
+            with open(tmp) as f:
+                cif_text = f.read()
+            os.unlink(tmp)
+            # DO NOT patch P1 to the declared SG — the sites are the full cell
+            print(f"  MP CIF ({mp_id}): CifWriter wrote P1 (full cell, "
+                  f"{full_cell_n} atoms). NOT patching to SG {sg_num} — "
+                  f"_build_conventional_cif will handle reduction.",
+                  flush=True)
+            return cif_text
+        except Exception:
+            pass
+
     except Exception:
         pass
 

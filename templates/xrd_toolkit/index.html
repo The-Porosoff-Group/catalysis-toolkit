@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Catalysis Data Toolkit</title>
+<title>XRD Fitting Toolkit</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -471,6 +471,21 @@
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  body.xrd-only .app {
+    grid-template-columns: 1fr;
+  }
+  body.xrd-only aside {
+    display: none;
+  }
+  body.xrd-only main {
+    grid-column: 1 / -1;
+  }
+  body.xrd-only .module-panel {
+    display: none !important;
+  }
+  body.xrd-only #module-xrd {
+    display: flex !important;
+  }
 </style>
 <script>
   // Injected by server at page load
@@ -479,13 +494,13 @@
 </script>
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 </head>
-<body>
+<body class="xrd-only">
 <div class="app">
 
   <!-- Header -->
   <header>
-    <div class="logo">Catalysis<span>Toolkit</span></div>
-    <div class="badge">v1.0</div>
+    <div class="logo">XRD<span>Toolkit</span></div>
+    <div class="badge">standalone XRD GUI</div>
   </header>
 
   <!-- Sidebar -->
@@ -511,7 +526,7 @@
   <main>
 
     <!-- ── GC Module ── -->
-    <div class="module-panel active" id="module-gc">
+    <div class="module-panel" id="module-gc">
 
       <!-- Step 1: Upload -->
       <div class="card">
@@ -681,7 +696,7 @@
     {% endif %}
     {% endfor %}
     <!-- ── XRD Module ── -->
-    <div class="module-panel" id="module-xrd">
+    <div class="module-panel active" id="module-xrd">
 
       <!-- Step 1: Upload + Settings row -->
       <div style="display:grid;grid-template-columns:1.2fr 0.8fr;gap:16px;">

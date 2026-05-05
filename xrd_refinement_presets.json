@@ -1,0 +1,422 @@
+{
+  "schema": "catalysis-toolkit.xrd-presets.v1",
+  "presets": [
+    {
+      "id": "wc-w2c-20260503135110",
+      "name": "WC + W2C",
+      "description": "",
+      "created_at": "2026-05-03T13:51:10",
+      "updated_at": "2026-05-03T13:51:10",
+      "version": 1,
+      "phases": [
+        {
+          "name": "WC",
+          "formula": "WC",
+          "source": "mp",
+          "cod_id": "mp-1894",
+          "mp_id": "mp-1894",
+          "cache_key": "mp:mp-1894",
+          "a": 2.91659415,
+          "b": 2.91659472,
+          "c": 2.83943579,
+          "alpha": 90,
+          "beta": 90,
+          "gamma": 120.00000502,
+          "system": "hexagonal",
+          "spacegroup": "P-6m2",
+          "spacegroup_number": 187,
+          "Z": 1,
+          "stick_pattern": [
+            {
+              "d": 2.8394,
+              "hkl": "(001)",
+              "rel_int": 0.425,
+              "two_theta": 31.481
+            },
+            {
+              "d": 2.5258,
+              "hkl": "(100)",
+              "rel_int": 1,
+              "two_theta": 35.511
+            },
+            {
+              "d": 1.8872,
+              "hkl": "(101)",
+              "rel_int": 0.919,
+              "two_theta": 48.178
+            },
+            {
+              "d": 1.4583,
+              "hkl": "(210)",
+              "rel_int": 0.19,
+              "two_theta": 63.769
+            },
+            {
+              "d": 1.4197,
+              "hkl": "(002)",
+              "rel_int": 0.057,
+              "two_theta": 65.716
+            },
+            {
+              "d": 1.2972,
+              "hkl": "(211)",
+              "rel_int": 0.198,
+              "two_theta": 72.854
+            },
+            {
+              "d": 1.2629,
+              "hkl": "(200)",
+              "rel_int": 0.095,
+              "two_theta": 75.167
+            },
+            {
+              "d": 1.2376,
+              "hkl": "(102)",
+              "rel_int": 0.175,
+              "two_theta": 76.982
+            },
+            {
+              "d": 1.1539,
+              "hkl": "(201)",
+              "rel_int": 0.151,
+              "two_theta": 83.753
+            },
+            {
+              "d": 1.0173,
+              "hkl": "(212)",
+              "rel_int": 0.11,
+              "two_theta": 98.438
+            }
+          ],
+          "cif_check": {
+            "cell": {
+              "a": 2.91659415,
+              "alpha": 90,
+              "b": 2.91659472,
+              "beta": 90,
+              "c": 2.83943579,
+              "gamma": 120.00000502
+            },
+            "expected_sg": 187,
+            "messages": [
+              "Source CIF is P1/full-cell; GSAS-II prep will attempt a symmetry-safe reduction before refinement."
+            ],
+            "ok": true,
+            "parsed_sg": 1,
+            "site_count": 2,
+            "status": "warn"
+          },
+          "validation": {
+            "cell": {
+              "a": 2.91659415,
+              "alpha": 90,
+              "b": 2.91659472,
+              "beta": 90,
+              "c": 2.83943579,
+              "gamma": 120.00000502
+            },
+            "expected_sg": 187,
+            "messages": [
+              "Source CIF is P1/full-cell; GSAS-II prep will attempt a symmetry-safe reduction before refinement."
+            ],
+            "ok": true,
+            "parsed_sg": 1,
+            "site_count": 2,
+            "status": "warn"
+          },
+          "_plot_color": "#f78166"
+        },
+        {
+          "name": "W2C",
+          "formula": "W2C",
+          "source": "mp",
+          "cod_id": "mp-2034",
+          "mp_id": "mp-2034",
+          "cache_key": "mp:mp-2034",
+          "a": 4.756322,
+          "b": 6.111034,
+          "c": 5.237265,
+          "alpha": 90,
+          "beta": 90,
+          "gamma": 90,
+          "system": "orthorhombic",
+          "spacegroup": "Pbcn",
+          "spacegroup_number": 60,
+          "Z": 4,
+          "stick_pattern": [
+            {
+              "d": 2.6392,
+              "hkl": "(021)",
+              "rel_int": 0.199,
+              "two_theta": 33.939
+            },
+            {
+              "d": 2.6186,
+              "hkl": "(002)",
+              "rel_int": 0.113,
+              "two_theta": 34.214
+            },
+            {
+              "d": 2.3782,
+              "hkl": "(200)",
+              "rel_int": 0.335,
+              "two_theta": 37.798
+            },
+            {
+              "d": 2.3077,
+              "hkl": "(121)",
+              "rel_int": 1,
+              "two_theta": 38.997
+            },
+            {
+              "d": 2.2939,
+              "hkl": "(102)",
+              "rel_int": 0.468,
+              "two_theta": 39.241
+            },
+            {
+              "d": 1.7667,
+              "hkl": "(221)",
+              "rel_int": 0.147,
+              "two_theta": 51.697
+            },
+            {
+              "d": 1.7605,
+              "hkl": "(202)",
+              "rel_int": 0.083,
+              "two_theta": 51.893
+            },
+            {
+              "d": 1.5278,
+              "hkl": "(040)",
+              "rel_int": 0.086,
+              "two_theta": 60.555
+            },
+            {
+              "d": 1.5158,
+              "hkl": "(023)",
+              "rel_int": 0.168,
+              "two_theta": 61.084
+            },
+            {
+              "d": 1.3591,
+              "hkl": "(321)",
+              "rel_int": 0.159,
+              "two_theta": 69.051
+            },
+            {
+              "d": 1.3562,
+              "hkl": "(302)",
+              "rel_int": 0.075,
+              "two_theta": 69.215
+            },
+            {
+              "d": 1.3196,
+              "hkl": "(042)",
+              "rel_int": 0.023,
+              "two_theta": 71.426
+            },
+            {
+              "d": 1.2854,
+              "hkl": "(240)",
+              "rel_int": 0.08,
+              "two_theta": 73.634
+            },
+            {
+              "d": 1.2782,
+              "hkl": "(223)",
+              "rel_int": 0.157,
+              "two_theta": 74.115
+            },
+            {
+              "d": 1.2716,
+              "hkl": "(142)",
+              "rel_int": 0.119,
+              "two_theta": 74.569
+            },
+            {
+              "d": 1.2624,
+              "hkl": "(104)",
+              "rel_int": 0.063,
+              "two_theta": 75.207
+            },
+            {
+              "d": 1.1891,
+              "hkl": "(400)",
+              "rel_int": 0.033,
+              "two_theta": 80.751
+            },
+            {
+              "d": 1.1539,
+              "hkl": "(242)",
+              "rel_int": 0.034,
+              "two_theta": 83.759
+            },
+            {
+              "d": 1.147,
+              "hkl": "(204)",
+              "rel_int": 0.013,
+              "two_theta": 84.378
+            },
+            {
+              "d": 1.0841,
+              "hkl": "(421)",
+              "rel_int": 0.02,
+              "two_theta": 90.552
+            },
+            {
+              "d": 1.0827,
+              "hkl": "(402)",
+              "rel_int": 0.011,
+              "two_theta": 90.706
+            },
+            {
+              "d": 1.0142,
+              "hkl": "(342)",
+              "rel_int": 0.057,
+              "two_theta": 98.833
+            },
+            {
+              "d": 1.0096,
+              "hkl": "(304)",
+              "rel_int": 0.031,
+              "two_theta": 99.457
+            }
+          ],
+          "cif_check": {
+            "cell": {
+              "a": 4.756322,
+              "alpha": 90,
+              "b": 6.111034,
+              "beta": 90,
+              "c": 5.237265,
+              "gamma": 90
+            },
+            "expected_sg": 60,
+            "messages": [
+              "CIF parsed as SG 60 with 2 atom site(s)."
+            ],
+            "ok": true,
+            "parsed_sg": 60,
+            "site_count": 2,
+            "status": "ok"
+          },
+          "validation": {
+            "cell": {
+              "a": 4.756322,
+              "alpha": 90,
+              "b": 6.111034,
+              "beta": 90,
+              "c": 5.237265,
+              "gamma": 90
+            },
+            "expected_sg": 60,
+            "messages": [
+              "CIF parsed as SG 60 with 2 atom site(s)."
+            ],
+            "ok": true,
+            "parsed_sg": 60,
+            "site_count": 2,
+            "status": "ok"
+          },
+          "_plot_color": "#56d364"
+        }
+      ],
+      "phase_options": [
+        {
+          "refine_size": false,
+          "refine_mustrain": false,
+          "po_mode": "fixed",
+          "po_value": 0.905,
+          "po_axis": "0 0 1",
+          "uniform_cell": false
+        },
+        {
+          "refine_size": false,
+          "refine_mustrain": false,
+          "po_mode": "off",
+          "po_value": 1,
+          "po_axis": "",
+          "uniform_cell": false
+        }
+      ],
+      "controls": {
+        "wavelength": "1.54056",
+        "wavelength_source": "1.54056",
+        "tt_min": "20",
+        "tt_max": "60",
+        "n_bg_coeffs": "auto",
+        "instrument": "synergy_s",
+        "fix_y_value": "",
+        "checkboxes": {
+          "xrd-calibration-mode": false,
+          "xrd-verification-mode": true,
+          "xrd-verify-cell": true,
+          "xrd-phase-isolation": true,
+          "xrd-zero-not-disp": true,
+          "xrd-refine-x": true,
+          "xrd-fix-y": false,
+          "xrd-y-nonneg": true,
+          "xrd-refine-uiso": false,
+          "xrd-refine-xyz": false
+        }
+      },
+      "result_summary": {
+        "method": "GSAS-II",
+        "statistics": {
+          "GoF": 2.028,
+          "Rp": 4.02,
+          "Rwp": 5.22,
+          "chi2": 4.113
+        },
+        "zero_shift": 0.05922,
+        "displacement_um": 0,
+        "displacement_param": "DisplaceY",
+        "phase_results": [
+          {
+            "name": "WC P-6m2",
+            "formula": "WC",
+            "spacegroup": "P-6m2",
+            "weight_fraction_pct": 53.7,
+            "weight_fraction_err_pct": 1.74,
+            "weight_fraction_err_source": "full_covariance+systematic_floor+binary_closure",
+            "crystallite_size_nm": 8.22,
+            "crystallite_size_source": "scherrer_phase_pattern",
+            "fwhm_reference_two_theta": 48.3527,
+            "fwhm_reference_hkl": [
+              1,
+              0,
+              1
+            ],
+            "fwhm_reference_source": "strongest_phase_pattern_peak",
+            "delta_a_pct": -0.249,
+            "delta_b_pct": -0.249,
+            "delta_c_pct": -0.027,
+            "delta_volume_pct": -0.525
+          },
+          {
+            "name": "W2C Pbcn",
+            "formula": "W2C",
+            "spacegroup": "Pbcn",
+            "weight_fraction_pct": 46.3,
+            "weight_fraction_err_pct": 1.74,
+            "weight_fraction_err_source": "full_covariance+systematic_floor+binary_closure",
+            "crystallite_size_nm": 7.82,
+            "crystallite_size_source": "scherrer_phase_pattern",
+            "fwhm_reference_two_theta": 39.5742,
+            "fwhm_reference_hkl": [
+              1,
+              2,
+              1
+            ],
+            "fwhm_reference_source": "strongest_phase_pattern_peak",
+            "delta_a_pct": -0.374,
+            "delta_b_pct": -1.935,
+            "delta_c_pct": -0.395,
+            "delta_volume_pct": -2.688
+          }
+        ]
+      }
+    }
+  ]
+}

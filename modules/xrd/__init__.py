@@ -390,8 +390,17 @@ def _write_summary_xlsx(result, metadata, method_label, output_dir):
         ('alpha',              'α (°)'),
         ('beta',               'β (°)'),
         ('gamma',              'γ (°)'),
-        ('weight_fraction_%',  'Weight fraction (%)'),
-        ('crystallite_size_nm','Crystallite size (nm)'),
+        ('volume',             'Volume (A^3)'),
+        ('delta_a_pct',        'da/a0 (%)'),
+        ('delta_b_pct',        'db/b0 (%)'),
+        ('delta_c_pct',        'dc/c0 (%)'),
+        ('delta_volume_pct',   'dV/V0 (%)'),
+        ('weight_fraction_%',      'Weight fraction (%)'),
+        ('weight_fraction_err_%',  'Weight fraction ± (%)'),
+        ('weight_fraction_err_source', 'Weight fraction error source'),
+        ('weight_fraction_method', 'Weight fraction method'),
+        ('crystallite_size_nm',    'Crystallite size (nm)'),
+        ('crystallite_size_source', 'Crystallite size source'),
         ('scale',              'Scale factor'),
         ('U',                  'U (Caglioti)'),
         ('V',                  'V (Caglioti)'),
@@ -400,6 +409,8 @@ def _write_summary_xlsx(result, metadata, method_label, output_dir):
         ('Y',                  'Y (Lorentzian)'),
         ('eta_at_strongest',   'η at strongest'),
         ('fwhm_deg',           'FWHM (°)'),
+        ('fwhm_reference_two_theta', 'FWHM reference 2theta (deg)'),
+        ('fwhm_reference_hkl', 'FWHM reference hkl'),
         ('n_reflections',      'N reflections'),
         ('seeded_by',          'Seeded by'),
     ]
@@ -436,7 +447,8 @@ def _write_summary_xlsx(result, metadata, method_label, output_dir):
             elif key == 'method':
                 row[col_names[i]] = method_label
             else:
-                row[col_names[i]] = ph.get(key, '')
+                val = ph.get(key, '')
+                row[col_names[i]] = val if val is not None else ''
         rows_data.append(row)
 
     # Add zero shift (shared)
@@ -501,11 +513,16 @@ def _write_summary_xlsx(result, metadata, method_label, output_dir):
                     sites = parsed.get('sites') or None
                 except Exception:
                     pass
+            # Determine site policy using the same logic as the backend
+            from .gsasii_backend import _cif_policy
+            _policy = _cif_policy(ph)
+            _sp = ('legacy_direct_sites' if _policy == 'mp_w2c_pbcn_compat'
+                   else 'auto')
             ref_list = generate_reflections(
                 ph.get('a', 1), ph.get('b', 1), ph.get('c', 1),
                 ph.get('alpha', 90), ph.get('beta', 90), ph.get('gamma', 90),
                 sys_, sg, wavelength, tt_min, tt_max, hkl_max=12,
-                sites=sites)
+                sites=sites, site_policy=_sp)
             if filtered_ticks:
                 # Only include reflections whose 2θ is near a filtered tick.
                 # Use tolerance (0.01°) instead of exact match to avoid
@@ -597,9 +614,34 @@ def run(filepath, output_dir, metadata, params):
     wavelength = params.get('wavelength', 1.54056)
     tt_min     = params.get('tt_min', float(tt.min()))
     tt_max     = params.get('tt_max', float(tt.max()))
-    n_bg       = params.get('n_bg_coeffs', 6)
+    _bg_raw    = params.get('n_bg_coeffs', 'auto')
+    # "auto" → pass 6 as starting default; the backend's auto-selector
+    # floors at 6 but returns max(6, user_n), so starting above 6 just
+    # forces a higher count.  Starting at 6 lets auto return 6 for clean
+    # crystalline patterns (the documented default behavior).
+    if str(_bg_raw).lower().strip() == 'auto':
+        n_bg = 6  # starting point for auto-selection in gsasii_backend
+        _bg_auto = True
+    else:
+        try:
+            n_bg = int(_bg_raw)
+        except (ValueError, TypeError):
+            n_bg = 6
+        _bg_auto = False
     max_outer  = params.get('max_outer', 10)
     method     = params.get('method', 'lebail').lower()
+
+    # ── Instrument inference ───────────────────────────────────────────
+    # Infer instrument from filename/metadata, or use explicit override.
+    _instrument = params.get('instrument', 'auto')
+    if _instrument == 'auto':
+        from .gsasii_backend import infer_instrument
+        _instrument, _instrument_reason = infer_instrument(
+            filepath=filepath,
+            metadata=metadata,
+        )
+    else:
+        _instrument_reason = 'specified by params'
 
     # Run refinement
     if method == 'gsas2':
@@ -615,13 +657,117 @@ def run(filepath, output_dir, metadata, params):
             if not ph.get('cif_text'):
                 cid = ph.get('cod_id') or ph.get('mp_id')
                 if cid:
-                    ph['cif_text'] = get_cif(cid)
+                    source = ph.get('source') or (
+                        'mp' if str(cid).startswith('mp-') else 'cod')
+                    for key in (f'{source}:{cid}:gsas:v1',
+                                f'{source}:{cid}',
+                                f'mp:{cid}:gsas:v1',
+                                f'mp:{cid}',
+                                f'cod:{cid}',
+                                str(cid)):
+                        text = get_cif(key)
+                        if text:
+                            ph['cif_text'] = text
+                            break
         missing = [ph.get('name', '?') for ph in phases
                    if not ph.get('cif_text')]
         if missing:
             raise ValueError(
                 f"GSAS-II requires CIF with atom coordinates for all phases. "
                 f"Missing for: {', '.join(missing)}.")
+        # ── Pre-refinement seeding ────────────────────────────────────
+        # Run a quick in-house Rietveld first to get physically reasonable
+        # profile parameters (U, V, W, X, Y).  These seed GSAS-II's
+        # starting values so it doesn't wander into unphysical parameter
+        # space (e.g. U=-5060).  The in-house fit is coarse (Rwp ~15%)
+        # but its profile params are in the right ballpark.
+        seed_params = None
+        if not params.get('instprm_file'):  # skip if user provided .instprm
+            try:
+                print("  Running in-house Rietveld pre-refinement for "
+                      "parameter seeding...", flush=True)
+                _seed_result = run_rietveld(
+                    tt, intensity, sigma, phases, wavelength,
+                    tt_min=tt_min, tt_max=tt_max,
+                    n_bg_coeffs=n_bg, max_iter=25,  # quick — just need params
+                )
+                _seed_rwp = _seed_result.get('statistics', {}).get('Rwp', 999)
+                print(f"  In-house Rietveld seed: Rwp={_seed_rwp:.1f}%",
+                      flush=True)
+
+                # Extract profile params from converged phases and compute
+                # weighted average for GSAS-II's shared instrument params.
+                # Skip phases whose profile collapsed (Y=0, eta=0).
+                _ph_results = _seed_result.get('phase_results', [])
+                _total_wt = 0.0
+                _sum_U = _sum_V = _sum_W = _sum_X = _sum_Y = 0.0
+                for _pr in _ph_results:
+                    # A phase "converged" if it has non-trivial profile params
+                    _y_val = abs(float(_pr.get('Y', 0)))
+                    _w_val = abs(float(_pr.get('W', 0)))
+                    if _y_val < 1e-6 and _w_val < 1e-6:
+                        print(f"    Skipping phase '{_pr.get('name', '?')}' "
+                              f"(profile collapsed: Y={_y_val}, W={_w_val})",
+                              flush=True)
+                        continue
+                    _wt = max(float(_pr.get('weight_fraction_%', 1)), 0.1)
+                    _total_wt += _wt
+                    # In-house Rietveld stores U/V/W in deg², X/Y in deg.
+                    # Convert to GSAS-II units: centideg² and centideg.
+                    _sum_U += _wt * float(_pr.get('U', 0)) * 10000.0
+                    _sum_V += _wt * float(_pr.get('V', 0)) * 10000.0
+                    _sum_W += _wt * float(_pr.get('W', 0)) * 10000.0
+                    _sum_X += _wt * float(_pr.get('X', 0)) * 100.0
+                    _sum_Y += _wt * float(_pr.get('Y', 0)) * 100.0
+                    print(f"    Phase '{_pr.get('name', '?')}': "
+                          f"U={_pr.get('U')}, V={_pr.get('V')}, "
+                          f"W={_pr.get('W')}, X={_pr.get('X')}, "
+                          f"Y={_pr.get('Y')} (wt={_wt:.1f}%)",
+                          flush=True)
+
+                if _total_wt > 0:
+                    seed_params = {
+                        'U': _sum_U / _total_wt,
+                        'V': _sum_V / _total_wt,
+                        'W': _sum_W / _total_wt,
+                        'X': _sum_X / _total_wt,
+                        'Y': _sum_Y / _total_wt,
+                    }
+                    print(f"  Seed params (centideg): U={seed_params['U']:.2f}, "
+                          f"V={seed_params['V']:.2f}, W={seed_params['W']:.2f}, "
+                          f"X={seed_params['X']:.2f}, Y={seed_params['Y']:.2f}",
+                          flush=True)
+                else:
+                    print("  No converged phases — falling back to peak-width "
+                          "estimation.", flush=True)
+            except Exception as _seed_err:
+                import traceback
+                print(f"  In-house Rietveld seeding failed: {_seed_err}",
+                      flush=True)
+                traceback.print_exc()
+                # Fall through — seed_params stays None, GSAS-II uses its
+                # own peak-width estimation as before.
+
+        # Build options dict from params — callers can pass these
+        # through the params dict or leave them unset for defaults.
+        _gsas_options = {}
+        for _opt_key in ('geometry', 'preferred_orientation', 'refine_xyz',
+                         'background_mode', 'exclude_regions',
+                         'phase_sensitivity', 'verification_mode',
+                         'verify_refine_cell', 'phase_isolation',
+                         'verify_refine_po', 'verify_use_zero_not_displace',
+                         'verify_cell_uniform_w2c', 'verify_refine_x',
+                         'verify_fix_y', 'verify_y_fixed_value',
+                         'verify_y_nonnegative', 'verify_refine_uiso',
+                         'verify_refine_size', 'use_gsas_ref_ticks',
+                         'verify_fix_po', 'verify_po_fixed_value',
+                         'verify_refine_wc_size', 'verify_refine_w2c_size',
+                         'verify_refine_wc_mustrain',
+                         'verify_refine_w2c_mustrain',
+                         'phase_options'):
+            if _opt_key in params:
+                _gsas_options[_opt_key] = params[_opt_key]
+
         result = run_gsas2(
             tt, intensity, sigma, phases, wavelength,
             tt_min=tt_min, tt_max=tt_max,
@@ -629,6 +775,11 @@ def run(filepath, output_dir, metadata, params):
             instprm_file=params.get('instprm_file'),
             polariz=params.get('polariz'),
             sh_l=params.get('sh_l'),
+            auto_bg=_bg_auto,
+            seed_params=seed_params,
+            options=_gsas_options if _gsas_options else None,
+            instrument=_instrument,
+            instrument_reason=_instrument_reason,
         )
     elif method == 'rietveld':
         # Check that all phases have atom sites (CIF text)
@@ -672,6 +823,9 @@ def run(filepath, output_dir, metadata, params):
         'statistics':   result['statistics'],
         'phase_results': result['phase_results'],
         'zero_shift':   result['zero_shift'],
+        'displacement_um':    result.get('displacement_um'),
+        'displacement_param': result.get('displacement_param'),
+        'warnings':     result.get('warnings', []),
         'pymatgen_used': result.get('pymatgen_used', False),
         'method':        method_label,
         'result':       result,
