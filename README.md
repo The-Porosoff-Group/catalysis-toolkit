@@ -138,7 +138,7 @@ The XRD panel has three engines, in increasing power:
 
 ### Common steps
 
-1. **Upload** your `.dat` / `.xy` / `.xye` powder pattern.
+1. **Upload** your `.dat` / `.xy` / `.xye` / `.csv` / `.txt` / `.xlsx` powder pattern.
 2. **Pick wavelength** (Cu Kα default).
 3. **Pick the 2θ window** (auto-detected from the file).
 4. **Search Materials Project or COD** by elements, formula, or name. Add phases to the refinement list.
@@ -264,7 +264,7 @@ catalysis-toolkit/
 | `CondaError: Run 'conda init'` | Open Command Prompt, run `C:\miniforge\condabin\conda init cmd.exe`, then restart. |
 | Browser does not open | Manually go to `http://localhost:5000`. |
 | Port 5000 in use | Edit `app.py`, change `port=5000` to `port=5001`. |
-| File will not upload | Verify `.xlsx` for GC or `.dat` / `.xy` / `.xye` for XRD. |
+| File will not upload | Verify `.xlsx` for GC or `.dat` / `.xy` / `.xye` / `.csv` / `.txt` / `.xlsx` for XRD. |
 | FID flows all zero | CH4 TCD bridge unavailable — see `GC_SKILL.md`. |
 | New `.yaml` reaction does not show | Restart the app. |
 | MP search returns nothing | Confirm `config.yaml` has a valid API key. |
