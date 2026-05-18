@@ -409,14 +409,46 @@ def get_stick_pattern(structure, wavelength, tt_min=5.0, tt_max=90.0):
             except Exception:
                 sites = None
         else:
-            # Default: expand to full cell for correct F²
-            sites = expand_sites_from_cif(structure['cif_text'])
-            if not sites:
-                try:
-                    parsed = parse_cif(structure['cif_text'])
-                    sites = parsed.get('sites')
-                except Exception:
-                    sites = None
+            try:
+                parsed = parse_cif(structure['cif_text'])
+                raw_sites0 = parsed.get('sites') or []
+                raw_sg0 = int(parsed.get('spacegroup_number', 1) or 1)
+                if (raw_sg0 == 1
+                        and _looks_like_f_cubic_primitive_cell(
+                            parsed.get('a'), parsed.get('b'), parsed.get('c'),
+                            parsed.get('alpha'), parsed.get('beta'),
+                            parsed.get('gamma'), sg)
+                        and raw_sites0):
+                    conv_a, conv_sites = _f_cubic_primitive_to_conventional(
+                        parsed.get('a'), raw_sites0)
+                    if conv_a and conv_sites:
+                        a = b = c = conv_a
+                        al = be = ga = 90.0
+                        sys_ = 'cubic'
+                        sites = conv_sites
+                        _sp = 'direct_full_cell_sites'
+                if (not sites and raw_sg0 == 1
+                        and int(sg or 0) == 229
+                        and raw_sites0):
+                    # MP bcc W/Im-3m is often written as a P1 primitive
+                    # one-site cell.  Keep the selected Im-3m SG for
+                    # reflection filtering and use the raw site directly.
+                    sites = raw_sites0
+                    _sp = 'legacy_direct_sites'
+                if (not sites and raw_sg0 == 1
+                        and int(sg or 0) == 223
+                        and len(raw_sites0) >= 8):
+                    # MP beta-W/Pm-3n is often written as P1 with the
+                    # complete conventional A15 cell.  Use those sites
+                    # directly; expanding them again creates bad/slow ticks.
+                    sites = raw_sites0
+                    _sp = 'direct_full_cell_sites'
+                if not sites:
+                    sites = expand_sites_from_cif(structure['cif_text'])
+                    if not sites:
+                        sites = raw_sites0
+            except Exception:
+                sites = None
 
     if structure.get('cif_text'):
         cif_text = structure['cif_text']
@@ -424,20 +456,42 @@ def get_stick_pattern(structure, wavelength, tt_min=5.0, tt_max=90.0):
             parsed = parse_cif(cif_text)
             raw_sites = parsed.get('sites') or []
             raw_sg = int(parsed.get('spacegroup_number', 1) or 1)
+            raw_a = parsed.get('a')
+            raw_b = parsed.get('b')
+            raw_c = parsed.get('c')
+            raw_al = parsed.get('alpha')
+            raw_be = parsed.get('beta')
+            raw_ga = parsed.get('gamma')
         except Exception:
             raw_sites = []
             raw_sg = 1
+            raw_a = raw_b = raw_c = raw_al = raw_be = raw_ga = None
 
         if (raw_sg == 1
-                and _looks_like_f_cubic_primitive_cell(a, b, c, al, be, ga, sg)
+                and _looks_like_f_cubic_primitive_cell(
+                    raw_a, raw_b, raw_c, raw_al, raw_be, raw_ga, sg)
                 and raw_sites):
-            conv_a, conv_sites = _f_cubic_primitive_to_conventional(a, raw_sites)
+            conv_a, conv_sites = _f_cubic_primitive_to_conventional(raw_a, raw_sites)
             if conv_a and conv_sites:
                 a = b = c = conv_a
                 al = be = ga = 90.0
                 sys_ = 'cubic'
                 sites = conv_sites
                 _sp = 'direct_full_cell_sites'
+        elif (raw_sg == 1
+              and int(sg or 0) == 229
+              and raw_sites):
+            # MP bcc W/Im-3m arrives as P1 primitive.  Use raw sites
+            # directly while selected SG 229 filters the I-lattice.
+            sites = raw_sites
+            _sp = 'legacy_direct_sites'
+        elif (raw_sg == 1
+              and int(sg or 0) == 223
+              and len(raw_sites) >= 8):
+            # MP beta-W/Pm-3n arrives as P1 full conventional cell.
+            # Direct sites give correct A15 extinctions/intensities.
+            sites = raw_sites
+            _sp = 'direct_full_cell_sites'
         elif _sp == 'legacy_direct_sites':
             sites = raw_sites or sites
         elif raw_sg > 1:

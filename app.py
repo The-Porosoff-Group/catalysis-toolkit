@@ -4,7 +4,7 @@ Local web server. Run with:  python app.py
 Then open:  http://localhost:5000
 """
 
-import os, sys, re, json, base64, webbrowser
+import os, sys, re, json, base64, webbrowser, traceback
 
 # Force unbuffered/line-buffered stdout so GSAS-II refinement progress
 # appears in terminal immediately.  os.environ alone doesn't work because
@@ -493,6 +493,7 @@ def xrd_fetch_cif():
             print(f"  phase_hint merge: applied display/intent metadata "
                   f"only for {cod_id}; CIF cell remains authoritative.",
                   flush=True)
+        _xrd_normalize_conventional_z(result)
 
         # Store CIF text server-side; don't send over wire
         cif_text  = result.pop('cif_text', '')
@@ -609,6 +610,161 @@ def xrd_fetch_cif():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/xrd/preview_cif', methods=['POST'])
+def xrd_preview_cif():
+    """Parse an uploaded CIF and compute backend stick-pattern preview."""
+    try:
+        data = request.get_json() or {}
+        cif_text = data.get('cif_text') or ''
+        filename = data.get('filename') or 'uploaded.cif'
+        wavelength = float(data.get('wavelength', 1.54056))
+        tt_min = float(data.get('tt_min', 5.0))
+        tt_max = float(data.get('tt_max', 100.0))
+        if not cif_text.strip():
+            return jsonify({'error': 'No CIF text provided'}), 400
+
+        from modules.xrd.crystallography import parse_cif as _parse_cif
+        parsed = _parse_cif(cif_text)
+        base_name = os.path.splitext(os.path.basename(filename))[0]
+        formula = (parsed.get('formula') or base_name).strip() or base_name
+        sites = parsed.get('sites') or []
+
+        phase = {
+            'name': base_name,
+            'formula': formula,
+            'a': parsed.get('a') or 4.0,
+            'b': parsed.get('b') or parsed.get('a') or 4.0,
+            'c': parsed.get('c') or parsed.get('a') or 4.0,
+            'alpha': parsed.get('alpha') or 90.0,
+            'beta': parsed.get('beta') or 90.0,
+            'gamma': parsed.get('gamma') or 90.0,
+            'system': parsed.get('system') or 'cubic',
+            'spacegroup': parsed.get('spacegroup') or '',
+            'spacegroup_number': parsed.get('spacegroup_number') or 1,
+            'Z': parsed.get('Z'),
+            'cod_id': 'manual',
+            'source': 'manual',
+            'cif_text': cif_text,
+            'sites': sites,
+        }
+
+        sticks = get_stick_pattern(phase, wavelength, tt_min=tt_min, tt_max=tt_max)
+        partial_sites = []
+        for el, _x, _y, _z, occ in sites:
+            try:
+                if abs(float(occ) - 1.0) > 1e-6:
+                    partial_sites.append(f"{el} occ={float(occ):g}")
+            except Exception:
+                pass
+
+        gamma_c_occ = None
+        try:
+            if int(phase.get('spacegroup_number') or 0) == 225:
+                for el, x, y, z, occ in sites:
+                    if (str(el).upper() == 'C'
+                            and abs(float(x) % 1.0 - 0.5) < 1e-4
+                            and abs(float(y) % 1.0 - 0.5) < 1e-4
+                            and abs(float(z) % 1.0 - 0.5) < 1e-4):
+                        gamma_c_occ = float(occ)
+                        break
+        except Exception:
+            gamma_c_occ = None
+
+        messages = [
+            f"CIF parsed as SG {phase['spacegroup_number']} with "
+            f"{len(sites)} atom site(s)."
+        ]
+        if partial_sites:
+            messages.append(
+                "Partial occupancy detected: "
+                + ", ".join(partial_sites)
+                + ". Current refinement uses the CIF occupancy as fixed."
+            )
+
+        cif_check = {
+            'status': 'ok',
+            'ok': True,
+            'parsed_sg': phase['spacegroup_number'],
+            'expected_sg': phase['spacegroup_number'],
+            'site_count': len(sites),
+            'cell': {
+                'a': phase['a'],
+                'b': phase['b'],
+                'c': phase['c'],
+                'alpha': phase['alpha'],
+                'beta': phase['beta'],
+                'gamma': phase['gamma'],
+            },
+            'messages': messages,
+        }
+
+        phase.pop('cif_text', None)
+        phase.pop('sites', None)
+        phase['stick_pattern'] = sticks
+        phase['stick_source'] = 'python_reflections'
+        if gamma_c_occ is not None:
+            phase['gamma_wc1x'] = True
+            phase['gamma_c_occupancy'] = gamma_c_occ
+            phase['gamma_vacancy_x'] = max(0.0, min(1.0, 1.0 - gamma_c_occ))
+        _xrd_normalize_conventional_z(phase)
+        phase['cif_check'] = cif_check
+        phase['validation'] = cif_check
+        return jsonify({
+            **phase,
+            'preview': {
+                'stick_pattern': sticks,
+                'stick_source': 'python_reflections',
+            },
+            'phase': {
+                k: phase.get(k) for k in (
+                    'formula', 'name', 'spacegroup', 'spacegroup_number',
+                    'system', 'a', 'b', 'c', 'alpha', 'beta', 'gamma',
+                    'Z', 'source', 'cod_id')
+                if k in phase
+            },
+        })
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+def _xrd_apply_locked_cell_to_cif(ph):
+    """Rewrite CIF cell scalars when a GUI-refined cell was promoted/fixed."""
+    if not ph.get('cell_locked_from_fit') or not ph.get('cif_text'):
+        return
+    text = str(ph.get('cif_text') or '')
+    replacements = {
+        '_cell_length_a': ph.get('a'),
+        '_cell_length_b': ph.get('b'),
+        '_cell_length_c': ph.get('c'),
+        '_cell_angle_alpha': ph.get('alpha'),
+        '_cell_angle_beta': ph.get('beta'),
+        '_cell_angle_gamma': ph.get('gamma'),
+    }
+    for key, value in replacements.items():
+        try:
+            n = float(value)
+        except (TypeError, ValueError):
+            continue
+        formatted = f"{n:.5f}" if 'angle' in key else f"{n:.6f}"
+        pattern = re.compile(rf"(^\s*{re.escape(key)}\s+).*$",
+                             re.IGNORECASE | re.MULTILINE)
+        if pattern.search(text):
+            text = pattern.sub(rf"\g<1>{formatted}", text)
+        else:
+            text = f"{text.rstrip()}\n{key} {formatted}\n"
+    ph['cif_text'] = text
+
+
+def _xrd_normalize_conventional_z(ph):
+    """Normalize MP primitive F-cubic cells to the conventional phase card."""
+    try:
+        from modules.xrd.crystallography import conventionalize_phase_cell
+        ph.update(conventionalize_phase_cell(ph))
+    except Exception:
+        pass
+    return ph
 
 
 @app.route('/api/xrd/mp_debug_cif', methods=['GET'])
@@ -866,6 +1022,7 @@ def process_xrd():
                     break
             if text:
                 ph['cif_text'] = text
+            _xrd_apply_locked_cell_to_cif(ph)
 
         # Optional instrument parameter file for GSAS-II
         instprm_file_path = None
@@ -1134,7 +1291,8 @@ def process_xrd():
                     form.get('verify_refine_w2c_mustrain', '').lower() == 'true',
                 # Generic per-phase refinement options.  JSON-serialized
                 # list of dicts (one per phase, by index) with keys
-                # refine_size, refine_mustrain, po_mode, po_value, po_axis.
+                # refine_cell, refine_uiso, refine_size, refine_mustrain,
+                # po_mode, po_value, po_axis.
                 # Frontend builds this from the per-phase control cards.
                 'phase_options':
                     (lambda _raw: (
