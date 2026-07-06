@@ -30,6 +30,20 @@ def _output_file_prefix(metadata):
     return f'{_safe_file_token(date_token)}_{catalyst_token}'
 
 
+_FIXED_UNKNOWN_AREA_RESPONSE_FACTORS = {
+    5: 0.0018326957690202206,
+    6: 0.0007242622194262482,
+}
+
+
+_COELUTED_SPLIT_RULES = {
+    'cis-2-butene/butane': (
+        {'label': 'c2C4H8', 'cn': 4, 'det': 'FID', 'fraction': 0.5},
+        {'label': 'nC4H10', 'cn': 4, 'det': 'FID', 'fraction': 0.5},
+    ),
+}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # LOAD REACTION CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
@@ -333,6 +347,12 @@ def _global_response_factor(data, reference_header):
     return float(np.mean(vals)) if vals else None
 
 
+def _fixed_unknown_area_response_factor(header, cn):
+    if 'unknown' not in str(header or '').strip().lower():
+        return None
+    return _FIXED_UNKNOWN_AREA_RESPONSE_FACTORS.get(int(cn or 0))
+
+
 def apply_area_response_fallbacks(data, species_config):
     """Convert area-only C5/C6 peaks to amounts with pentane/hexane response factors."""
     _augment_species_config_for_area_fallback(data, species_config)
@@ -360,18 +380,26 @@ def apply_area_response_fallbacks(data, species_config):
             cn = int((cfg or {}).get('cn') or _infer_carbon_number_from_name(header) or 0)
             if cn not in (5, 6) or not area or area <= 0:
                 continue
+            fixed_rf = _fixed_unknown_area_response_factor(header, cn)
             ref_header = refs.get(cn)
-            if not ref_header:
-                skipped.append((header, cn, 'missing reference species'))
-                continue
-            ref_amount = amounts.get(ref_header)
-            ref_area = areas.get(ref_header)
-            if ref_amount is not None and ref_area and ref_area > 0:
-                rf = float(ref_amount) / float(ref_area)
-                source = 'same injection'
+            ref_amount = None
+            ref_area = None
+            if fixed_rf:
+                rf = fixed_rf
+                source = 'fixed datasheet factor'
+                ref_header = f'C{cn} unknown fixed RF'
             else:
-                rf = global_rf.get(cn)
-                source = 'run average'
+                if not ref_header:
+                    skipped.append((header, cn, 'missing reference species'))
+                    continue
+                ref_amount = amounts.get(ref_header)
+                ref_area = areas.get(ref_header)
+                if ref_amount is not None and ref_area and ref_area > 0:
+                    rf = float(ref_amount) / float(ref_area)
+                    source = 'same injection'
+                else:
+                    rf = global_rf.get(cn)
+                    source = 'run average'
             if not rf:
                 skipped.append((header, cn, f'missing {ref_header} amount/area response factor'))
                 continue
@@ -379,8 +407,8 @@ def apply_area_response_fallbacks(data, species_config):
             derived_refs[header] = {
                 'area': area_refs.get(header),
                 'reference_header': ref_header,
-                'reference_amount': amount_refs.get(ref_header),
-                'reference_area': area_refs.get(ref_header),
+                'reference_amount': amount_refs.get(ref_header) if ref_header in amount_refs else None,
+                'reference_area': area_refs.get(ref_header) if ref_header in area_refs else None,
                 'response_factor': rf,
                 'response_source': source,
                 'carbon_number': cn,
@@ -402,6 +430,33 @@ def apply_area_response_fallbacks(data, species_config):
     return converted
 
 
+def _augment_species_config_for_coeluted_splits(data, species_config):
+    added = []
+    seen_headers = set()
+    for inj in data.get('injections', []):
+        seen_headers.update((inj.get('amounts') or {}).keys())
+        seen_headers.update((inj.get('areas') or {}).keys())
+
+    for header in sorted(seen_headers):
+        rule = _COELUTED_SPLIT_RULES.get(str(header or '').strip().lower())
+        if not rule:
+            continue
+        for idx, cfg in enumerate(rule, start=1):
+            split_header = f'{header}__split_{idx}'
+            if split_header in species_config:
+                continue
+            species_config[split_header] = {
+                'label': cfg['label'],
+                'cn': cfg['cn'],
+                'det': cfg['det'],
+                'source_header': header,
+                'flow_fraction': float(cfg['fraction']),
+                'split_source': header,
+            }
+            added.append(split_header)
+    return added
+
+
 def compute_flows(amounts, F_Ar_sccm, species_config, use_ch4_bridge):
     ar_key = find_ar_key(species_config)
     C_Ar = amounts.get(ar_key) if ar_key else None
@@ -419,16 +474,20 @@ def compute_flows(amounts, F_Ar_sccm, species_config, use_ch4_bridge):
 
     flows = {}
     for sp_header, cfg in species_config.items():
-        C_A = amounts.get(sp_header)
+        C_A = amounts.get(cfg.get('source_header') or sp_header)
         if C_A is None or C_A == 0: continue
         label = cfg['label']
         if cfg['det'] == 'TCD':
-            flows[label] = F_Ar_sccm * (C_A / C_Ar)
+            flow = F_Ar_sccm * (C_A / C_Ar)
         else:
             if use_ch4_bridge and ch4_ratio is not None:
-                flows[label] = F_Ar_sccm * ch4_ratio * (C_A / C_Ar)
+                flow = F_Ar_sccm * ch4_ratio * (C_A / C_Ar)
             elif not use_ch4_bridge:
-                flows[label] = F_Ar_sccm * (C_A / C_Ar)
+                flow = F_Ar_sccm * (C_A / C_Ar)
+            else:
+                continue
+        flow *= float(cfg.get('flow_fraction') or 1.0)
+        flows[label] = flows.get(label, 0.0) + flow
     return flows
 
 def build_flow_table(data, F_Ar_sccm, species_config):
@@ -1015,13 +1074,14 @@ def _draw_stacked_selectivity_plot(df, df_sel, total_C_out, C_in_flow,
         'C2-C4 Olefins': (116, 122, 230),
         'C2-C4 Paraffins': (216, 78, 71),
         'C5+': (247, 205, 64),
+        'Methanol': (34, 184, 194),
         'CO2': (214, 214, 214),
         'Other C products': (180, 180, 180),
     }
     groups = _selectivity_groups(df_sel, species_config)
     group_order = [
-        'CH4', 'C2-C4 Olefins', 'C2-C4 Paraffins', 'C5+', 'CO2',
-        'Other C products'
+        'CH4', 'C2-C4 Olefins', 'C2-C4 Paraffins', 'C5+', 'Methanol',
+        'CO2', 'Other C products'
     ]
     group_values = {}
     for group in group_order:
@@ -1469,19 +1529,25 @@ def _copy_source_sheet_to_workbook(out_wb, source_filepath, worksheet_index=0,
 
 def _flow_formula_for_header(inj, species_header, species_config, has_bridge,
                              ar_key, ch4_tcd_key, ch4_fid_key, ar_inlet_cell):
-    raw = _amount_expr_for_header(inj, species_header)
+    cfg = species_config.get(species_header, {})
+    raw = _amount_expr_for_header(inj, cfg.get('source_header') or species_header)
     ar_raw = _raw_amount_ref(inj, ar_key)
     if not raw or not ar_raw:
         return None
-    cfg = species_config.get(species_header, {})
     if cfg.get('det') == 'TCD':
-        return f'={ar_inlet_cell}*{raw}/{ar_raw}'
+        formula = f'{ar_inlet_cell}*{raw}/{ar_raw}'
+        fraction = float(cfg.get('flow_fraction') or 1.0)
+        return f'={formula}*{fraction:g}' if fraction != 1.0 else f'={formula}'
     if has_bridge:
         ch4_tcd = _raw_amount_ref(inj, ch4_tcd_key)
         ch4_fid = _raw_amount_ref(inj, ch4_fid_key)
         if ch4_tcd and ch4_fid:
-            return f'={ar_inlet_cell}*({ch4_tcd}/{ch4_fid})*({raw}/{ar_raw})'
-    return f'={ar_inlet_cell}*{raw}/{ar_raw}'
+            formula = f'{ar_inlet_cell}*({ch4_tcd}/{ch4_fid})*({raw}/{ar_raw})'
+            fraction = float(cfg.get('flow_fraction') or 1.0)
+            return f'={formula}*{fraction:g}' if fraction != 1.0 else f'={formula}'
+    formula = f'{ar_inlet_cell}*{raw}/{ar_raw}'
+    fraction = float(cfg.get('flow_fraction') or 1.0)
+    return f'={formula}*{fraction:g}' if fraction != 1.0 else f'={formula}'
 
 
 def _autosize_sheet(ws, max_width=36):
@@ -1570,7 +1636,7 @@ def _write_area_fallback_sheet(wb, raw_data, insert_at=4):
     ws = wb.create_sheet('Area Fallbacks', insert_at)
     ws['A1'] = 'Area-only C5/C6 amount estimates'
     ws['A1'].font = Font(bold=True, size=13)
-    ws['A2'] = 'C5 compounds use pentane response factor; C6 compounds use hexane response factor when available.'
+    ws['A2'] = 'C5/C6 unknowns use fixed datasheet response factors; named C5/C6 compounds use pentane/hexane response factors when available.'
     headers = [
         'Raw label', 'Species', 'Carbon #', 'Raw peak area', 'Reference',
         'Reference amount', 'Reference area', 'Response source',
@@ -1687,7 +1753,7 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
     add_setting('inlet_flow_source', metadata.get('inlet_flow_source'), 'manual or bypass-derived.')
     add_setting('bypass_file', metadata.get('bypass_file'), 'Separate bypass workbook used for inlet normalization.')
     add_setting('bypass_used', 'yes' if has_bypass else 'no', 'Whether bypass data are integrated into this workbook.')
-    add_setting('area_derived_amounts', area_fallback_count, 'Area-only C5/C6 peaks converted using pentane/hexane response factors.')
+    add_setting('area_derived_amounts', area_fallback_count, 'Area-only C5/C6 unknowns use fixed datasheet factors; named C5/C6 peaks can use pentane/hexane response factors.')
     add_setting('area_derivation_skipped', area_skipped_count, 'Area-only C5/C6 peaks not converted because the reference response was unavailable.')
     inlet_setting_cells = {}
     for label in inlet_order:
@@ -1818,7 +1884,7 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
     if area_fallback_count:
         example_rows.insert(3, (
             'Area-only C5/C6 amount',
-            'Derived amount = unknown peak area * reference amount / reference area; C5 uses pentane, C6 uses hexane.',
+            'Derived amount = unknown peak area * fixed datasheet response factor; named C5/C6 peaks can use pentane/hexane response factors.',
             "='Area Fallbacks'!I5"))
     elif area_skipped_count:
         example_rows.insert(3, (
@@ -1929,6 +1995,7 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
 
     data = parse_xlsx(filepath)
     apply_area_response_fallbacks(data, species_config)
+    _augment_species_config_for_coeluted_splits(data, species_config)
     inlet_source = 'manual'
     inferred_inlet_flows = {}
     bypass_data = None
