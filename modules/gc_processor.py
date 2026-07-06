@@ -30,7 +30,7 @@ def _output_file_prefix(metadata):
     return f'{_safe_file_token(date_token)}_{catalyst_token}'
 
 
-_FIXED_UNKNOWN_AREA_RESPONSE_FACTORS = {
+_DEFAULT_UNKNOWN_AREA_RESPONSE_FACTORS = {
     5: 0.0018326957690202206,
     6: 0.0007242622194262482,
 }
@@ -347,13 +347,21 @@ def _global_response_factor(data, reference_header):
     return float(np.mean(vals)) if vals else None
 
 
-def _fixed_unknown_area_response_factor(header, cn):
+def _unknown_response_factor_key(cn):
+    return f'c{int(cn or 0)}_unknown_response_factor'
+
+
+def _unknown_area_response_factor(header, cn, metadata=None):
     if 'unknown' not in str(header or '').strip().lower():
         return None
-    return _FIXED_UNKNOWN_AREA_RESPONSE_FACTORS.get(int(cn or 0))
+    cn = int(cn or 0)
+    default = _DEFAULT_UNKNOWN_AREA_RESPONSE_FACTORS.get(cn)
+    if default is None:
+        return None
+    return _metadata_float(metadata or {}, _unknown_response_factor_key(cn), default)
 
 
-def apply_area_response_fallbacks(data, species_config):
+def apply_area_response_fallbacks(data, species_config, metadata=None):
     """Convert area-only C5/C6 peaks to amounts with pentane/hexane response factors."""
     _augment_species_config_for_area_fallback(data, species_config)
     refs = {
@@ -380,14 +388,14 @@ def apply_area_response_fallbacks(data, species_config):
             cn = int((cfg or {}).get('cn') or _infer_carbon_number_from_name(header) or 0)
             if cn not in (5, 6) or not area or area <= 0:
                 continue
-            fixed_rf = _fixed_unknown_area_response_factor(header, cn)
+            fixed_rf = _unknown_area_response_factor(header, cn, metadata)
             ref_header = refs.get(cn)
             ref_amount = None
             ref_area = None
             if fixed_rf:
                 rf = fixed_rf
-                source = 'fixed datasheet factor'
-                ref_header = f'C{cn} unknown fixed RF'
+                source = 'settings/default factor'
+                ref_header = f'C{cn} unknown RF setting'
             else:
                 if not ref_header:
                     skipped.append((header, cn, 'missing reference species'))
@@ -410,6 +418,7 @@ def apply_area_response_fallbacks(data, species_config):
                 'reference_amount': amount_refs.get(ref_header) if ref_header in amount_refs else None,
                 'reference_area': area_refs.get(ref_header) if ref_header in area_refs else None,
                 'response_factor': rf,
+                'response_factor_key': _unknown_response_factor_key(cn) if fixed_rf else None,
                 'response_source': source,
                 'carbon_number': cn,
             }
@@ -501,7 +510,8 @@ def build_flow_table(data, F_Ar_sccm, species_config):
     for inj in data['injections']:
         flows = compute_flows(inj['amounts'], F_Ar_sccm, species_config, has_bridge)
         row = {'label': inj['label'], 'inj_num': inj['inj_num'],
-               'is_bypass': inj['is_bypass']}
+               'is_bypass': inj['is_bypass'],
+               'source_kind': inj.get('source_kind', 'main')}
         row.update(flows)
         records.append(row)
     return pd.DataFrame(records), has_bridge
@@ -519,6 +529,126 @@ def _mean_amounts(injections):
         for key, vals in buckets.items()
         if vals
     }
+
+
+def _metadata_choice(metadata, key, default='auto'):
+    raw = str((metadata or {}).get(key, default) or default).strip().lower()
+    return raw or default
+
+
+def _mark_source_kind(data, source_kind):
+    for inj in (data or {}).get('injections', []):
+        inj.setdefault('source_kind', source_kind)
+
+
+def _bypass_like_score(inj, reaction_config, species_config):
+    label = str(inj.get('label') or '').strip().lower()
+    if 'bypass' in label:
+        return 100.0
+
+    inlet_labels = set(_inlet_labels(reaction_config))
+    inlet_labels.update({'Ar', reaction_config.get('reactant')})
+    product_count = 0
+    inlet_count = 0
+    for header, val in (inj.get('amounts') or {}).items():
+        if val in (None, ''):
+            continue
+        cfg = species_config.get(header) or {}
+        label_name = cfg.get('label') or header
+        cn = int(cfg.get('cn') or 0)
+        if label_name in inlet_labels:
+            inlet_count += 1
+        elif cn > 0:
+            product_count += 1
+
+    # Bypass rows usually contain inlet gases only. Reaction rows usually have
+    # several product amounts, so penalize product-rich edge rows strongly.
+    return inlet_count * 2.0 - product_count * 3.0
+
+
+def _apply_same_file_bypass_selection(data, metadata, reaction_config, species_config):
+    injections = list((data or {}).get('injections', []))
+    mode = _metadata_choice(metadata, 'same_file_bypass_mode', 'auto')
+    requested = _metadata_int(metadata or {}, 'same_file_bypass_rows')
+    if requested is None:
+        requested = _metadata_int(metadata or {}, 'bypass_points_used', 3)
+    requested = max(0, int(requested or 0))
+
+    for inj in injections:
+        inj['is_bypass'] = False
+
+    if mode in {'none', 'off', 'manual'} or not injections:
+        return None
+
+    label_indices = [
+        idx for idx, inj in enumerate(injections)
+        if 'bypass' in str(inj.get('label') or '').lower()
+    ]
+    selected = []
+    detect_method = ''
+
+    if mode in {'label', 'labels', 'labeled'}:
+        selected = label_indices
+        detect_method = 'label'
+    elif mode in {'first', 'beginning', 'start'}:
+        selected = list(range(min(requested, len(injections))))
+        detect_method = 'first'
+    elif mode in {'last', 'end'}:
+        n = min(requested, len(injections))
+        selected = list(range(len(injections) - n, len(injections))) if n else []
+        detect_method = 'last'
+    else:
+        if label_indices:
+            selected = label_indices
+            detect_method = 'label'
+        else:
+            n = min(requested or 3, len(injections))
+            first = list(range(n))
+            last = list(range(len(injections) - n, len(injections))) if n else []
+            first_score = sum(_bypass_like_score(injections[i], reaction_config, species_config) for i in first)
+            last_score = sum(_bypass_like_score(injections[i], reaction_config, species_config) for i in last)
+            if first_score > 0 or last_score > 0:
+                selected = first if first_score >= last_score else last
+                detect_method = 'auto_first' if selected == first else 'auto_last'
+
+    selected = sorted(set(idx for idx in selected if 0 <= idx < len(injections)))
+    for idx in selected:
+        injections[idx]['is_bypass'] = True
+        injections[idx]['bypass_source'] = 'same_file'
+
+    metadata['same_file_bypass_mode'] = mode
+    metadata['same_file_bypass_rows'] = requested
+    metadata['same_file_bypass_detected'] = len(selected)
+    metadata['same_file_bypass_detect_method'] = detect_method or 'none'
+
+    if not selected:
+        return None
+
+    out = dict(data or {})
+    out['injections'] = [injections[idx] for idx in selected]
+    out['source'] = 'same_file'
+    out['source_sheet_name'] = 'Raw Original'
+    out['worksheet_index'] = (data or {}).get('worksheet_index', 0)
+    return out
+
+
+def _select_bypass_data(bypass_data, metadata):
+    injections = list((bypass_data or {}).get('injections', []))
+    omit = max(0, _metadata_int(metadata or {}, 'bypass_omit_initial', 0) or 0)
+    requested = _metadata_int(metadata or {}, 'bypass_points_used')
+    selected = injections[min(omit, len(injections)):]
+    if requested and requested > 0:
+        selected = selected[:min(requested, len(selected))]
+
+    out = dict(bypass_data or {})
+    out['injections'] = selected
+    out['bypass_total_points'] = len(injections)
+    out['bypass_omit_initial'] = omit
+    out['bypass_points_requested'] = requested
+    out['bypass_selected_points'] = len(selected)
+    out['source'] = (bypass_data or {}).get('source')
+    out['source_sheet_name'] = (bypass_data or {}).get('source_sheet_name')
+    return out
 
 
 def _inlet_labels(reaction_config):
@@ -581,7 +711,10 @@ def calculate_results(df, reactant_label, F_reactant_inlet, species_config):
     else:
         df['conversion'] = np.nan
 
-    meta_cols = {'label', 'inj_num', 'is_bypass', 'conversion'}
+    meta_cols = {
+        'label', 'inj_num', 'is_bypass', 'source_kind', 'analysis_include',
+        'row_status', 'conversion', 'time_on_stream_h'
+    }
     carbon_cols = [
         c for c in df.columns
         if c not in meta_cols
@@ -623,6 +756,16 @@ def _plot_x_values(rxn):
     return pd.to_numeric(rxn['inj_num'], errors='coerce').to_numpy(dtype=float), 'Injection number'
 
 
+def _analysis_mask(df):
+    if 'analysis_include' in df.columns:
+        return df['analysis_include'].fillna(False).astype(bool)
+    return ~df['is_bypass']
+
+
+def _analysis_reaction_rows(df):
+    return df[(~df['is_bypass']) & _analysis_mask(df)].copy()
+
+
 def _metadata_float(metadata, key, default=None):
     raw = metadata.get(key, default)
     if raw in (None, ''):
@@ -660,16 +803,32 @@ def _add_time_on_stream_column(df, metadata):
     duration = _infer_run_duration_h(metadata)
     interval_min = _metadata_float(metadata, 'injection_interval_min')
     df['time_on_stream_h'] = np.nan
-    if (not duration or duration <= 0) and (not interval_min or interval_min <= 0):
-        return df, 0
+    df['analysis_include'] = False
+    df['row_status'] = np.where(
+        df['is_bypass'],
+        'Bypass / inlet normalization',
+        'Reaction included'
+    )
 
-    rxn_idx = list(df.index[~df['is_bypass']])
+    rxn_idx_all = list(df.index[~df['is_bypass']])
+    rxn_idx = list(rxn_idx_all)
     rejected = max(0, _metadata_int(metadata, 'rejected_initial_injections', 0) or 0)
     if rejected:
         rxn_idx = rxn_idx[min(rejected, len(rxn_idx)):]
     requested = _metadata_int(metadata, 'registered_reaction_injections')
     if requested and requested > 0:
         rxn_idx = rxn_idx[:min(requested, len(rxn_idx))]
+
+    included = set(rxn_idx)
+    df.loc[list(included), 'analysis_include'] = True
+    for pos, idx in enumerate(rxn_idx_all):
+        if idx in included:
+            continue
+        if pos < rejected:
+            df.loc[idx, 'row_status'] = 'Excluded: initial reaction point'
+        else:
+            df.loc[idx, 'row_status'] = 'Excluded: beyond requested reaction count'
+
     if not rxn_idx:
         return df, 0
 
@@ -677,8 +836,10 @@ def _add_time_on_stream_column(df, metadata):
         times = np.arange(len(rxn_idx), dtype=float) * float(interval_min) / 60.0
     elif len(rxn_idx) == 1:
         times = np.array([0.0])
-    else:
+    elif duration and duration > 0:
         times = np.linspace(0.0, float(duration), len(rxn_idx))
+    else:
+        return df, len(rxn_idx)
     df.loc[rxn_idx, 'time_on_stream_h'] = times
     return df, len(rxn_idx)
 
@@ -755,7 +916,11 @@ def _draw_time_on_stream_plot(df, df_sel, total_C_out, C_in_flow,
                               output_dir):
     from PIL import Image, ImageDraw, ImageFont
 
-    rxn = df[(~df['is_bypass']) & pd.to_numeric(df.get('time_on_stream_h'), errors='coerce').notna()].copy()
+    rxn = df[
+        (~df['is_bypass']) &
+        _analysis_mask(df) &
+        pd.to_numeric(df.get('time_on_stream_h'), errors='coerce').notna()
+    ].copy()
     if rxn.empty:
         return _draw_stacked_selectivity_plot(
             df, df_sel, total_C_out, C_in_flow,
@@ -986,7 +1151,7 @@ def _draw_stacked_selectivity_plot(df, df_sel, total_C_out, C_in_flow,
                                    output_dir):
     from PIL import Image, ImageDraw, ImageFont
 
-    rxn = df[~df['is_bypass']].copy()
+    rxn = _analysis_reaction_rows(df)
     width, height = 1250, 900
     margin = {'l': 122, 'r': 64, 't': 106, 'b': 178}
     x0, y0 = margin['l'], margin['t']
@@ -1243,7 +1408,7 @@ def make_plots(df, df_sel, total_C_out, C_in_flow, reactant_label,
     )
     txt(36, 24, title, fg)
 
-    rxn = df[~df['is_bypass']].copy()
+    rxn = _analysis_reaction_rows(df)
     inj = pd.to_numeric(rxn['inj_num'], errors='coerce')
     ss_rxn = ss_mask[rxn.index]
 
@@ -1366,7 +1531,7 @@ def make_plots(df, df_sel, total_C_out, C_in_flow, reactant_label,
         fontsize=11, fontweight='bold', y=0.98, color='#e8e8e8')
 
     gs  = gridspec.GridSpec(2, 2, figure=fig, hspace=0.48, wspace=0.32)
-    rxn = df[~df['is_bypass']].copy()
+    rxn = _analysis_reaction_rows(df)
     inj = rxn['inj_num']
 
     ax_bg = '#161b22'
@@ -1478,7 +1643,8 @@ def _raw_area_ref(inj, species_header, sheet_name='Raw Original'):
     return _excel_sheet_ref(sheet_name, ref)
 
 
-def _amount_expr_for_header(inj, species_header, sheet_name='Raw Original'):
+def _amount_expr_for_header(inj, species_header, sheet_name='Raw Original',
+                            fixed_rf_cells=None):
     raw = _raw_amount_ref(inj, species_header, sheet_name=sheet_name)
     if raw:
         return raw
@@ -1488,6 +1654,11 @@ def _amount_expr_for_header(inj, species_header, sheet_name='Raw Original'):
     area_ref = derived.get('area')
     ref_amount = derived.get('reference_amount')
     ref_area = derived.get('reference_area')
+    rf_key = derived.get('response_factor_key')
+    if area_ref and rf_key and fixed_rf_cells and fixed_rf_cells.get(rf_key):
+        return (
+            f'({_excel_sheet_ref(sheet_name, area_ref)}*'
+            f'{fixed_rf_cells[rf_key]})')
     if area_ref and ref_amount and ref_area:
         return (
             f'({_excel_sheet_ref(sheet_name, area_ref)}*'
@@ -1528,9 +1699,12 @@ def _copy_source_sheet_to_workbook(out_wb, source_filepath, worksheet_index=0,
 
 
 def _flow_formula_for_header(inj, species_header, species_config, has_bridge,
-                             ar_key, ch4_tcd_key, ch4_fid_key, ar_inlet_cell):
+                             ar_key, ch4_tcd_key, ch4_fid_key, ar_inlet_cell,
+                             fixed_rf_cells=None):
     cfg = species_config.get(species_header, {})
-    raw = _amount_expr_for_header(inj, cfg.get('source_header') or species_header)
+    raw = _amount_expr_for_header(
+        inj, cfg.get('source_header') or species_header,
+        fixed_rf_cells=fixed_rf_cells)
     ar_raw = _raw_amount_ref(inj, ar_key)
     if not raw or not ar_raw:
         return None
@@ -1561,7 +1735,8 @@ def _autosize_sheet(ws, max_width=36):
 
 
 def _write_bypass_processed_sheet(wb, bypass_data, species_config, inlet_labels,
-                                  ar_inlet_cell, insert_at=3):
+                                  ar_inlet_cell, insert_at=3,
+                                  source_sheet_name='Bypass Original'):
     from openpyxl.styles import Alignment, Font, PatternFill
 
     ws = wb.create_sheet('Bypass Processed', insert_at)
@@ -1594,14 +1769,14 @@ def _write_bypass_processed_sheet(wb, bypass_data, species_config, inlet_labels,
         row = data_header_row + i
         label_ref = (inj.get('source_refs') or {}).get('label')
         ws.cell(row, 1).value = i
-        ws.cell(row, 2).value = f'={_excel_sheet_ref("Bypass Original", label_ref)}' if label_ref else inj.get('label', '')
+        ws.cell(row, 2).value = f'={_excel_sheet_ref(source_sheet_name, label_ref)}' if label_ref else inj.get('label', '')
         ws.cell(row, 3).value = inj.get('inj_num')
-        ar_ref = _raw_amount_ref(inj, ar_key, sheet_name='Bypass Original')
+        ar_ref = _raw_amount_ref(inj, ar_key, sheet_name=source_sheet_name)
         ws.cell(row, 4).value = f'={ar_ref}' if ar_ref else None
         col = 5
         for label in active_labels:
             header = label_to_header.get(label)
-            raw_ref = _raw_amount_ref(inj, header, sheet_name='Bypass Original')
+            raw_ref = _raw_amount_ref(inj, header, sheet_name=source_sheet_name)
             raw_cell = ws.cell(row, col)
             ratio_cell = ws.cell(row, col + 1)
             inlet_cell = ws.cell(row, col + 2)
@@ -1625,7 +1800,7 @@ def _write_bypass_processed_sheet(wb, bypass_data, species_config, inlet_labels,
     return summary_refs
 
 
-def _write_area_fallback_sheet(wb, raw_data, insert_at=4):
+def _write_area_fallback_sheet(wb, raw_data, insert_at=4, fixed_rf_cells=None):
     from openpyxl.styles import Alignment, Font, PatternFill
 
     converted = raw_data.get('area_derived_amounts', []) if raw_data else []
@@ -1636,7 +1811,7 @@ def _write_area_fallback_sheet(wb, raw_data, insert_at=4):
     ws = wb.create_sheet('Area Fallbacks', insert_at)
     ws['A1'] = 'Area-only C5/C6 amount estimates'
     ws['A1'].font = Font(bold=True, size=13)
-    ws['A2'] = 'C5/C6 unknowns use fixed datasheet response factors; named C5/C6 compounds use pentane/hexane response factors when available.'
+    ws['A2'] = 'C5/C6 unknowns use editable Settings response factors; named C5/C6 compounds use pentane/hexane response factors when available.'
     headers = [
         'Raw label', 'Species', 'Carbon #', 'Raw peak area', 'Reference',
         'Reference amount', 'Reference area', 'Response source',
@@ -1672,6 +1847,10 @@ def _write_area_fallback_sheet(wb, raw_data, insert_at=4):
                     f'={_excel_sheet_ref("Raw Original", area_ref)}*'
                     f'{_excel_sheet_ref("Raw Original", ref_amount)}/'
                     f'{_excel_sheet_ref("Raw Original", ref_area)}')
+            elif area_ref and info.get('response_factor_key') and fixed_rf_cells and fixed_rf_cells.get(info.get('response_factor_key')):
+                ws.cell(row, 9).value = (
+                    f'={_excel_sheet_ref("Raw Original", area_ref)}*'
+                    f'{fixed_rf_cells[info["response_factor_key"]]}')
             elif area_ref and info.get('response_factor'):
                 ws.cell(row, 9).value = (
                     f'={_excel_sheet_ref("Raw Original", area_ref)}*'
@@ -1696,7 +1875,8 @@ def _write_area_fallback_sheet(wb, raw_data, insert_at=4):
 def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_label,
                                 metadata, species_config, output_dir, source_filepath,
                                 raw_data, inlet_flows, has_bridge,
-                                bypass_filepath=None, bypass_data=None):
+                                bypass_filepath=None, bypass_data=None,
+                                ss_mask=None):
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
 
@@ -1712,8 +1892,9 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
         raw_ws = wb.create_sheet('Raw Original', 1)
         raw_ws.append(['Raw sheet copy failed; processed formulas use parsed values where needed.'])
 
-    has_bypass = bool(bypass_filepath and bypass_data and bypass_data.get('injections'))
-    if has_bypass:
+    has_separate_bypass_file = bool(bypass_filepath and bypass_data)
+    has_bypass = bool(bypass_data and bypass_data.get('injections'))
+    if has_separate_bypass_file:
         try:
             _copy_source_sheet_to_workbook(
                 wb, bypass_filepath, bypass_data.get('worksheet_index', 0),
@@ -1724,8 +1905,6 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
 
     area_fallback_count = len(raw_data.get('area_derived_amounts', []) if raw_data else [])
     area_skipped_count = len(raw_data.get('area_derivation_skipped', []) if raw_data else [])
-    if area_fallback_count or area_skipped_count:
-        _write_area_fallback_sheet(wb, raw_data, insert_at=4 if has_bypass else 2)
 
     label_to_header = {cfg['label']: header for header, cfg in species_config.items()}
     ar_key = find_ar_key(species_config)
@@ -1751,9 +1930,24 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
     npoints_cell = add_setting('plot_reaction_points', metadata.get('plot_reaction_points'), 'Number of rows with assigned time_on_stream_h.')
     add_setting('plot_style', metadata.get('plot_style', 'auto'), 'GUI-selected plot rendering mode.')
     add_setting('inlet_flow_source', metadata.get('inlet_flow_source'), 'manual or bypass-derived.')
-    add_setting('bypass_file', metadata.get('bypass_file'), 'Separate bypass workbook used for inlet normalization.')
+    add_setting('bypass_source', metadata.get('bypass_source'), 'manual, separate_file, or same_file.')
+    add_setting('bypass_file', metadata.get('bypass_file'), 'Separate bypass workbook or same input file used for inlet normalization.')
+    add_setting('same_file_bypass_mode', metadata.get('same_file_bypass_mode'), 'How same-file bypass rows were selected.')
+    add_setting('same_file_bypass_rows', metadata.get('same_file_bypass_rows'), 'Default same-file edge rows checked when labels are absent.')
+    add_setting('same_file_bypass_detected', metadata.get('same_file_bypass_detected'), 'Same-file rows marked as bypass before omission/averaging.')
+    add_setting('same_file_bypass_detect_method', metadata.get('same_file_bypass_detect_method'), 'Detection method used for same-file bypass rows.')
     add_setting('bypass_used', 'yes' if has_bypass else 'no', 'Whether bypass data are integrated into this workbook.')
-    add_setting('area_derived_amounts', area_fallback_count, 'Area-only C5/C6 unknowns use fixed datasheet factors; named C5/C6 peaks can use pentane/hexane response factors.')
+    add_setting('bypass_omit_initial', metadata.get('bypass_omit_initial'), 'Initial bypass rows omitted before inlet averaging.')
+    add_setting('bypass_points_used', metadata.get('bypass_points_used'), 'Number of bypass rows averaged after omission; blank means all remaining.')
+    add_setting('bypass_selected_points', metadata.get('bypass_selected_points'), 'Actual bypass rows used for inlet averaging.')
+    fixed_rf_cells = {}
+    for cn in (5, 6):
+        key = _unknown_response_factor_key(cn)
+        fixed_rf_cells[key] = add_setting(
+            key,
+            _metadata_float(metadata, key, _DEFAULT_UNKNOWN_AREA_RESPONSE_FACTORS[cn]),
+            f'Editable response factor used for C{cn} area-only unknowns.')
+    add_setting('area_derived_amounts', area_fallback_count, 'Area-only C5/C6 unknowns use the editable response factors above; named C5/C6 peaks can use pentane/hexane response factors.')
     add_setting('area_derivation_skipped', area_skipped_count, 'Area-only C5/C6 peaks not converted because the reference response was unavailable.')
     inlet_setting_cells = {}
     for label in inlet_order:
@@ -1764,9 +1958,18 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
     settings.freeze_panes = 'A2'
     ar_inlet_cell = inlet_setting_cells.get('Ar')
 
+    if area_fallback_count or area_skipped_count:
+        _write_area_fallback_sheet(
+            wb, raw_data, insert_at=4 if has_separate_bypass_file else (3 if has_bypass else 2),
+            fixed_rf_cells=fixed_rf_cells)
+
     if has_bypass and ar_inlet_cell:
+        bypass_insert_at = 3 if has_separate_bypass_file else 2
+        bypass_source_sheet = bypass_data.get('source_sheet_name') or (
+            'Bypass Original' if has_separate_bypass_file else 'Raw Original')
         summary_refs = _write_bypass_processed_sheet(
-            wb, bypass_data, species_config, inlet_order, ar_inlet_cell, insert_at=3)
+            wb, bypass_data, species_config, inlet_order, ar_inlet_cell,
+            insert_at=bypass_insert_at, source_sheet_name=bypass_source_sheet)
         for label, ref in summary_refs.items():
             row_idx = setting_rows.get(f'{label}_inlet_sccm')
             if row_idx:
@@ -1778,14 +1981,17 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
     group_order = ['CH4', 'C2-C4 Paraffins', 'C2-C4 Olefins', 'C5+', 'Methanol', 'CO2']
     present_groups = [g for g in group_order if g in groups]
     product_labels = [c for c in df.columns
-                      if c not in {'label', 'inj_num', 'is_bypass', 'conversion', 'time_on_stream_h'}
+                      if c not in {'label', 'inj_num', 'is_bypass', 'source_kind',
+                                   'analysis_include', 'row_status', 'conversion',
+                                   'time_on_stream_h'}
                       and c != reactant_label
                       and get_cn(c, species_config) > 0
                       and not _is_duplicate_tcd_product(c, df)]
     flow_labels = [reactant_label] + product_labels
 
     headers = [
-        'Accepted point', 'Time on stream h', 'Injection #', 'Catalyst ID',
+        'Use in SS summary', 'Row status', 'Accepted point', 'Time on stream h',
+        'Injection #', 'Catalyst ID',
         f'{reactant_label} out sccm', f'{reactant_label} conversion %',
         'Product C out', 'Carbon balance %',
     ]
@@ -1801,28 +2007,44 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
     raw_injections = raw_data.get('injections', []) if raw_data else []
     processed_rows = []
     accepted_count = 0
-    has_time_axis = bool(_infer_run_duration_h(metadata) or _metadata_float(metadata, 'injection_interval_min'))
-    for df_idx, row in df[~df['is_bypass']].iterrows():
-        include = pd.notna(row.get('time_on_stream_h')) or not has_time_axis
-        if not include:
-            continue
-        accepted_count += 1
+    ss_lookup = ss_mask if ss_mask is not None else pd.Series(False, index=df.index)
+    for df_idx, row in df.iterrows():
         inj = raw_injections[df_idx] if df_idx < len(raw_injections) else {}
-        processed_rows.append((accepted_count, df_idx, row, inj))
+        if inj.get('source_kind') == 'bypass_file':
+            continue
+        analysis_include = bool(row.get('analysis_include', not row.get('is_bypass', False)))
+        in_ss = bool(ss_lookup.loc[df_idx]) if df_idx in ss_lookup.index else False
+        accepted_point = ''
+        if analysis_include:
+            accepted_count += 1
+            accepted_point = accepted_count
+        status = row.get('row_status') or (
+            'Bypass / inlet normalization' if row.get('is_bypass') else 'Reaction included')
+        if analysis_include and not in_ss:
+            status = 'Plotted reaction point; outside SS range'
+        if in_ss:
+            status = 'Included in SS summary'
+        processed_rows.append((accepted_point, in_ss, status, df_idx, row, inj))
 
-    flow_start_col = 9 + len(present_groups)
+    flow_start_col = 11 + len(present_groups)
     raw_label_col = flow_start_col + len(flow_labels)
     raw_label_example_ref = None
-    for accepted_point, df_idx, row, inj in processed_rows:
+    excluded_fill = PatternFill('solid', fgColor='FFF2CC')
+    bypass_fill = PatternFill('solid', fgColor='DDEBF7')
+    outside_fill = PatternFill('solid', fgColor='E7E6E6')
+    for accepted_point, in_ss, status, df_idx, row, inj in processed_rows:
         excel_row = ws.max_row + 1
         label_ref = (inj.get('source_refs') or {}).get('label')
         raw_label_formula = f'={_excel_sheet_ref("Raw Original", label_ref)}' if label_ref else row.get('label', '')
-        ws.cell(excel_row, 1).value = accepted_point
-        ws.cell(excel_row, 2).value = (
-            f'=IF({interval_cell}>0,(A{excel_row}-1)*{interval_cell}/60,'
-            f'IF({npoints_cell}>1,(A{excel_row}-1)*{duration_cell}/({npoints_cell}-1),0))')
-        ws.cell(excel_row, 3).value = row.get('inj_num')
-        ws.cell(excel_row, 4).value = metadata.get('catalyst_id') or ''
+        ws.cell(excel_row, 1).value = 'yes' if in_ss else 'no'
+        ws.cell(excel_row, 2).value = status
+        ws.cell(excel_row, 3).value = accepted_point
+        ws.cell(excel_row, 4).value = (
+            f'=IF(C{excel_row}<>"",'
+            f'IF({interval_cell}>0,(C{excel_row}-1)*{interval_cell}/60,'
+            f'IF({npoints_cell}>1,(C{excel_row}-1)*{duration_cell}/({npoints_cell}-1),0)),"")')
+        ws.cell(excel_row, 5).value = row.get('inj_num')
+        ws.cell(excel_row, 6).value = metadata.get('catalyst_id') or ''
         ws.cell(excel_row, raw_label_col).value = raw_label_formula
         if raw_label_example_ref is None:
             raw_label_example_ref = f"='Processed'!{ws.cell(excel_row, raw_label_col).coordinate}"
@@ -1833,13 +2055,16 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
             header = label_to_header.get(label)
             formula = _flow_formula_for_header(
                 inj, header, species_config, has_bridge,
-                ar_key, ch4_tcd_key, ch4_fid_key, ar_inlet_cell) if header else None
+                ar_key, ch4_tcd_key, ch4_fid_key, ar_inlet_cell,
+                fixed_rf_cells=fixed_rf_cells) if header else None
             ws.cell(excel_row, col).value = formula if formula else row.get(label)
             flow_cell_by_label[label] = ws.cell(excel_row, col).coordinate
 
         reactant_flow_cell = flow_cell_by_label.get(reactant_label)
-        ws.cell(excel_row, 5).value = f'={reactant_flow_cell}' if reactant_flow_cell else row.get(reactant_label)
-        ws.cell(excel_row, 6).value = f'=({reactant_inlet_cell}-E{excel_row})/{reactant_inlet_cell}*100'
+        ws.cell(excel_row, 7).value = f'={reactant_flow_cell}' if reactant_flow_cell else row.get(reactant_label)
+        ws.cell(excel_row, 8).value = (
+            f'=IF($B{excel_row}="Bypass / inlet normalization","",'
+            f'({reactant_inlet_cell}-G{excel_row})/{reactant_inlet_cell}*100)')
 
         product_terms = []
         for label in product_labels:
@@ -1847,10 +2072,12 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
             cell = flow_cell_by_label.get(label)
             if cell and cn:
                 product_terms.append(f'{cn}*{cell}')
-        ws.cell(excel_row, 7).value = '=' + '+'.join(product_terms) if product_terms else '=0'
-        ws.cell(excel_row, 8).value = f'=(E{excel_row}+G{excel_row})/{reactant_inlet_cell}*100'
+        ws.cell(excel_row, 9).value = '=' + '+'.join(product_terms) if product_terms else '=0'
+        ws.cell(excel_row, 10).value = (
+            f'=IF($B{excel_row}="Bypass / inlet normalization","",'
+            f'(G{excel_row}+I{excel_row})/{reactant_inlet_cell}*100)')
 
-        for g_idx, group in enumerate(present_groups, start=9):
+        for g_idx, group in enumerate(present_groups, start=11):
             terms = []
             for sel_col in groups.get(group, []):
                 label = sel_col.replace('S_', '')
@@ -1859,8 +2086,19 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
                 if cell and cn:
                     terms.append(f'{cn}*{cell}')
             ws.cell(excel_row, g_idx).value = (
-                f'=IF(G{excel_row}>0,({"+".join(terms)})/G{excel_row}*100,"")'
+                f'=IF(I{excel_row}>0,({"+".join(terms)})/I{excel_row}*100,"")'
                 if terms else '')
+
+        row_fill = None
+        if row.get('is_bypass'):
+            row_fill = bypass_fill
+        elif not bool(row.get('analysis_include', False)):
+            row_fill = excluded_fill
+        elif not in_ss:
+            row_fill = outside_fill
+        if row_fill:
+            for cell in ws[excel_row]:
+                cell.fill = row_fill
 
     guide_row = settings.max_row + 3
     settings.cell(guide_row, 1).value = 'Calculation illustration'
@@ -1872,19 +2110,20 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
         cell.font = Font(bold=True, color='FFFFFF')
         cell.fill = PatternFill('solid', fgColor='7030A0')
     example_rows = [
-        ('Catalyst ID row label', 'Processed row identifiers use the Catalyst ID entered in the GUI.', "='Processed'!D2"),
+        ('Catalyst ID row label', 'Processed row identifiers use the Catalyst ID entered in the GUI.', "='Processed'!F2"),
         ('Raw label carried over', "The final Processed column still points directly to Raw Original column A.", raw_label_example_ref or ''),
-        ('Time on stream', 'Processed!B2 = (accepted point - 1) * injection_interval_min / 60 when spacing is set.', "='Processed'!B2"),
+        ('Row inclusion', 'Processed column A says whether the row is included in the steady-state summary; highlighted rows remain visible but are not averaged.', "='Processed'!A2"),
+        ('Time on stream', 'Processed!D2 = (accepted point - 1) * injection_interval_min / 60 when spacing is set.', "='Processed'!D2"),
         ('Bypass inlet flow', f'{reactant_label}_inlet_sccm comes from Bypass Processed average when bypass is used.', f'={reactant_inlet_cell}'),
-        (f'{reactant_label} outlet flow', 'Processed!E2 references the calculated flow column for the reactant.', "='Processed'!E2"),
-        (f'{reactant_label} conversion', f'({reactant_label} inlet - {reactant_label} outlet) / {reactant_label} inlet * 100.', "='Processed'!F2"),
-        ('Product carbon out', 'Sum of carbon number times product flow for each product species.', "='Processed'!G2"),
-        ('Carbon balance', f'({reactant_label} out + product carbon out) / {reactant_label} inlet * 100.', "='Processed'!H2"),
+        (f'{reactant_label} outlet flow', 'Processed!G2 references the calculated flow column for the reactant.', "='Processed'!G2"),
+        (f'{reactant_label} conversion', f'({reactant_label} inlet - {reactant_label} outlet) / {reactant_label} inlet * 100.', "='Processed'!H2"),
+        ('Product carbon out', 'Sum of carbon number times product flow for each product species.', "='Processed'!I2"),
+        ('Carbon balance', f'({reactant_label} out + product carbon out) / {reactant_label} inlet * 100.', "='Processed'!J2"),
     ]
     if area_fallback_count:
         example_rows.insert(3, (
             'Area-only C5/C6 amount',
-            'Derived amount = unknown peak area * fixed datasheet response factor; named C5/C6 peaks can use pentane/hexane response factors.',
+            'Derived amount = unknown peak area * editable Settings response factor; named C5/C6 peaks can use pentane/hexane response factors.',
             "='Area Fallbacks'!I5"))
     elif area_skipped_count:
         example_rows.insert(3, (
@@ -1895,7 +2134,7 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
         example_rows.append((
             f'{present_groups[0]} selectivity',
             f'{present_groups[0]} carbon out / total product carbon out * 100.',
-            "='Processed'!I2"))
+            "='Processed'!K2"))
     for concept, trace, example in example_rows:
         settings.append((concept, trace, example))
 
@@ -1960,7 +2199,8 @@ def save_outputs(df, df_sel, total_C_out, C_in_flow,
         summary_path = _write_gc_analysis_workbook(
             df, df_sel, total_C_out, C_in_flow, reactant_label, metadata,
             species_config, output_dir, source_filepath, raw_data, inlet_flows,
-            has_bridge, bypass_filepath=bypass_filepath, bypass_data=bypass_data)
+            has_bridge, bypass_filepath=bypass_filepath, bypass_data=bypass_data,
+            ss_mask=ss_mask)
     else:
         summary_path = summary_csv_path
     return summary, summary_path, flows_path
@@ -1983,6 +2223,17 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
         for header, cfg in reaction_config['species'].items()
     }
     reactant_label = reaction_config['reactant']
+    metadata = dict(metadata)
+    for cn in (5, 6):
+        key = _unknown_response_factor_key(cn)
+        metadata[key] = _metadata_float(
+            metadata, key, _DEFAULT_UNKNOWN_AREA_RESPONSE_FACTORS[cn])
+    if 'bypass_points_used' not in metadata:
+        metadata['bypass_points_used'] = 3
+    if metadata.get('same_file_bypass_rows') in (None, ''):
+        metadata['same_file_bypass_rows'] = metadata.get('bypass_points_used', 3)
+    if not metadata.get('same_file_bypass_mode'):
+        metadata['same_file_bypass_mode'] = 'auto'
 
     # Find Ar inlet flow
     F_Ar = 0
@@ -1994,21 +2245,49 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
         F_Ar = inlet_flows.get('Ar', 15.0)
 
     data = parse_xlsx(filepath)
-    apply_area_response_fallbacks(data, species_config)
+    _mark_source_kind(data, 'main')
+    apply_area_response_fallbacks(data, species_config, metadata)
     _augment_species_config_for_coeluted_splits(data, species_config)
+    same_file_bypass_data = _apply_same_file_bypass_selection(
+        data, metadata, reaction_config, species_config)
     inlet_source = 'manual'
     inferred_inlet_flows = {}
     bypass_data = None
     bypass_warning = None
     if bypass_filepath:
         bypass_data = parse_xlsx(bypass_filepath)
+        _mark_source_kind(bypass_data, 'bypass_file')
+        bypass_data['source'] = 'separate_file'
+        bypass_data['source_sheet_name'] = 'Bypass Original'
         for inj in bypass_data['injections']:
             inj['is_bypass'] = True
+        bypass_data = _select_bypass_data(bypass_data, metadata)
+        metadata['bypass_total_points'] = bypass_data.get('bypass_total_points')
+        metadata['bypass_omit_initial'] = bypass_data.get('bypass_omit_initial')
+        metadata['bypass_points_used'] = bypass_data.get('bypass_points_requested')
+        metadata['bypass_selected_points'] = bypass_data.get('bypass_selected_points')
+        metadata['bypass_source'] = 'separate_file'
         inferred_inlet_flows, bypass_warning = infer_inlet_flows_from_bypass(
             bypass_data, F_Ar, reaction_config)
         if inferred_inlet_flows:
             inlet_flows = {**inlet_flows, **inferred_inlet_flows}
             inlet_source = 'bypass'
+    elif same_file_bypass_data:
+        bypass_data = _select_bypass_data(same_file_bypass_data, metadata)
+        metadata['bypass_total_points'] = bypass_data.get('bypass_total_points')
+        metadata['bypass_omit_initial'] = bypass_data.get('bypass_omit_initial')
+        metadata['bypass_points_used'] = bypass_data.get('bypass_points_requested')
+        metadata['bypass_selected_points'] = bypass_data.get('bypass_selected_points')
+        metadata['bypass_source'] = 'same_file'
+        inferred_inlet_flows, bypass_warning = infer_inlet_flows_from_bypass(
+            bypass_data, F_Ar, reaction_config)
+        if inferred_inlet_flows:
+            inlet_flows = {**inlet_flows, **inferred_inlet_flows}
+            inlet_source = 'bypass'
+
+    if 'bypass_source' not in metadata:
+        metadata['bypass_source'] = 'manual'
+    metadata.setdefault('bypass_selected_points', 0)
 
     # Carbon in
     C_in_flow = 0.0
@@ -2018,15 +2297,15 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
                 C_in_flow += cfg['cn'] * flow
                 break
 
-    # Parse and compute
-    metadata = dict(metadata)
     metadata['inlet_flow_source'] = inlet_source
     if bypass_filepath:
         metadata['bypass_file'] = os.path.basename(bypass_filepath)
+    elif bypass_data:
+        metadata['bypass_file'] = 'same input file'
     for sp, flow in inlet_flows.items():
         metadata[f'inlet_{sp}_sccm'] = round(flow, 6)
 
-    if bypass_data:
+    if bypass_filepath and bypass_data:
         existing_labels = {
             str(inj.get('label', '')).strip().lower()
             for inj in data['injections']
@@ -2045,7 +2324,12 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
         metadata['rejected_initial_injections'] = _metadata_int(metadata, 'rejected_initial_injections', 0)
 
     # Steady-state mask
-    ss_mask = (~df['is_bypass']) & (df['inj_num'] >= ss_start) & (df['inj_num'] <= ss_end)
+    ss_mask = (
+        (~df['is_bypass']) &
+        _analysis_mask(df) &
+        (df['inj_num'] >= ss_start) &
+        (df['inj_num'] <= ss_end)
+    )
 
     df, df_sel, total_C_out, carbon_cols = calculate_results(
         df, reactant_label, inlet_flows.get(reactant_label, 0), species_config)
@@ -2076,6 +2360,16 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
         'plot_style':      metadata.get('plot_style', 'auto'),
         'area_derived_amounts': len(data.get('area_derived_amounts', [])),
         'area_derivation_skipped': len(data.get('area_derivation_skipped', [])),
+        'c5_unknown_response_factor': metadata.get('c5_unknown_response_factor'),
+        'c6_unknown_response_factor': metadata.get('c6_unknown_response_factor'),
+        'bypass_omit_initial': _metadata_int(metadata, 'bypass_omit_initial', 0),
+        'bypass_points_used': _metadata_int(metadata, 'bypass_points_used'),
+        'bypass_selected_points': _metadata_int(metadata, 'bypass_selected_points'),
+        'bypass_source': metadata.get('bypass_source'),
+        'same_file_bypass_mode': metadata.get('same_file_bypass_mode'),
+        'same_file_bypass_rows': _metadata_int(metadata, 'same_file_bypass_rows'),
+        'same_file_bypass_detected': _metadata_int(metadata, 'same_file_bypass_detected', 0),
+        'same_file_bypass_detect_method': metadata.get('same_file_bypass_detect_method'),
         'fid_bridge':     has_bridge,
         'plot_path':      plot_path,
         'summary_path':   summary_path,
