@@ -34,6 +34,7 @@ species:
   Butane:                { label: nC4H10,    cn: 4, det: FID }
   Isobutane:             { label: iC4H10,    cn: 4, det: FID }
   iso-butylene:          { label: iC4H8,     cn: 4, det: FID }
+  MeOH:                  { label: Methanol,  cn: 1, det: FID }
   Pentane:               { label: nC5H12,    cn: 5, det: FID }
   iso-pentane:           { label: iC5H12,    cn: 5, det: FID }
   Hexane:                { label: C6H14,     cn: 6, det: FID }
