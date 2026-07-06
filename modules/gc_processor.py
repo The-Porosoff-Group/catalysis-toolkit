@@ -5,9 +5,29 @@ Loaded by app.py — do not run directly.
 """
 
 import os, re, zipfile, xml.etree.ElementTree as ET
+from datetime import datetime
 import numpy as np
 import pandas as pd
 import yaml
+
+
+def _safe_file_token(value, default='GC'):
+    text = str(value or '').strip()
+    if not text:
+        text = default
+    text = re.sub(r'[^A-Za-z0-9_.-]+', '_', text).strip('_.-')
+    return text or default
+
+
+def _output_file_prefix(metadata):
+    explicit = str((metadata or {}).get('output_prefix') or '').strip()
+    if explicit:
+        return _safe_file_token(explicit)
+    date_token = str((metadata or {}).get('output_date') or '').strip()
+    if not date_token:
+        date_token = datetime.now().strftime('%Y%m%d')
+    catalyst_token = _safe_file_token((metadata or {}).get('catalyst_id'), 'Unknown')
+    return f'{_safe_file_token(date_token)}_{catalyst_token}'
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -153,12 +173,14 @@ def _parse_gc_sheet(stree, strings):
     species_row = row_dicts[species_row_idx]
     measure_row = row_dicts[measure_row_idx]
 
-    species_cols = {}
+    amount_cols = {}
+    area_cols = {}
     sorted_species = sorted(
         (idx, str(name).strip()) for idx, name in species_row.items()
         if str(name).strip())
     for col_idx, mtype in measure_row.items():
-        if str(mtype).strip().lower() != 'amount':
+        mtype_norm = str(mtype).strip().lower()
+        if mtype_norm not in {'amount', 'area', 'peak area'}:
             continue
         best, best_dist = None, 999
         for sc_idx, sc_name in sorted_species:
@@ -166,7 +188,10 @@ def _parse_gc_sheet(stree, strings):
             if dist <= 3 and dist < best_dist:
                 best, best_dist = sc_name, dist
         if best:
-            species_cols[col_idx] = best
+            if mtype_norm == 'amount':
+                amount_cols[col_idx] = best
+            else:
+                area_cols[col_idx] = best
 
     injections = []
     for row_idx, d in enumerate(row_dicts[measure_row_idx + 1:], start=measure_row_idx + 1):
@@ -176,8 +201,10 @@ def _parse_gc_sheet(stree, strings):
         if not label:
             continue
         amounts = {}
+        areas = {}
         amount_refs = {}
-        for cidx, sp in species_cols.items():
+        area_refs = {}
+        for cidx, sp in amount_cols.items():
             val = d.get(cidx)
             if val in (None, ''):
                 continue
@@ -187,15 +214,27 @@ def _parse_gc_sheet(stree, strings):
                     amount_refs[sp] = row_refs[row_idx][cidx]
             except (TypeError, ValueError):
                 pass
+        for cidx, sp in area_cols.items():
+            val = d.get(cidx)
+            if val in (None, ''):
+                continue
+            try:
+                areas[sp] = float(val)
+                if cidx in row_refs[row_idx]:
+                    area_refs[sp] = row_refs[row_idx][cidx]
+            except (TypeError, ValueError):
+                pass
         m = re.search(r'(\d+)\s*$', label)
         injections.append({
             'label':     label,
             'inj_num':   int(m.group(1)) if m else None,
             'is_bypass': 'bypass' in label.lower(),
             'amounts':   amounts,
+            'areas':     areas,
             'source_refs': {
                 'label': row_refs[row_idx].get(0),
                 'amounts': amount_refs,
+                'areas': area_refs,
             },
         })
 
@@ -233,6 +272,135 @@ def find_ar_key(species_config, is_label=None):
     for header, cfg in species_config.items():
         if cfg['label'] == 'Ar': return header
     return None
+
+
+def _infer_carbon_number_from_name(name):
+    text = str(name or '').strip().lower()
+    m = re.search(r'\bc\s*([0-9]+)\b', text)
+    if not m:
+        m = re.search(r'c([0-9]+)', text)
+    if m:
+        try:
+            return int(m.group(1))
+        except ValueError:
+            return 0
+    if 'pent' in text:
+        return 5
+    if 'hex' in text:
+        return 6
+    return 0
+
+
+def _response_reference_header(cn, species_config):
+    if int(cn or 0) == 5:
+        preferred = ('Pentane', 'nC5H12')
+    elif int(cn or 0) == 6:
+        preferred = ('Hexane', 'C6H14')
+    else:
+        return None
+    for target in preferred:
+        for header, cfg in species_config.items():
+            if header == target or cfg.get('label') == target:
+                return header
+    return None
+
+
+def _augment_species_config_for_area_fallback(data, species_config):
+    added = []
+    for inj in data.get('injections', []):
+        for header in (inj.get('areas') or {}):
+            if header in species_config:
+                continue
+            cn = _infer_carbon_number_from_name(header)
+            if cn in (5, 6):
+                species_config[header] = {
+                    'label': header,
+                    'cn': cn,
+                    'det': 'FID',
+                    'area_fallback': True,
+                }
+                added.append(header)
+    return sorted(set(added))
+
+
+def _global_response_factor(data, reference_header):
+    vals = []
+    for inj in data.get('injections', []):
+        amount = (inj.get('amounts') or {}).get(reference_header)
+        area = (inj.get('areas') or {}).get(reference_header)
+        if amount is not None and area and area > 0:
+            vals.append(float(amount) / float(area))
+    return float(np.mean(vals)) if vals else None
+
+
+def apply_area_response_fallbacks(data, species_config):
+    """Convert area-only C5/C6 peaks to amounts with pentane/hexane response factors."""
+    _augment_species_config_for_area_fallback(data, species_config)
+    refs = {
+        5: _response_reference_header(5, species_config),
+        6: _response_reference_header(6, species_config),
+    }
+    global_rf = {
+        cn: _global_response_factor(data, ref) if ref else None
+        for cn, ref in refs.items()
+    }
+    converted = []
+    skipped = []
+    for inj in data.get('injections', []):
+        amounts = inj.setdefault('amounts', {})
+        areas = inj.get('areas') or {}
+        source_refs = inj.setdefault('source_refs', {})
+        area_refs = source_refs.get('areas') or {}
+        amount_refs = source_refs.setdefault('amounts', {})
+        derived_refs = source_refs.setdefault('area_derived', {})
+        for header, area in areas.items():
+            if header in amounts and amounts.get(header) not in (None, ''):
+                continue
+            cfg = species_config.get(header)
+            cn = int((cfg or {}).get('cn') or _infer_carbon_number_from_name(header) or 0)
+            if cn not in (5, 6) or not area or area <= 0:
+                continue
+            ref_header = refs.get(cn)
+            if not ref_header:
+                skipped.append((header, cn, 'missing reference species'))
+                continue
+            ref_amount = amounts.get(ref_header)
+            ref_area = areas.get(ref_header)
+            if ref_amount is not None and ref_area and ref_area > 0:
+                rf = float(ref_amount) / float(ref_area)
+                source = 'same injection'
+            else:
+                rf = global_rf.get(cn)
+                source = 'run average'
+            if not rf:
+                skipped.append((header, cn, f'missing {ref_header} amount/area response factor'))
+                continue
+            amounts[header] = float(area) * float(rf)
+            derived_refs[header] = {
+                'area': area_refs.get(header),
+                'reference_header': ref_header,
+                'reference_amount': amount_refs.get(ref_header),
+                'reference_area': area_refs.get(ref_header),
+                'response_factor': rf,
+                'response_source': source,
+                'carbon_number': cn,
+            }
+            converted.append({
+                'label': inj.get('label'),
+                'species': header,
+                'carbon_number': cn,
+                'area': float(area),
+                'reference': ref_header,
+                'response_source': source,
+                'amount': float(amounts[header]),
+            })
+    data['area_derived_amounts'] = converted
+    data['area_derivation_skipped'] = [
+        {'species': sp, 'carbon_number': cn, 'reason': reason}
+        for sp, cn, reason in sorted(set(skipped))
+    ]
+    return converted
+
 
 def compute_flows(amounts, F_Ar_sccm, species_config, use_ch4_bridge):
     ar_key = find_ar_key(species_config)
@@ -502,6 +670,27 @@ def _nice_upper(value, floor=5.0):
     return float(10 * exp)
 
 
+def _legend_label_width(draw, label, font, sub_font):
+    width = 0
+    for ch in str(label):
+        use_font = sub_font if ch.isdigit() else font
+        bbox = draw.textbbox((0, 0), ch, font=use_font)
+        width += bbox[2] - bbox[0]
+    return width
+
+
+def _draw_legend_label(draw, x, y, label, font, sub_font, fill=(0, 0, 0)):
+    cursor = int(x)
+    sub_offset = max(2, int(getattr(font, 'size', 14) * 0.35))
+    for ch in str(label):
+        is_sub = ch.isdigit()
+        use_font = sub_font if is_sub else font
+        y_pos = int(y) + (sub_offset if is_sub else 0)
+        draw.text((cursor, y_pos), ch, fill=fill, font=use_font)
+        bbox = draw.textbbox((0, 0), ch, font=use_font)
+        cursor += bbox[2] - bbox[0]
+
+
 def _draw_time_on_stream_plot(df, df_sel, total_C_out, C_in_flow,
                               reactant_label, metadata, species_config,
                               output_dir):
@@ -534,6 +723,7 @@ def _draw_time_on_stream_plot(df, df_sel, total_C_out, C_in_flow,
 
     font = load_font(16)
     small_font = load_font(14)
+    legend_sub_font = load_font(11)
     axis_font = load_font(28)
     title_font = load_font(34)
 
@@ -725,9 +915,9 @@ def _draw_time_on_stream_plot(df, df_sel, total_C_out, C_in_flow,
             marker(lx + 24, ly + 12, color, 'circle_open', True, size=8)
         else:
             draw.rectangle((lx, ly, lx + 34, ly + 24), fill=color)
-        txt(lx + 58, ly - 1, label, font_obj=font)
+        _draw_legend_label(draw, lx + 58, ly - 1, label, font, legend_sub_font)
 
-    path = os.path.join(output_dir, 'gc_plots.png')
+    path = os.path.join(output_dir, f'{_output_file_prefix(metadata)}_gc_plot.png')
     img.save(path)
     return path
 
@@ -761,6 +951,7 @@ def _draw_stacked_selectivity_plot(df, df_sel, total_C_out, C_in_flow,
 
     font = load_font(16)
     small_font = load_font(14)
+    legend_sub_font = load_font(10)
     title_font = load_font(20, bold=True)
 
     def txt(x, y, text, fill=(0, 0, 0), anchor=None, font_obj=None):
@@ -907,7 +1098,7 @@ def _draw_stacked_selectivity_plot(df, df_sel, total_C_out, C_in_flow,
 
     def reserve_legend_slot(label):
         nonlocal legend_x, legend_y
-        item_w = 42 + text_w(label, small_font) + legend_gap
+        item_w = 42 + _legend_label_width(draw, label, small_font, legend_sub_font) + legend_gap
         if legend_x + item_w > x1:
             legend_x = x0
             legend_y += row_h
@@ -919,7 +1110,7 @@ def _draw_stacked_selectivity_plot(df, df_sel, total_C_out, C_in_flow,
     lx = reserve_legend_slot(label)
     draw.line((lx, legend_y + 7, lx + 28, legend_y + 7), fill=(0, 0, 0), width=3)
     draw.ellipse((lx + 11, legend_y + 2, lx + 21, legend_y + 12), fill=(0, 0, 0))
-    txt(lx + 36, legend_y, label, font_obj=small_font)
+    _draw_legend_label(draw, lx + 36, legend_y, label, small_font, legend_sub_font)
 
     if C_in_flow > 0:
         label = 'Carbon Balance'
@@ -929,7 +1120,7 @@ def _draw_stacked_selectivity_plot(df, df_sel, total_C_out, C_in_flow,
                       fill=(160, 30, 45), width=2)
         draw.polygon([(lx + 15, legend_y + 2), (lx + 20, legend_y + 12),
                       (lx + 10, legend_y + 12)], fill=(160, 30, 45))
-        txt(lx + 36, legend_y, label, font_obj=small_font)
+        _draw_legend_label(draw, lx + 36, legend_y, label, small_font, legend_sub_font)
 
     for group in group_order:
         if group not in group_values:
@@ -937,9 +1128,9 @@ def _draw_stacked_selectivity_plot(df, df_sel, total_C_out, C_in_flow,
         lx = reserve_legend_slot(group)
         draw.rectangle((lx, legend_y + 1, lx + 28, legend_y + 13),
                        fill=palette[group], outline=(120, 120, 120))
-        txt(lx + 36, legend_y, group, font_obj=small_font)
+        _draw_legend_label(draw, lx + 36, legend_y, group, small_font, legend_sub_font)
 
-    path = os.path.join(output_dir, 'gc_plots.png')
+    path = os.path.join(output_dir, f'{_output_file_prefix(metadata)}_gc_plot.png')
     img.save(path)
     return path
 
@@ -1103,7 +1294,7 @@ def make_plots(df, df_sel, total_C_out, C_in_flow, reactant_label,
     else:
         txt(bx0 + 12, by0 + 20, 'No steady-state selectivity data', muted)
 
-    path = os.path.join(output_dir, 'gc_plots.png')
+    path = os.path.join(output_dir, f'{_output_file_prefix(metadata)}_gc_plot.png')
     img.save(path)
     return path
 
@@ -1199,7 +1390,7 @@ def make_plots(df, df_sel, total_C_out, C_in_flow, reactant_label,
     ax3.set_ylabel('Selectivity (%)', fontsize=9)
     ax3.set_title('Carbon Selectivity (Steady State)')
 
-    path = os.path.join(output_dir, 'gc_plots.png')
+    path = os.path.join(output_dir, f'{_output_file_prefix(metadata)}_gc_plot.png')
     plt.savefig(path, dpi=150, bbox_inches='tight', facecolor=fig.get_facecolor())
     plt.close()
     return path
@@ -1218,6 +1409,34 @@ def _raw_amount_ref(inj, species_header, sheet_name='Raw Original'):
     if not ref:
         return None
     return _excel_sheet_ref(sheet_name, ref)
+
+
+def _raw_area_ref(inj, species_header, sheet_name='Raw Original'):
+    ref = (inj.get('source_refs') or {}).get('areas', {}).get(species_header)
+    if not ref:
+        return None
+    return _excel_sheet_ref(sheet_name, ref)
+
+
+def _amount_expr_for_header(inj, species_header, sheet_name='Raw Original'):
+    raw = _raw_amount_ref(inj, species_header, sheet_name=sheet_name)
+    if raw:
+        return raw
+    derived = (inj.get('source_refs') or {}).get('area_derived', {}).get(species_header)
+    if not derived:
+        return None
+    area_ref = derived.get('area')
+    ref_amount = derived.get('reference_amount')
+    ref_area = derived.get('reference_area')
+    if area_ref and ref_amount and ref_area:
+        return (
+            f'({_excel_sheet_ref(sheet_name, area_ref)}*'
+            f'{_excel_sheet_ref(sheet_name, ref_amount)}/'
+            f'{_excel_sheet_ref(sheet_name, ref_area)})')
+    rf = derived.get('response_factor')
+    if area_ref and rf:
+        return f'({_excel_sheet_ref(sheet_name, area_ref)}*{float(rf):.12g})'
+    return None
 
 
 def _copy_source_sheet_to_workbook(out_wb, source_filepath, worksheet_index=0,
@@ -1250,7 +1469,7 @@ def _copy_source_sheet_to_workbook(out_wb, source_filepath, worksheet_index=0,
 
 def _flow_formula_for_header(inj, species_header, species_config, has_bridge,
                              ar_key, ch4_tcd_key, ch4_fid_key, ar_inlet_cell):
-    raw = _raw_amount_ref(inj, species_header)
+    raw = _amount_expr_for_header(inj, species_header)
     ar_raw = _raw_amount_ref(inj, ar_key)
     if not raw or not ar_raw:
         return None
@@ -1340,6 +1559,74 @@ def _write_bypass_processed_sheet(wb, bypass_data, species_config, inlet_labels,
     return summary_refs
 
 
+def _write_area_fallback_sheet(wb, raw_data, insert_at=4):
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    converted = raw_data.get('area_derived_amounts', []) if raw_data else []
+    skipped = raw_data.get('area_derivation_skipped', []) if raw_data else []
+    if not converted and not skipped:
+        return None
+
+    ws = wb.create_sheet('Area Fallbacks', insert_at)
+    ws['A1'] = 'Area-only C5/C6 amount estimates'
+    ws['A1'].font = Font(bold=True, size=13)
+    ws['A2'] = 'C5 compounds use pentane response factor; C6 compounds use hexane response factor when available.'
+    headers = [
+        'Raw label', 'Species', 'Carbon #', 'Raw peak area', 'Reference',
+        'Reference amount', 'Reference area', 'Response source',
+        'Derived amount'
+    ]
+    header_row = 4
+    for col, header in enumerate(headers, start=1):
+        cell = ws.cell(header_row, col)
+        cell.value = header
+        cell.font = Font(bold=True, color='FFFFFF')
+        cell.fill = PatternFill('solid', fgColor='C65911')
+        cell.alignment = Alignment(horizontal='center')
+
+    for inj in raw_data.get('injections', []):
+        label_ref = (inj.get('source_refs') or {}).get('label')
+        raw_label = f'={_excel_sheet_ref("Raw Original", label_ref)}' if label_ref else inj.get('label', '')
+        derived = (inj.get('source_refs') or {}).get('area_derived', {})
+        for species, info in derived.items():
+            row = ws.max_row + 1
+            area_ref = info.get('area')
+            ref_amount = info.get('reference_amount')
+            ref_area = info.get('reference_area')
+            ws.cell(row, 1).value = raw_label
+            ws.cell(row, 2).value = species
+            ws.cell(row, 3).value = info.get('carbon_number')
+            ws.cell(row, 4).value = f'={_excel_sheet_ref("Raw Original", area_ref)}' if area_ref else None
+            ws.cell(row, 5).value = info.get('reference_header')
+            ws.cell(row, 6).value = f'={_excel_sheet_ref("Raw Original", ref_amount)}' if ref_amount else None
+            ws.cell(row, 7).value = f'={_excel_sheet_ref("Raw Original", ref_area)}' if ref_area else None
+            ws.cell(row, 8).value = info.get('response_source')
+            if area_ref and ref_amount and ref_area:
+                ws.cell(row, 9).value = (
+                    f'={_excel_sheet_ref("Raw Original", area_ref)}*'
+                    f'{_excel_sheet_ref("Raw Original", ref_amount)}/'
+                    f'{_excel_sheet_ref("Raw Original", ref_area)}')
+            elif area_ref and info.get('response_factor'):
+                ws.cell(row, 9).value = (
+                    f'={_excel_sheet_ref("Raw Original", area_ref)}*'
+                    f'{float(info["response_factor"]):.12g}')
+
+    if skipped:
+        start = ws.max_row + 3
+        ws.cell(start, 1).value = 'Skipped area-only peaks'
+        ws.cell(start, 1).font = Font(bold=True)
+        for col, header in enumerate(['Species', 'Carbon #', 'Reason'], start=1):
+            cell = ws.cell(start + 1, col)
+            cell.value = header
+            cell.font = Font(bold=True)
+        for item in skipped:
+            ws.append([item.get('species'), item.get('carbon_number'), item.get('reason')])
+
+    ws.freeze_panes = 'A5'
+    _autosize_sheet(ws)
+    return ws
+
+
 def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_label,
                                 metadata, species_config, output_dir, source_filepath,
                                 raw_data, inlet_flows, has_bridge,
@@ -1347,7 +1634,7 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
 
-    path = os.path.join(output_dir, 'gc_analysis.xlsx')
+    path = os.path.join(output_dir, f'{_output_file_prefix(metadata)}_gc_analysis.xlsx')
     wb = Workbook()
     ws = wb.active
     ws.title = 'Processed'
@@ -1368,6 +1655,11 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
         except Exception:
             byp_ws = wb.create_sheet('Bypass Original', 2)
             byp_ws.append(['Bypass raw sheet copy failed; parsed bypass values are preserved on Bypass Processed.'])
+
+    area_fallback_count = len(raw_data.get('area_derived_amounts', []) if raw_data else [])
+    area_skipped_count = len(raw_data.get('area_derivation_skipped', []) if raw_data else [])
+    if area_fallback_count or area_skipped_count:
+        _write_area_fallback_sheet(wb, raw_data, insert_at=4 if has_bypass else 2)
 
     label_to_header = {cfg['label']: header for header, cfg in species_config.items()}
     ar_key = find_ar_key(species_config)
@@ -1395,6 +1687,8 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
     add_setting('inlet_flow_source', metadata.get('inlet_flow_source'), 'manual or bypass-derived.')
     add_setting('bypass_file', metadata.get('bypass_file'), 'Separate bypass workbook used for inlet normalization.')
     add_setting('bypass_used', 'yes' if has_bypass else 'no', 'Whether bypass data are integrated into this workbook.')
+    add_setting('area_derived_amounts', area_fallback_count, 'Area-only C5/C6 peaks converted using pentane/hexane response factors.')
+    add_setting('area_derivation_skipped', area_skipped_count, 'Area-only C5/C6 peaks not converted because the reference response was unavailable.')
     inlet_setting_cells = {}
     for label in inlet_order:
         inlet_setting_cells[label] = add_setting(
@@ -1425,12 +1719,13 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
     flow_labels = [reactant_label] + product_labels
 
     headers = [
-        'Accepted point', 'Time on stream h', 'Injection #', 'Raw label',
+        'Accepted point', 'Time on stream h', 'Injection #', 'Catalyst ID',
         f'{reactant_label} out sccm', f'{reactant_label} conversion %',
         'Product C out', 'Carbon balance %',
     ]
     headers.extend(f'Sel {g} %' for g in present_groups)
     headers.extend(f'Flow {label} sccm' for label in flow_labels)
+    headers.append('Raw label')
     ws.append(headers)
     for cell in ws[1]:
         cell.font = Font(bold=True, color='FFFFFF')
@@ -1450,6 +1745,8 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
         processed_rows.append((accepted_count, df_idx, row, inj))
 
     flow_start_col = 9 + len(present_groups)
+    raw_label_col = flow_start_col + len(flow_labels)
+    raw_label_example_ref = None
     for accepted_point, df_idx, row, inj in processed_rows:
         excel_row = ws.max_row + 1
         label_ref = (inj.get('source_refs') or {}).get('label')
@@ -1459,7 +1756,10 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
             f'=IF({interval_cell}>0,(A{excel_row}-1)*{interval_cell}/60,'
             f'IF({npoints_cell}>1,(A{excel_row}-1)*{duration_cell}/({npoints_cell}-1),0))')
         ws.cell(excel_row, 3).value = row.get('inj_num')
-        ws.cell(excel_row, 4).value = raw_label_formula
+        ws.cell(excel_row, 4).value = metadata.get('catalyst_id') or ''
+        ws.cell(excel_row, raw_label_col).value = raw_label_formula
+        if raw_label_example_ref is None:
+            raw_label_example_ref = f"='Processed'!{ws.cell(excel_row, raw_label_col).coordinate}"
 
         flow_cell_by_label = {}
         for offset, label in enumerate(flow_labels):
@@ -1506,7 +1806,8 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
         cell.font = Font(bold=True, color='FFFFFF')
         cell.fill = PatternFill('solid', fgColor='7030A0')
     example_rows = [
-        ('Raw label carried over', "Processed raw label cells point directly to Raw Original column A.", "='Processed'!D2"),
+        ('Catalyst ID row label', 'Processed row identifiers use the Catalyst ID entered in the GUI.', "='Processed'!D2"),
+        ('Raw label carried over', "The final Processed column still points directly to Raw Original column A.", raw_label_example_ref or ''),
         ('Time on stream', 'Processed!B2 = (accepted point - 1) * injection_interval_min / 60 when spacing is set.', "='Processed'!B2"),
         ('Bypass inlet flow', f'{reactant_label}_inlet_sccm comes from Bypass Processed average when bypass is used.', f'={reactant_inlet_cell}'),
         (f'{reactant_label} outlet flow', 'Processed!E2 references the calculated flow column for the reactant.', "='Processed'!E2"),
@@ -1514,6 +1815,16 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
         ('Product carbon out', 'Sum of carbon number times product flow for each product species.', "='Processed'!G2"),
         ('Carbon balance', f'({reactant_label} out + product carbon out) / {reactant_label} inlet * 100.', "='Processed'!H2"),
     ]
+    if area_fallback_count:
+        example_rows.insert(3, (
+            'Area-only C5/C6 amount',
+            'Derived amount = unknown peak area * reference amount / reference area; C5 uses pentane, C6 uses hexane.',
+            "='Area Fallbacks'!I5"))
+    elif area_skipped_count:
+        example_rows.insert(3, (
+            'Area-only C5/C6 amount',
+            'Area-only peaks were found, but no usable pentane/hexane reference response was available; see Area Fallbacks.',
+            'not calculated'))
     if present_groups:
         example_rows.append((
             f'{present_groups[0]} selectivity',
@@ -1571,10 +1882,14 @@ def save_outputs(df, df_sel, total_C_out, C_in_flow,
             (total_C_out[rxn.index][ss_rxn].mean() / C_in_flow) * 100, 2)
 
     summary = pd.DataFrame([row])
-    summary_csv_path = os.path.join(output_dir, 'gc_summary.csv')
-    flows_path   = os.path.join(output_dir, 'gc_flows.csv')
+    prefix = _output_file_prefix(metadata)
+    summary_csv_path = os.path.join(output_dir, f'{prefix}_gc_summary.csv')
+    flows_path = os.path.join(output_dir, f'{prefix}_gc_flows.csv')
     summary.to_csv(summary_csv_path, index=False)
-    df.to_csv(flows_path, index=False)
+    df_export = df.copy()
+    if 'catalyst_id' not in df_export.columns:
+        df_export.insert(0, 'catalyst_id', metadata.get('catalyst_id') or '')
+    df_export.to_csv(flows_path, index=False)
     if source_filepath and raw_data is not None and inlet_flows is not None:
         summary_path = _write_gc_analysis_workbook(
             df, df_sel, total_C_out, C_in_flow, reactant_label, metadata,
@@ -1597,7 +1912,10 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    species_config = reaction_config['species']
+    species_config = {
+        header: dict(cfg)
+        for header, cfg in reaction_config['species'].items()
+    }
     reactant_label = reaction_config['reactant']
 
     # Find Ar inlet flow
@@ -1610,6 +1928,7 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
         F_Ar = inlet_flows.get('Ar', 15.0)
 
     data = parse_xlsx(filepath)
+    apply_area_response_fallbacks(data, species_config)
     inlet_source = 'manual'
     inferred_inlet_flows = {}
     bypass_data = None
@@ -1688,6 +2007,8 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
         'injection_interval_min': _metadata_float(metadata, 'injection_interval_min'),
         'rejected_initial_injections': _metadata_int(metadata, 'rejected_initial_injections', 0),
         'plot_style':      metadata.get('plot_style', 'auto'),
+        'area_derived_amounts': len(data.get('area_derived_amounts', [])),
+        'area_derivation_skipped': len(data.get('area_derivation_skipped', [])),
         'fid_bridge':     has_bridge,
         'plot_path':      plot_path,
         'summary_path':   summary_path,

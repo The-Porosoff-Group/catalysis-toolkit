@@ -307,7 +307,9 @@ def process_gc():
         if not output_base or not os.path.isdir(output_base):
             output_base = os.path.join(BASE_DIR, 'results')
         ts      = datetime.now().strftime('%Y%m%d_%H%M%S')
-        safe_id = re.sub(r'[^\w\-]', '_', metadata['catalyst_id'])
+        safe_id = re.sub(r'[^\w\-]', '_', metadata['catalyst_id']).strip('_') or 'Unknown'
+        metadata['output_date'] = ts[:8]
+        metadata['output_prefix'] = f'{ts}_{safe_id}'
         output_dir = os.path.join(output_base, f'{safe_id}_{ts}')
         result = gc_processor.run(
             filepath=upload_path, output_dir=output_dir,
