@@ -1,7 +1,9 @@
 name: CO2 Hydrogenation
 description: CO2 + H2 → CH4 / MeOH / CO / hydrocarbons
+type: co2_hydrogenation
 reactant: CO2
 internal_standard: Ar
+selectivity_group_order: [CO, CH4, Methanol, C2-C4 Paraffins, C2-C4 Olefins, C5+, Other C products]
 
 inlet_species:
   - label: CO2

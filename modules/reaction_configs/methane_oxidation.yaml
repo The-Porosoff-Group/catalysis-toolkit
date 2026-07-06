@@ -1,7 +1,14 @@
 name: Methane Partial Oxidation (POM)
 description: CH4 + O2 → CO / CO2 / H2 / H2O (+ total oxidation)
+type: methane_oxidation
 reactant: CH4
+conversion_basis: CH4
+conversion_fallbacks: [CH4_TCD]
 internal_standard: Ar
+selectivity_group_order: [CO, CO2, Methanol, C2-C4 Paraffins, C2-C4 Olefins, Other C products]
+product_labels: [CO, CO2, HCHO, MeOH, C2H6, C2H4, C3H8]
+area_response_fallback: false
+coeluted_splits: false
 
 inlet_species:
   - label: CH4
@@ -23,7 +30,7 @@ species:
   Ethane TCD:            { label: C2H6_TCD,  cn: 2, det: TCD }
   Ethylene TCD:          { label: C2H4_TCD,  cn: 2, det: TCD }
   # FID
-  Methane FID:           { label: CH4,       cn: 1, det: FID }
+  Methane FID:           { label: CH4,       cn: 1, det: FID, fid_bridge: false }
   Ethane FID:            { label: C2H6,      cn: 2, det: FID }
   Ethylene FID:          { label: C2H4,      cn: 2, det: FID }
   Propane:               { label: C3H8,      cn: 3, det: FID }

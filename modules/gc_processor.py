@@ -44,6 +44,12 @@ _COELUTED_SPLIT_RULES = {
 }
 
 
+_DEFAULT_SELECTIVITY_GROUP_ORDER = [
+    'CO', 'CH4', 'C2-C4 Paraffins', 'C2-C4 Olefins', 'C5+',
+    'Methanol', 'CO2', 'Other C products'
+]
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # LOAD REACTION CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
@@ -489,9 +495,10 @@ def compute_flows(amounts, F_Ar_sccm, species_config, use_ch4_bridge):
         if cfg['det'] == 'TCD':
             flow = F_Ar_sccm * (C_A / C_Ar)
         else:
-            if use_ch4_bridge and ch4_ratio is not None:
+            use_bridge_for_species = cfg.get('fid_bridge', True) is not False
+            if use_ch4_bridge and ch4_ratio is not None and use_bridge_for_species:
                 flow = F_Ar_sccm * ch4_ratio * (C_A / C_Ar)
-            elif not use_ch4_bridge:
+            elif not use_ch4_bridge or not use_bridge_for_species:
                 flow = F_Ar_sccm * (C_A / C_Ar)
             else:
                 continue
@@ -693,6 +700,77 @@ def get_cn(label, species_config):
         if cfg['label'] == label: return cfg['cn']
     return 0
 
+
+def _reaction_type(metadata=None, reaction_config=None):
+    raw = ''
+    if reaction_config:
+        raw = reaction_config.get('type') or reaction_config.get('name') or ''
+    if not raw and metadata:
+        raw = metadata.get('reaction_type') or metadata.get('reaction') or ''
+    return re.sub(r'[^a-z0-9]+', '_', str(raw).strip().lower()).strip('_')
+
+
+def _conversion_basis_candidates(reactant_label, reaction_config=None):
+    candidates = []
+    if reaction_config:
+        for key in ('conversion_basis', 'reactant_basis'):
+            val = reaction_config.get(key)
+            if val:
+                candidates.append(str(val))
+        fallbacks = reaction_config.get('conversion_fallbacks') or []
+        if isinstance(fallbacks, str):
+            fallbacks = [x.strip() for x in fallbacks.split(',') if x.strip()]
+        candidates.extend(str(x) for x in fallbacks if x)
+    candidates.append(reactant_label)
+    seen = set()
+    out = []
+    for item in candidates:
+        if item and item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
+def _configured_product_labels(reaction_config=None):
+    if not reaction_config:
+        return None
+    raw = (
+        reaction_config.get('product_labels') or
+        reaction_config.get('selectivity_products') or
+        reaction_config.get('carbon_products')
+    )
+    if not raw:
+        return None
+    if isinstance(raw, str):
+        labels = [x.strip() for x in raw.split(',') if x.strip()]
+    else:
+        labels = [str(x) for x in raw if x]
+    return set(labels) if labels else None
+
+
+def _select_existing_column(df, candidates):
+    for col in candidates:
+        if col in df.columns and _has_numeric_data(df[col]):
+            return col
+    for col in candidates:
+        if col in df.columns:
+            return col
+    return candidates[0] if candidates else None
+
+
+def _selectivity_group_order(metadata=None):
+    raw = (metadata or {}).get('selectivity_group_order')
+    if isinstance(raw, str):
+        order = [x.strip() for x in raw.split(',') if x.strip()]
+    elif raw:
+        order = [str(x) for x in raw if x]
+    else:
+        order = []
+    for group in _DEFAULT_SELECTIVITY_GROUP_ORDER:
+        if group not in order:
+            order.append(group)
+    return order
+
 def _has_numeric_data(series):
     return pd.to_numeric(series, errors='coerce').notna().any()
 
@@ -704,10 +782,13 @@ def _is_duplicate_tcd_product(label, df):
     return fid_label in df.columns and _has_numeric_data(df[fid_label])
 
 
-def calculate_results(df, reactant_label, F_reactant_inlet, species_config):
+def calculate_results(df, reactant_label, F_reactant_inlet, species_config,
+                      reaction_config=None):
     df = df.copy()
-    if reactant_label in df.columns:
-        df['conversion'] = (F_reactant_inlet - df[reactant_label]) / F_reactant_inlet
+    basis_candidates = _conversion_basis_candidates(reactant_label, reaction_config)
+    reactant_basis_label = _select_existing_column(df, basis_candidates)
+    if reactant_basis_label in df.columns and F_reactant_inlet:
+        df['conversion'] = (F_reactant_inlet - df[reactant_basis_label]) / F_reactant_inlet
     else:
         df['conversion'] = np.nan
 
@@ -715,18 +796,22 @@ def calculate_results(df, reactant_label, F_reactant_inlet, species_config):
         'label', 'inj_num', 'is_bypass', 'source_kind', 'analysis_include',
         'row_status', 'conversion', 'time_on_stream_h'
     }
+    reactant_exclusions = set(basis_candidates)
+    reactant_exclusions.add(reactant_label)
+    allowed_products = _configured_product_labels(reaction_config)
     carbon_cols = [
         c for c in df.columns
         if c not in meta_cols
         and get_cn(c, species_config) > 0
-        and c != reactant_label
+        and c not in reactant_exclusions
+        and (allowed_products is None or c in allowed_products)
         and not _is_duplicate_tcd_product(c, df)
     ]
 
     if carbon_cols:
         product_C  = sum(get_cn(c, species_config) * df[c].fillna(0) for c in carbon_cols)
-        reactant_C = get_cn(reactant_label, species_config) * df[reactant_label].fillna(0) \
-                     if reactant_label in df.columns else 0
+        reactant_C = get_cn(reactant_basis_label, species_config) * df[reactant_basis_label].fillna(0) \
+                     if reactant_basis_label in df.columns else 0
         total_C_out = product_C + reactant_C
         with np.errstate(divide='ignore', invalid='ignore'):
             df_sel = pd.DataFrame({
@@ -846,6 +931,7 @@ def _add_time_on_stream_column(df, metadata):
 
 def _selectivity_groups(df_sel, species_config):
     groups = {
+        'CO': [],
         'CH4': [],
         'C2-C4 Olefins': [],
         'C2-C4 Paraffins': [],
@@ -862,7 +948,9 @@ def _selectivity_groups(df_sel, species_config):
     cn_lookup = {cfg['label']: cfg.get('cn', 0) for cfg in species_config.values()}
     for col in df_sel.columns:
         label = col.replace('S_', '')
-        if label == 'CH4':
+        if label == 'CO':
+            groups['CO'].append(col)
+        elif label == 'CH4':
             groups['CH4'].append(col)
         elif label in {'Methanol', 'MeOH', 'CH3OH'}:
             groups['Methanol'].append(col)
@@ -1027,11 +1115,9 @@ def _draw_time_on_stream_plot(df, df_sel, total_C_out, C_in_flow,
     txt(x0 + plot_w / 2, 38, title, anchor='mm', font_obj=title_font)
 
     groups = _selectivity_groups(df_sel, species_config)
-    group_order = [
-        'CH4', 'C2-C4 Paraffins', 'C2-C4 Olefins', 'C5+', 'Methanol',
-        'CO2', 'Other C products'
-    ]
+    group_order = _selectivity_group_order(metadata)
     palette = {
+        'CO': (50, 130, 210),
         'CH4': (75, 175, 70),
         'C2-C4 Paraffins': (220, 38, 38),
         'C2-C4 Olefins': (105, 88, 205),
@@ -1235,6 +1321,7 @@ def _draw_stacked_selectivity_plot(df, df_sel, total_C_out, C_in_flow,
         txt(x, y1 + 12, label, fill=(45, 45, 45), anchor='ma', font_obj=small_font)
 
     palette = {
+        'CO': (50, 130, 210),
         'CH4': (54, 211, 112),
         'C2-C4 Olefins': (116, 122, 230),
         'C2-C4 Paraffins': (216, 78, 71),
@@ -1244,10 +1331,7 @@ def _draw_stacked_selectivity_plot(df, df_sel, total_C_out, C_in_flow,
         'Other C products': (180, 180, 180),
     }
     groups = _selectivity_groups(df_sel, species_config)
-    group_order = [
-        'CH4', 'C2-C4 Olefins', 'C2-C4 Paraffins', 'C5+', 'Methanol',
-        'CO2', 'Other C products'
-    ]
+    group_order = _selectivity_group_order(metadata)
     group_values = {}
     for group in group_order:
         cols = groups.get(group, [])
@@ -1360,10 +1444,206 @@ def _draw_stacked_selectivity_plot(df, df_sel, total_C_out, C_in_flow,
     return path
 
 
+def _draw_co_oxidation_plot(df, df_sel, total_C_out, C_in_flow,
+                            reactant_label, metadata, species_config,
+                            output_dir):
+    from PIL import Image, ImageDraw, ImageFont
+
+    rxn = _analysis_reaction_rows(df)
+    if rxn.empty:
+        return _draw_stacked_selectivity_plot(
+            df, df_sel, total_C_out, C_in_flow, reactant_label, metadata,
+            species_config, output_dir)
+
+    width, height = 1200, 760
+    margin = {'l': 112, 'r': 58, 't': 86, 'b': 145}
+    x0, y0 = margin['l'], margin['t']
+    x1, y1 = width - margin['r'], height - margin['b']
+    plot_w, plot_h = x1 - x0, y1 - y0
+
+    img = Image.new('RGB', (width, height), (255, 255, 255))
+    draw = ImageDraw.Draw(img)
+
+    def load_font(size, bold=False):
+        names = ['arialbd.ttf', 'arial.ttf'] if bold else ['arial.ttf', 'segoeui.ttf']
+        windir = os.environ.get('WINDIR', r'C:\Windows')
+        for name in names:
+            try:
+                return ImageFont.truetype(os.path.join(windir, 'Fonts', name), size=size)
+            except OSError:
+                continue
+        return ImageFont.load_default()
+
+    font = load_font(16)
+    small_font = load_font(13)
+    sub_font = load_font(10)
+    axis_font = load_font(24)
+    title_font = load_font(30)
+
+    def txt(x, y, text, fill=(0, 0, 0), anchor=None, font_obj=None):
+        kwargs = {'fill': fill, 'font': font_obj or font}
+        if anchor:
+            kwargs['anchor'] = anchor
+        draw.text((int(x), int(y)), str(text), **kwargs)
+
+    def rotated_txt(x, y, text, angle, font_obj=None):
+        font_use = font_obj or font
+        bbox = draw.textbbox((0, 0), str(text), font=font_use)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        layer = Image.new('RGBA', (tw + 12, th + 12), (255, 255, 255, 0))
+        layer_draw = ImageDraw.Draw(layer)
+        layer_draw.text((6, 6), str(text), fill=(0, 0, 0, 255), font=font_use)
+        rotated = layer.rotate(angle, expand=True)
+        img.paste(rotated, (int(x - rotated.width / 2), int(y - rotated.height / 2)), rotated)
+
+    if pd.to_numeric(rxn.get('time_on_stream_h'), errors='coerce').notna().any():
+        x_vals = pd.to_numeric(rxn['time_on_stream_h'], errors='coerce').to_numpy(dtype=float)
+        duration = _infer_run_duration_h(metadata)
+        x_label = 'Time on stream (h)'
+        x_min = 0.0
+        x_max = max(float(duration or 0), float(np.nanmax(x_vals)), 1.0)
+    else:
+        x_vals, x_label = _plot_x_values(rxn)
+        finite = x_vals[np.isfinite(x_vals)]
+        if finite.size:
+            x_min, x_max = float(np.nanmin(finite)), float(np.nanmax(finite))
+        else:
+            x_vals = np.arange(len(rxn), dtype=float)
+            x_min, x_max = 0.0, max(float(len(rxn) - 1), 1.0)
+            x_label = 'Reaction point'
+        if x_max == x_min:
+            x_min -= 0.5
+            x_max += 0.5
+        pad = (x_max - x_min) * 0.03
+        x_min -= pad
+        x_max += pad
+
+    conv_vals = pd.to_numeric(rxn.get('conversion', pd.Series(index=rxn.index, dtype=float)),
+                              errors='coerce').to_numpy(dtype=float) * 100.0
+    co2_vals = None
+    if 'S_CO2' in df_sel.columns:
+        co2_vals = pd.to_numeric(df_sel.loc[rxn.index, 'S_CO2'], errors='coerce').to_numpy(dtype=float) * 100.0
+    cb_vals = None
+    if C_in_flow > 0:
+        cb_vals = pd.to_numeric(total_C_out.loc[rxn.index], errors='coerce').to_numpy(dtype=float) / C_in_flow * 100.0
+
+    all_vals = [conv_vals]
+    if co2_vals is not None:
+        all_vals.append(co2_vals)
+    if cb_vals is not None:
+        all_vals.append(cb_vals)
+    finite_y = np.concatenate([vals[np.isfinite(vals)] for vals in all_vals if vals is not None])
+    y_max = max(105.0, float(np.nanmax(finite_y)) * 1.05) if finite_y.size else 105.0
+    y_min = 0.0
+
+    def xp(v):
+        return x0 + (float(v) - x_min) / (x_max - x_min) * plot_w
+
+    def yp(v):
+        v = max(y_min, min(y_max, float(v)))
+        return y1 - (v - y_min) / (y_max - y_min) * plot_h
+
+    for pct in np.linspace(0, y_max, 6):
+        y = yp(pct)
+        draw.line((x0, y, x1, y), fill=(218, 218, 218), width=1)
+        txt(x0 - 14, y - 8, f'{pct:.0f}', fill=(45, 45, 45), anchor='ra', font_obj=small_font)
+    draw.line((x0, y1, x1, y1), fill=(0, 0, 0), width=2)
+    draw.line((x0, y0, x0, y1), fill=(0, 0, 0), width=2)
+
+    tick_count = min(7, len(rxn))
+    tick_idx = np.linspace(0, len(rxn) - 1, tick_count).round().astype(int)
+    for idx in sorted(set(tick_idx)):
+        if not np.isfinite(x_vals[idx]):
+            continue
+        x = xp(x_vals[idx])
+        draw.line((x, y1, x, y1 + 7), fill=(0, 0, 0), width=1)
+        val = x_vals[idx]
+        label = f'{val:.0f}' if abs(val - round(val)) < 0.05 else f'{val:.1f}'
+        txt(x, y1 + 16, label, fill=(45, 45, 45), anchor='ma', font_obj=small_font)
+
+    title = metadata.get('catalyst_id') or metadata.get('source_file') or 'CO oxidation'
+    txt(width / 2, 36, title, anchor='mm', font_obj=title_font)
+    txt(x0 + plot_w / 2, height - 76, x_label, anchor='mm', font_obj=axis_font)
+    rotated_txt(x0 - 76, y0 + plot_h / 2, 'CO conversion / selectivity (%)', 90, font_obj=axis_font)
+
+    def points(vals):
+        return [
+            (xp(xv), yp(yv))
+            for xv, yv in zip(x_vals, vals)
+            if np.isfinite(xv) and np.isfinite(yv)
+        ]
+
+    def draw_series(vals, color, marker='circle', dashed=False):
+        pts = points(vals)
+        if len(pts) >= 2:
+            if dashed:
+                for p0, p1 in zip(pts[:-1], pts[1:]):
+                    dx, dy = p1[0] - p0[0], p1[1] - p0[1]
+                    dist = max((dx * dx + dy * dy) ** 0.5, 1.0)
+                    pos = 0.0
+                    while pos < dist:
+                        end = min(pos + 9.0, dist)
+                        draw.line((
+                            p0[0] + dx * pos / dist,
+                            p0[1] + dy * pos / dist,
+                            p0[0] + dx * end / dist,
+                            p0[1] + dy * end / dist,
+                        ), fill=color, width=3)
+                        pos += 15.0
+            else:
+                draw.line(pts, fill=color, width=3)
+        for x, y in pts:
+            if marker == 'triangle':
+                draw.polygon([(x, y - 6), (x + 5, y + 5), (x - 5, y + 5)], fill=color)
+            elif marker == 'square':
+                draw.rectangle((x - 5, y - 5, x + 5, y + 5), fill=color)
+            else:
+                draw.ellipse((x - 5, y - 5, x + 5, y + 5), fill=color)
+
+    conv_color = (0, 0, 0)
+    co2_color = (75, 175, 70)
+    cb_color = (160, 30, 45)
+    draw_series(conv_vals, conv_color, marker='circle')
+    if co2_vals is not None:
+        draw_series(co2_vals, co2_color, marker='square')
+    if cb_vals is not None:
+        draw_series(cb_vals, cb_color, marker='triangle', dashed=True)
+
+    legend = [('CO Conversion', conv_color, 'circle', False)]
+    if co2_vals is not None:
+        legend.append(('CO2 Selectivity', co2_color, 'square', False))
+    if cb_vals is not None:
+        legend.append(('Carbon Balance', cb_color, 'triangle', True))
+    lx = x0
+    ly = height - 118
+    for label, color, marker, dashed in legend:
+        if dashed:
+            for start in range(0, 34, 15):
+                draw.line((lx + start, ly + 8, lx + min(start + 9, 34), ly + 8), fill=color, width=3)
+        else:
+            draw.line((lx, ly + 8, lx + 34, ly + 8), fill=color, width=3)
+        if marker == 'square':
+            draw.rectangle((lx + 13, ly + 3, lx + 23, ly + 13), fill=color)
+        elif marker == 'triangle':
+            draw.polygon([(lx + 18, ly + 2), (lx + 24, ly + 14), (lx + 12, ly + 14)], fill=color)
+        else:
+            draw.ellipse((lx + 13, ly + 3, lx + 23, ly + 13), fill=color)
+        _draw_legend_label(draw, lx + 44, ly, label, font, sub_font)
+        lx += 250
+
+    path = os.path.join(output_dir, f'{_output_file_prefix(metadata)}_gc_plot.png')
+    img.save(path)
+    return path
+
+
 def make_plots(df, df_sel, total_C_out, C_in_flow, reactant_label,
                ss_mask, metadata, carbon_cols, species_config, output_dir):
     style = str(metadata.get('plot_style') or 'auto').strip().lower()
     has_time_axis = bool(_infer_run_duration_h(metadata) or _metadata_float(metadata, 'injection_interval_min'))
+    if _reaction_type(metadata=metadata) == 'co_oxidation':
+        return _draw_co_oxidation_plot(
+            df, df_sel, total_C_out, C_in_flow, reactant_label, metadata,
+            species_config, output_dir)
     if style in {'single_axis_stacked', 'stacked_preview'}:
         return _draw_stacked_selectivity_plot(
             df, df_sel, total_C_out, C_in_flow, reactant_label, metadata,
@@ -1712,7 +1992,8 @@ def _flow_formula_for_header(inj, species_header, species_config, has_bridge,
         formula = f'{ar_inlet_cell}*{raw}/{ar_raw}'
         fraction = float(cfg.get('flow_fraction') or 1.0)
         return f'={formula}*{fraction:g}' if fraction != 1.0 else f'={formula}'
-    if has_bridge:
+    use_bridge_for_species = cfg.get('fid_bridge', True) is not False
+    if has_bridge and use_bridge_for_species:
         ch4_tcd = _raw_amount_ref(inj, ch4_tcd_key)
         ch4_fid = _raw_amount_ref(inj, ch4_fid_key)
         if ch4_tcd and ch4_fid:
@@ -1978,15 +2259,9 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
     reactant_inlet_cell = inlet_setting_cells.get(reactant_label)
 
     groups = _selectivity_groups(df_sel, species_config)
-    group_order = ['CH4', 'C2-C4 Paraffins', 'C2-C4 Olefins', 'C5+', 'Methanol', 'CO2']
+    group_order = _selectivity_group_order(metadata)
     present_groups = [g for g in group_order if g in groups]
-    product_labels = [c for c in df.columns
-                      if c not in {'label', 'inj_num', 'is_bypass', 'source_kind',
-                                   'analysis_include', 'row_status', 'conversion',
-                                   'time_on_stream_h'}
-                      and c != reactant_label
-                      and get_cn(c, species_config) > 0
-                      and not _is_duplicate_tcd_product(c, df)]
+    product_labels = [col.replace('S_', '') for col in df_sel.columns]
     flow_labels = [reactant_label] + product_labels
 
     headers = [
@@ -2224,6 +2499,11 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
     }
     reactant_label = reaction_config['reactant']
     metadata = dict(metadata)
+    metadata['reaction_type'] = reaction_config.get('type') or metadata.get('reaction_type') or reaction_config.get('name')
+    if reaction_config.get('conversion_basis'):
+        metadata['conversion_basis'] = reaction_config.get('conversion_basis')
+    if reaction_config.get('selectivity_group_order'):
+        metadata['selectivity_group_order'] = reaction_config.get('selectivity_group_order')
     for cn in (5, 6):
         key = _unknown_response_factor_key(cn)
         metadata[key] = _metadata_float(
@@ -2246,8 +2526,10 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
 
     data = parse_xlsx(filepath)
     _mark_source_kind(data, 'main')
-    apply_area_response_fallbacks(data, species_config, metadata)
-    _augment_species_config_for_coeluted_splits(data, species_config)
+    if reaction_config.get('area_response_fallback', True) is not False:
+        apply_area_response_fallbacks(data, species_config, metadata)
+    if reaction_config.get('coeluted_splits', True) is not False:
+        _augment_species_config_for_coeluted_splits(data, species_config)
     same_file_bypass_data = _apply_same_file_bypass_selection(
         data, metadata, reaction_config, species_config)
     inlet_source = 'manual'
@@ -2332,7 +2614,8 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
     )
 
     df, df_sel, total_C_out, carbon_cols = calculate_results(
-        df, reactant_label, inlet_flows.get(reactant_label, 0), species_config)
+        df, reactant_label, inlet_flows.get(reactant_label, 0),
+        species_config, reaction_config=reaction_config)
 
     plot_path = make_plots(
         df, df_sel, total_C_out, C_in_flow,

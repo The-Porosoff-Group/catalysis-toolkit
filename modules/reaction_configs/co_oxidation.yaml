@@ -1,7 +1,12 @@
 name: CO Oxidation
 description: CO + 1/2 O2 → CO2
+type: co_oxidation
 reactant: CO
 internal_standard: Ar
+selectivity_group_order: [CO2]
+product_labels: [CO2]
+area_response_fallback: false
+coeluted_splits: false
 
 inlet_species:
   - label: CO

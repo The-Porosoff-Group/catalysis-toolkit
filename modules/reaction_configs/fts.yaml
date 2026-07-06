@@ -1,7 +1,9 @@
 name: Fischer-Tropsch Synthesis (FTS)
 description: CO + H2 → hydrocarbons + H2O
+type: fts
 reactant: CO
 internal_standard: Ar
+selectivity_group_order: [CH4, C2-C4 Paraffins, C2-C4 Olefins, C5+, Methanol, CO2, Other C products]
 
 inlet_species:
   - label: CO
