@@ -528,6 +528,13 @@
               <div class="dropzone-sub">or click to browse</div>
             </div>
           </div>
+          <div class="form-group full" style="margin-top:14px;">
+            <label>Bypass / inlet GC file (optional)</label>
+            <input type="file" id="bypassFileInput" accept=".xlsx" onchange="onBypassFileSelect(event)">
+            <div id="bypass-file-status" style="font-size:11px;color:var(--muted);margin-top:6px;">
+              Use when inlet CO/H2/Ar concentrations are in a separate bypass workbook.
+            </div>
+          </div>
         </div>
       </div>
 
@@ -577,6 +584,30 @@
             <div class="form-group">
               <label>GHSV</label>
               <input type="text" id="ghsv" placeholder="e.g. 12000 mL/g/h">
+            </div>
+            <div class="form-group">
+              <label>Run Duration (h)</label>
+              <input type="number" step="0.1" min="0" id="run_duration_h" placeholder="e.g. 24">
+            </div>
+            <div class="form-group">
+              <label>Injection Spacing (min)</label>
+              <input type="number" step="0.1" min="0" id="injection_interval_min" placeholder="e.g. 44">
+            </div>
+            <div class="form-group">
+              <label>Reject First Rxn Points</label>
+              <input type="number" step="1" min="0" id="rejected_initial_injections" placeholder="0">
+            </div>
+            <div class="form-group">
+              <label>Registered Rxn Injections</label>
+              <input type="number" step="1" min="1" id="registered_reaction_injections" placeholder="auto">
+            </div>
+            <div class="form-group">
+              <label>Plot Style</label>
+              <select id="gc_plot_style">
+                <option value="auto">Auto</option>
+                <option value="time_stacked">Time stacked bars</option>
+                <option value="single_axis_stacked">Single-axis stacked preview</option>
+              </select>
             </div>
             <div class="form-group full">
               <label>Notes</label>
@@ -895,7 +926,7 @@
               <b>Mustrain</b> refines that phase's microstrain broadening.
               <b>PO</b> controls March-Dollase preferred orientation: <b>off</b> disables it,
               <b>fixed</b> applies the entered axis/value without refining, and <b>refined</b> lets the value vary.
-              <b>axis</b> is the preferred-orientation direction as h k l; hexagonal/trigonal phases also accept h k i l.
+              <b>axis</b> is the preferred-orientation direction as h k l.
               <b>value</b> is the March-Dollase ratio, where 1.0 means no texture. Fixed values should come from a validated prior or repeated comparison workflow.
               <b>Uniform cell</b>, shown only for W2C-like phases, preserves starting axis ratios while keeping the refined volume.
               It is off in the WC/W2C preset because it changes the fit and is meant for explicit diagnostic comparisons.
@@ -1048,6 +1079,7 @@
 <script>
 // ── State ──────────────────────────────────────────────────────────────────
 let selectedFile   = null;
+let selectedBypassFile = null;
 let selectedConfig = null;
 
 // ── Init: select first config ─────────────────────────────────────────────
@@ -1074,6 +1106,9 @@ function onDrop(e) {
   if (file) setFile(file);
 }
 function onFileSelect(e) { if (e.target.files[0]) setFile(e.target.files[0]); }
+function onBypassFileSelect(e) {
+  if (e.target.files[0]) setBypassFile(e.target.files[0]);
+}
 
 function setFile(file) {
   if (!file.name.endsWith('.xlsx')) {
@@ -1091,6 +1126,17 @@ function setFile(file) {
 }
 
 // ── Reaction config selection ─────────────────────────────────────────────
+function setBypassFile(file) {
+  if (!file.name.endsWith('.xlsx')) {
+    showError('Please select an .xlsx bypass file.');
+    return;
+  }
+  selectedBypassFile = file;
+  document.getElementById('bypass-file-status').innerHTML =
+    `<span class="file-name">${file.name}</span> ` +
+    `<span style="font-family:var(--mono);">(${(file.size/1024).toFixed(1)} KB)</span>`;
+}
+
 function selectConfig(el) {
   document.querySelectorAll('.config-card').forEach(c => c.classList.remove('selected'));
   el.classList.add('selected');
@@ -1129,11 +1175,17 @@ async function processGC() {
 
   const formData = new FormData();
   formData.append('file',            selectedFile);
+  if (selectedBypassFile) formData.append('bypass_file', selectedBypassFile);
   formData.append('reaction_config', selectedConfig);
   formData.append('catalyst_id',     catalystId);
   formData.append('temperature',     document.getElementById('temperature').value);
   formData.append('pressure',        document.getElementById('pressure').value);
   formData.append('ghsv',            document.getElementById('ghsv').value);
+  formData.append('run_duration_h',  document.getElementById('run_duration_h').value);
+  formData.append('injection_interval_min', document.getElementById('injection_interval_min').value);
+  formData.append('rejected_initial_injections', document.getElementById('rejected_initial_injections').value);
+  formData.append('registered_reaction_injections', document.getElementById('registered_reaction_injections').value);
+  formData.append('plot_style',      document.getElementById('gc_plot_style').value);
   formData.append('notes',           document.getElementById('notes').value);
   formData.append('inlet_flows',     JSON.stringify(inlets));
   formData.append('ss_start',        document.getElementById('ss_start').value);
@@ -1236,7 +1288,8 @@ function showResults(data) {
   const dlRow = document.getElementById('download-row');
   dlRow.innerHTML = `
     <button class="btn-sm green" onclick="openFolder('${escPath(data.output_dir)}')">📁 Open Output Folder</button>
-    <button class="btn-sm" onclick="downloadFile('${escPath(data.summary_path)}')">⬇ Summary Excel</button>
+    <button class="btn-sm" onclick="downloadFile('${escPath(data.plot_path)}')">Plot PNG</button>
+    <button class="btn-sm" onclick="downloadFile('${escPath(data.summary_path)}')">Analysis Workbook</button>
     <button class="btn-sm" onclick="downloadFile('${escPath(data.flows_path)}')">⬇ Flow Data CSV</button>
   `;
 
@@ -1349,7 +1402,7 @@ function openXrdFittingGuide() {
       <li><strong>Size:</strong> per-phase isotropic crystallite-size broadening. Use when one phase is visibly broader than another.</li>
       <li><strong>Mustrain:</strong> per-phase microstrain broadening. Use when broadening increases in a strain-like way and size alone is not sufficient.</li>
       <li><strong>PO:</strong> March-Dollase preferred orientation. <code>fixed</code> uses the entered value; <code>refined</code> lets GSAS-II vary it; <code>off</code> disables it. PO changes relative reflection intensities, so it can trade off with phase fraction.</li>
-      <li><strong>Axis/value:</strong> the orientation direction and March-Dollase ratio. Use h k l, or h k i l for hexagonal/trigonal phases; the redundant i index is converted before GSAS-II refinement. A value of 1.0 means no preferred orientation. Fixed values should come from a prior validated refinement, repeated related samples, or independent texture evidence.</li>
+      <li><strong>Axis/value:</strong> the orientation direction and March-Dollase ratio. A value of 1.0 means no preferred orientation. Fixed values should come from a prior validated refinement, repeated related samples, or independent texture evidence.</li>
       <li><strong>Uniform cell:</strong> a diagnostic constraint for W2C-like phases. It changes the fit and should not be part of a general preset unless validated for that sample family.</li>
     </ul>
   </div>
@@ -2281,33 +2334,13 @@ function _ensurePhaseOptions() {
 
 function _phaseOptsToBackendJSON() {
   // Convert UI-friendly entries to backend phase_options structure.
-  return xrdPhaseOptions.map((o, i) => {
-    const ph = xrdPhases[i] || {};
+  return xrdPhaseOptions.map(o => {
     let axis = null;
-    let axisInput = null;
-    let axisNotation = null;
     if (o.po_axis && typeof o.po_axis === 'string') {
       const parts = o.po_axis.trim().split(/[\s,]+/).map(x => parseInt(x, 10));
-      if (parts.length === 3 && parts.every(n => !isNaN(n))) {
-        axis = parts;
-        axisInput = parts;
-        axisNotation = 'hkl';
-      } else if (parts.length === 4 && parts.every(n => !isNaN(n))) {
-        axis = parts;
-        axisInput = parts;
-        axisNotation = 'hkil';
-      }
+      if (parts.length === 3 && parts.every(n => !isNaN(n))) axis = parts;
     } else if (Array.isArray(o.po_axis)) {
-      const parts = o.po_axis.map(x => parseInt(x, 10));
-      if (parts.length === 3 && parts.every(n => !isNaN(n))) {
-        axis = parts;
-        axisInput = parts;
-        axisNotation = 'hkl';
-      } else if (parts.length === 4 && parts.every(n => !isNaN(n))) {
-        axis = parts;
-        axisInput = parts;
-        axisNotation = 'hkil';
-      }
+      axis = o.po_axis;
     }
     return {
       refine_size: !!o.refine_size,
@@ -2315,8 +2348,6 @@ function _phaseOptsToBackendJSON() {
       po_mode: o.po_mode || 'off',
       po_value: parseFloat(o.po_value || 1.0),
       po_axis: axis,
-      po_axis_input: axisInput,
-      po_axis_notation: axisNotation,
       uniform_cell: !!o.uniform_cell,
     };
   });
@@ -2411,8 +2442,8 @@ function renderSelectedPhases() {
         <option value="fixed" ${opts.po_mode==='fixed'?'selected':''}>fixed</option>
         <option value="refined" ${opts.po_mode==='refined'?'selected':''}>refined</option>
       </select>
-      <label style="display:flex;align-items:center;gap:3px;" title="PO direction as h k l. Hexagonal/trigonal phases may also use four-index h k i l; the redundant i index is checked and converted before GSAS-II refinement.">
-        axis [<input type="text" data-pi="${i}" data-key="po_axis" value="${opts.po_axis||''}" style="width:68px;font-size:11px;padding:1px 4px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:3px;text-align:center;">]
+      <label style="display:flex;align-items:center;gap:3px;" title="PO direction h k l (space-separated). Use a physically plausible texture axis; hexagonal plate/needle textures often involve 0 0 1, but this is not automatic.">
+        axis [<input type="text" data-pi="${i}" data-key="po_axis" value="${opts.po_axis||''}" style="width:50px;font-size:11px;padding:1px 4px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:3px;text-align:center;">]
       </label>
       <label style="display:flex;align-items:center;gap:3px;" title="March-Dollase ratio. 1 = no texture. Refine to infer a repeatable value, then fix only after validating against baseline fits or independent texture evidence.">
         value <input type="number" data-pi="${i}" data-key="po_value" value="${opts.po_value}" step="0.001" min="0.1" max="3.0" style="width:60px;font-size:11px;padding:1px 4px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:3px;">
@@ -2583,8 +2614,6 @@ function summarizeResultForPreset(data) {
       fwhm_reference_source: ph.fwhm_reference_source,
       preferred_orientation_value: ph.preferred_orientation_value,
       preferred_orientation_axis: ph.preferred_orientation_axis,
-      preferred_orientation_axis_input: ph.preferred_orientation_axis_input,
-      preferred_orientation_axis_notation: ph.preferred_orientation_axis_notation,
       preferred_orientation_mode: ph.preferred_orientation_mode,
       preferred_orientation_refined: ph.preferred_orientation_refined,
       delta_a_pct: ph.delta_a_pct,
@@ -2923,17 +2952,11 @@ function renderReusableFitParameters(data) {
     const poResultAxis = Array.isArray(ph.preferred_orientation_axis)
       ? ph.preferred_orientation_axis.join(' ')
       : '';
-    const poResultAxisInput = Array.isArray(ph.preferred_orientation_axis_input)
-      ? ph.preferred_orientation_axis_input.join(' ')
-      : '';
-    const poResultAxisNote = (poResultAxisInput && poResultAxisInput !== poResultAxis)
-      ? `, input ${poResultAxisInput}`
-      : '';
     const poResultMode = ph.preferred_orientation_mode
       ? String(ph.preferred_orientation_mode).replace(/_/g, ' ')
       : '';
     const poResultLine = ph.preferred_orientation_value != null
-      ? `${fmtResultValue(ph.preferred_orientation_value, 4)}${poResultAxis ? ` [${escHtml(poResultAxis)}]` : ''}${poResultAxisNote ? ` (${escHtml(poResultAxisNote.replace(/^, /, ''))})` : ''}${poResultMode ? ` (${escHtml(poResultMode)})` : ''}`
+      ? `${fmtResultValue(ph.preferred_orientation_value, 4)}${poResultAxis ? ` [${escHtml(poResultAxis)}]` : ''}${poResultMode ? ` (${escHtml(poResultMode)})` : ''}`
       : 'not active';
 
     const hapBits = [
@@ -3330,17 +3353,11 @@ function showXRDResults(data) {
     const poAxis = Array.isArray(ph.preferred_orientation_axis)
       ? ph.preferred_orientation_axis.join(' ')
       : '';
-    const poAxisInput = Array.isArray(ph.preferred_orientation_axis_input)
-      ? ph.preferred_orientation_axis_input.join(' ')
-      : '';
-    const poAxisInputNote = (poAxisInput && poAxisInput !== poAxis)
-      ? ` from ${poAxisInput}`
-      : '';
     const poMode = ph.preferred_orientation_mode
       ? String(ph.preferred_orientation_mode).replace(/_/g, ' ')
       : '';
     const poResultHtml = ph.preferred_orientation_value != null
-      ? `<div><span style="color:var(--muted);">PO = </span>${fmtResultValue(ph.preferred_orientation_value, 4)}${poAxis ? ` [${poAxis}]` : ''}${poAxisInputNote ? ` (${escHtml(poAxisInputNote.trim())})` : ''}${poMode ? ` (${poMode})` : ''}</div>`
+      ? `<div><span style="color:var(--muted);">PO = </span>${fmtResultValue(ph.preferred_orientation_value, 4)}${poAxis ? ` [${poAxis}]` : ''}${poMode ? ` (${poMode})` : ''}</div>`
       : '';
     pr.innerHTML += `
       <div style="background:var(--surface2);border:1px solid ${c};

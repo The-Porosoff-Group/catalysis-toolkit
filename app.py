@@ -264,6 +264,14 @@ def process_gc():
         safe_name   = re.sub(r'[^\w\-.]', '_', f.filename)
         upload_path = os.path.join(UPLOAD_DIR, safe_name)
         f.save(upload_path)
+        bypass_path = None
+        bypass_file = request.files.get('bypass_file')
+        if bypass_file and bypass_file.filename:
+            if not bypass_file.filename.endswith('.xlsx'):
+                return jsonify({'error': 'Bypass file must be an .xlsx file.'}), 400
+            safe_bypass = 'bypass_' + re.sub(r'[^\w\-.]', '_', bypass_file.filename)
+            bypass_path = os.path.join(UPLOAD_DIR, safe_bypass)
+            bypass_file.save(bypass_path)
         form        = request.form
         config_file = form.get('reaction_config')
         config_path = os.path.join(MODULES_DIR, 'reaction_configs', config_file)
@@ -276,8 +284,14 @@ def process_gc():
             'temperature': form.get('temperature', ''),
             'pressure':    form.get('pressure', ''),
             'ghsv':        form.get('ghsv', ''),
+            'run_duration_h': form.get('run_duration_h', ''),
+            'injection_interval_min': form.get('injection_interval_min', ''),
+            'rejected_initial_injections': form.get('rejected_initial_injections', ''),
+            'registered_reaction_injections': form.get('registered_reaction_injections', ''),
+            'plot_style':  form.get('plot_style', 'auto'),
             'notes':       form.get('notes', ''),
             'source_file': f.filename,
+            'bypass_file': bypass_file.filename if bypass_path else '',
             'reaction':    reaction_config['name'],
         }
         inlet_flows = {}
@@ -298,10 +312,12 @@ def process_gc():
         result = gc_processor.run(
             filepath=upload_path, output_dir=output_dir,
             reaction_config=reaction_config, metadata=metadata,
-            inlet_flows=inlet_flows, ss_start=ss_start, ss_end=ss_end)
+            inlet_flows=inlet_flows, ss_start=ss_start, ss_end=ss_end,
+            bypass_filepath=bypass_path)
         with open(result['plot_path'], 'rb') as img:
             plot_b64 = base64.b64encode(img.read()).decode('utf-8')
         clean = {k: v for k, v in result.items() if k != 'plot_path'}
+        clean['plot_path'] = result['plot_path']
         clean['plot_b64'] = plot_b64
         return jsonify(clean)
     except Exception as e:
@@ -493,7 +509,6 @@ def xrd_fetch_cif():
             print(f"  phase_hint merge: applied display/intent metadata "
                   f"only for {cod_id}; CIF cell remains authoritative.",
                   flush=True)
-        _xrd_normalize_conventional_z(result)
 
         # Store CIF text server-side; don't send over wire
         cif_text  = result.pop('cif_text', '')
@@ -708,7 +723,6 @@ def xrd_preview_cif():
             phase['gamma_wc1x'] = True
             phase['gamma_c_occupancy'] = gamma_c_occ
             phase['gamma_vacancy_x'] = max(0.0, min(1.0, 1.0 - gamma_c_occ))
-        _xrd_normalize_conventional_z(phase)
         phase['cif_check'] = cif_check
         phase['validation'] = cif_check
         return jsonify({
@@ -727,44 +741,6 @@ def xrd_preview_cif():
         })
     except Exception as e:
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
-
-
-def _xrd_apply_locked_cell_to_cif(ph):
-    """Rewrite CIF cell scalars when a GUI-refined cell was promoted/fixed."""
-    if not ph.get('cell_locked_from_fit') or not ph.get('cif_text'):
-        return
-    text = str(ph.get('cif_text') or '')
-    replacements = {
-        '_cell_length_a': ph.get('a'),
-        '_cell_length_b': ph.get('b'),
-        '_cell_length_c': ph.get('c'),
-        '_cell_angle_alpha': ph.get('alpha'),
-        '_cell_angle_beta': ph.get('beta'),
-        '_cell_angle_gamma': ph.get('gamma'),
-    }
-    for key, value in replacements.items():
-        try:
-            n = float(value)
-        except (TypeError, ValueError):
-            continue
-        formatted = f"{n:.5f}" if 'angle' in key else f"{n:.6f}"
-        pattern = re.compile(rf"(^\s*{re.escape(key)}\s+).*$",
-                             re.IGNORECASE | re.MULTILINE)
-        if pattern.search(text):
-            text = pattern.sub(rf"\g<1>{formatted}", text)
-        else:
-            text = f"{text.rstrip()}\n{key} {formatted}\n"
-    ph['cif_text'] = text
-
-
-def _xrd_normalize_conventional_z(ph):
-    """Normalize MP primitive F-cubic cells to the conventional phase card."""
-    try:
-        from modules.xrd.crystallography import conventionalize_phase_cell
-        ph.update(conventionalize_phase_cell(ph))
-    except Exception:
-        pass
-    return ph
 
 
 @app.route('/api/xrd/mp_debug_cif', methods=['GET'])
@@ -1022,7 +998,6 @@ def process_xrd():
                     break
             if text:
                 ph['cif_text'] = text
-            _xrd_apply_locked_cell_to_cif(ph)
 
         # Optional instrument parameter file for GSAS-II
         instprm_file_path = None
@@ -1291,8 +1266,7 @@ def process_xrd():
                     form.get('verify_refine_w2c_mustrain', '').lower() == 'true',
                 # Generic per-phase refinement options.  JSON-serialized
                 # list of dicts (one per phase, by index) with keys
-                # refine_cell, refine_uiso, refine_size, refine_mustrain,
-                # po_mode, po_value, po_axis.
+                # refine_size, refine_mustrain, po_mode, po_value, po_axis.
                 # Frontend builds this from the per-phase control cards.
                 'phase_options':
                     (lambda _raw: (
