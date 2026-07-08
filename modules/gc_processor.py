@@ -953,7 +953,9 @@ def _selectivity_groups(df_sel, species_config, metadata=None):
     paraffins = {'C2H6', 'C3H8', 'nC4H10', 'iC4H10'}
     cn_lookup = {cfg['label']: cfg.get('cn', 0) for cfg in species_config.values()}
     for col in df_sel.columns:
-        label = col.replace('S_', '')
+        raw_label = col.replace('S_', '')
+        label = raw_label[:-4] if raw_label.endswith('_TCD') else raw_label
+        cn = cn_lookup.get(raw_label, cn_lookup.get(label, 0))
         if label == 'CO':
             groups['CO'].append(col)
         elif label == 'CH4':
@@ -962,13 +964,13 @@ def _selectivity_groups(df_sel, species_config, metadata=None):
             groups['Methanol'].append(col)
         elif label == 'CO2':
             groups['CO2'].append(col)
-        elif use_c2_plus and cn_lookup.get(label, 0) >= 2:
+        elif use_c2_plus and cn >= 2:
             groups['C2+'].append(col)
         elif label in olefins:
             groups['C2-C4 Olefins'].append(col)
         elif label in paraffins:
             groups['C2-C4 Paraffins'].append(col)
-        elif cn_lookup.get(label, 0) >= 5:
+        elif cn >= 5:
             groups['C5+'].append(col)
         else:
             groups['Other C products'].append(col)
