@@ -758,14 +758,17 @@ def _select_existing_column(df, candidates):
     return candidates[0] if candidates else None
 
 
-def _selectivity_group_order(metadata=None):
+def _raw_selectivity_group_order(metadata=None):
     raw = (metadata or {}).get('selectivity_group_order')
     if isinstance(raw, str):
-        order = [x.strip() for x in raw.split(',') if x.strip()]
+        return [x.strip() for x in raw.split(',') if x.strip()]
     elif raw:
-        order = [str(x) for x in raw if x]
-    else:
-        order = []
+        return [str(x) for x in raw if x]
+    return []
+
+
+def _selectivity_group_order(metadata=None):
+    order = _raw_selectivity_group_order(metadata)
     for group in _DEFAULT_SELECTIVITY_GROUP_ORDER:
         if group not in order:
             order.append(group)
@@ -929,10 +932,13 @@ def _add_time_on_stream_column(df, metadata):
     return df, len(rxn_idx)
 
 
-def _selectivity_groups(df_sel, species_config):
+def _selectivity_groups(df_sel, species_config, metadata=None):
+    configured_groups = set(_raw_selectivity_group_order(metadata))
+    use_c2_plus = 'C2+' in configured_groups
     groups = {
         'CO': [],
         'CH4': [],
+        'C2+': [],
         'C2-C4 Olefins': [],
         'C2-C4 Paraffins': [],
         'C5+': [],
@@ -956,6 +962,8 @@ def _selectivity_groups(df_sel, species_config):
             groups['Methanol'].append(col)
         elif label == 'CO2':
             groups['CO2'].append(col)
+        elif use_c2_plus and cn_lookup.get(label, 0) >= 2:
+            groups['C2+'].append(col)
         elif label in olefins:
             groups['C2-C4 Olefins'].append(col)
         elif label in paraffins:
@@ -1114,11 +1122,12 @@ def _draw_time_on_stream_plot(df, df_sel, total_C_out, C_in_flow,
     title = metadata.get('catalyst_id') or metadata.get('source_file') or 'GC run'
     txt(x0 + plot_w / 2, 38, title, anchor='mm', font_obj=title_font)
 
-    groups = _selectivity_groups(df_sel, species_config)
+    groups = _selectivity_groups(df_sel, species_config, metadata)
     group_order = _selectivity_group_order(metadata)
     palette = {
         'CO': (50, 130, 210),
         'CH4': (75, 175, 70),
+        'C2+': (146, 95, 178),
         'C2-C4 Paraffins': (220, 38, 38),
         'C2-C4 Olefins': (105, 88, 205),
         'C5+': (247, 205, 64),
@@ -1325,18 +1334,21 @@ def _draw_stacked_selectivity_plot(df, df_sel, total_C_out, C_in_flow,
         'CH4': (54, 211, 112),
         'C2-C4 Olefins': (116, 122, 230),
         'C2-C4 Paraffins': (216, 78, 71),
+        'C2+': (146, 95, 178),
         'C5+': (247, 205, 64),
         'Methanol': (34, 184, 194),
         'CO2': (214, 214, 214),
         'Other C products': (180, 180, 180),
     }
-    groups = _selectivity_groups(df_sel, species_config)
+    groups = _selectivity_groups(df_sel, species_config, metadata)
     group_order = _selectivity_group_order(metadata)
     group_values = {}
     for group in group_order:
         cols = groups.get(group, [])
         if cols:
-            group_values[group] = df_sel.loc[rxn.index, cols].fillna(0).sum(axis=1).to_numpy() * 100.0
+            vals = df_sel.loc[rxn.index, cols].fillna(0).sum(axis=1).to_numpy() * 100.0
+            if np.isfinite(vals).any() and np.nanmax(vals) > 0.02:
+                group_values[group] = vals
 
     if len(rxn) > 1:
         sorted_x = np.sort(x_vals[valid_x])
@@ -2258,7 +2270,7 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
 
     reactant_inlet_cell = inlet_setting_cells.get(reactant_label)
 
-    groups = _selectivity_groups(df_sel, species_config)
+    groups = _selectivity_groups(df_sel, species_config, metadata)
     group_order = _selectivity_group_order(metadata)
     present_groups = [g for g in group_order if g in groups]
     product_labels = [col.replace('S_', '') for col in df_sel.columns]
