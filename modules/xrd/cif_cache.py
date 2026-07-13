@@ -200,18 +200,31 @@ def cached_fetch_mp(mp_id, api_key, fetch_fn):
 
     # ── Fixture takes priority over cache ─────────────────────────────
     try:
-        from .mp_api import _fixture_cif_for
+        from .mp_api import (
+            _apply_fixture_record,
+            _fixture_cif_for,
+            _fixture_metadata_for,
+        )
         fixture_text = _fixture_cif_for(mp_id)
     except Exception:
         fixture_text = None
     if fixture_text:
-        from .crystallography import parse_cif
+        from .crystallography import parse_cif, conventionalize_phase_cell
         parsed = parse_cif(fixture_text)
+        try:
+            parsed.update(_fixture_metadata_for(mp_id))
+            parsed = conventionalize_phase_cell(parsed)
+        except Exception:
+            pass
         parsed['mp_id']    = mp_id
         parsed['cod_id']   = mp_id
         parsed['cif_text'] = fixture_text
         parsed['source']   = 'mp'
         parsed['cached']   = False
+        try:
+            parsed = _apply_fixture_record(parsed, mp_id)
+        except Exception:
+            pass
         # Refresh cache with the fixture so subsequent fetches stay
         # consistent even if this code path ever skips the fixture lookup.
         cache.put(key, fixture_text)

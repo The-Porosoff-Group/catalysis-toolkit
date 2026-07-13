@@ -324,6 +324,7 @@
       ],
       "phase_options": [
         {
+          "refine_cell": true,
           "refine_size": false,
           "refine_mustrain": false,
           "po_mode": "fixed",
@@ -332,6 +333,7 @@
           "uniform_cell": false
         },
         {
+          "refine_cell": true,
           "refine_size": false,
           "refine_mustrain": false,
           "po_mode": "off",
@@ -414,431 +416,6 @@
             "delta_b_pct": -1.935,
             "delta_c_pct": -0.395,
             "delta_volume_pct": -2.688
-          }
-        ]
-      }
-    },
-    {
-      "id": "moc-mo2c-synth-20260512093817",
-      "name": "MoC-Mo2C Synth",
-      "description": "",
-      "created_at": "2026-05-12T09:38:17",
-      "updated_at": "2026-05-12T09:38:17",
-      "version": 1,
-      "phases": [
-        {
-          "name": "MoC",
-          "formula": "MoC",
-          "source": "mp",
-          "cod_id": "mp-2746",
-          "mp_id": "mp-2746",
-          "cache_key": "mp:mp-2746",
-          "a": 4.38296,
-          "b": 4.38296,
-          "c": 4.38296,
-          "alpha": 90,
-          "beta": 90,
-          "gamma": 90,
-          "system": "cubic",
-          "spacegroup": "Fm-3m",
-          "spacegroup_number": 225,
-          "Z": 4,
-          "cell_locked_from_fit": true,
-          "stick_pattern": [
-            {
-              "d": 2.5306,
-              "hkl": "(111)",
-              "rel_int": 1,
-              "two_theta": 35.442
-            },
-            {
-              "d": 2.1916,
-              "hkl": "(200)",
-              "rel_int": 0.736,
-              "two_theta": 41.155
-            },
-            {
-              "d": 1.5497,
-              "hkl": "(220)",
-              "rel_int": 0.44,
-              "two_theta": 59.611
-            },
-            {
-              "d": 1.3216,
-              "hkl": "(311)",
-              "rel_int": 0.353,
-              "two_theta": 71.303
-            },
-            {
-              "d": 1.2653,
-              "hkl": "(222)",
-              "rel_int": 0.139,
-              "two_theta": 75.002
-            },
-            {
-              "d": 1.0958,
-              "hkl": "(400)",
-              "rel_int": 0.066,
-              "two_theta": 89.328
-            },
-            {
-              "d": 1.0056,
-              "hkl": "(331)",
-              "rel_int": 0.162,
-              "two_theta": 99.996
-            }
-          ],
-          "cif_check": {
-            "cell": {
-              "a": 3.09934095,
-              "alpha": 60,
-              "b": 3.09934095,
-              "beta": 60,
-              "c": 3.09934095,
-              "gamma": 60
-            },
-            "expected_sg": 225,
-            "messages": [
-              "Source CIF is P1/full-cell; GSAS-II prep will attempt a symmetry-safe reduction before refinement."
-            ],
-            "ok": true,
-            "parsed_sg": 1,
-            "site_count": 2,
-            "status": "warn"
-          },
-          "validation": {
-            "cell": {
-              "a": 3.09934095,
-              "alpha": 60,
-              "b": 3.09934095,
-              "beta": 60,
-              "c": 3.09934095,
-              "gamma": 60
-            },
-            "expected_sg": 225,
-            "messages": [
-              "Source CIF is P1/full-cell; GSAS-II prep will attempt a symmetry-safe reduction before refinement."
-            ],
-            "ok": true,
-            "parsed_sg": 1,
-            "site_count": 2,
-            "status": "warn"
-          },
-          "_plot_color": "#f78166"
-        },
-        {
-          "name": "Mo2C",
-          "formula": "Mo2C",
-          "source": "mp",
-          "cod_id": "mp-1552",
-          "mp_id": "mp-1552",
-          "cache_key": "mp:mp-1552",
-          "a": 4.7285431,
-          "b": 5.20975702,
-          "c": 6.05260249,
-          "alpha": 90,
-          "beta": 90,
-          "gamma": 90,
-          "system": "orthorhombic",
-          "spacegroup": "Pbcn",
-          "spacegroup_number": 60,
-          "Z": 4,
-          "stick_pattern": [
-            {
-              "d": 2.6168,
-              "hkl": "(012)",
-              "rel_int": 0.175,
-              "two_theta": 34.238
-            },
-            {
-              "d": 2.6049,
-              "hkl": "(020)",
-              "rel_int": 0.113,
-              "two_theta": 34.4
-            },
-            {
-              "d": 2.3643,
-              "hkl": "(200)",
-              "rel_int": 0.321,
-              "two_theta": 38.028
-            },
-            {
-              "d": 2.2896,
-              "hkl": "(112)",
-              "rel_int": 1,
-              "two_theta": 39.318
-            },
-            {
-              "d": 2.2816,
-              "hkl": "(120)",
-              "rel_int": 0.455,
-              "two_theta": 39.462
-            },
-            {
-              "d": 1.7543,
-              "hkl": "(212)",
-              "rel_int": 0.148,
-              "two_theta": 52.09
-            },
-            {
-              "d": 1.7507,
-              "hkl": "(220)",
-              "rel_int": 0.092,
-              "two_theta": 52.206
-            },
-            {
-              "d": 1.5132,
-              "hkl": "(004)",
-              "rel_int": 0.086,
-              "two_theta": 61.202
-            },
-            {
-              "d": 1.5062,
-              "hkl": "(032)",
-              "rel_int": 0.17,
-              "two_theta": 61.514
-            },
-            {
-              "d": 1.3502,
-              "hkl": "(312)",
-              "rel_int": 0.161,
-              "two_theta": 69.571
-            },
-            {
-              "d": 1.3485,
-              "hkl": "(320)",
-              "rel_int": 0.074,
-              "two_theta": 69.668
-            },
-            {
-              "d": 1.3084,
-              "hkl": "(024)",
-              "rel_int": 0.023,
-              "two_theta": 72.131
-            },
-            {
-              "d": 1.2745,
-              "hkl": "(204)",
-              "rel_int": 0.078,
-              "two_theta": 74.37
-            },
-            {
-              "d": 1.2703,
-              "hkl": "(232)",
-              "rel_int": 0.154,
-              "two_theta": 74.654
-            },
-            {
-              "d": 1.261,
-              "hkl": "(124)",
-              "rel_int": 0.116,
-              "two_theta": 75.3
-            },
-            {
-              "d": 1.2557,
-              "hkl": "(140)",
-              "rel_int": 0.067,
-              "two_theta": 75.677
-            },
-            {
-              "d": 1.1821,
-              "hkl": "(400)",
-              "rel_int": 0.035,
-              "two_theta": 81.325
-            },
-            {
-              "d": 1.1448,
-              "hkl": "(224)",
-              "rel_int": 0.04,
-              "two_theta": 84.575
-            },
-            {
-              "d": 1.1408,
-              "hkl": "(240)",
-              "rel_int": 0.024,
-              "two_theta": 84.942
-            },
-            {
-              "d": 1.0773,
-              "hkl": "(412)",
-              "rel_int": 0.019,
-              "two_theta": 91.287
-            },
-            {
-              "d": 1.0765,
-              "hkl": "(420)",
-              "rel_int": 0.013,
-              "two_theta": 91.378
-            },
-            {
-              "d": 1.0067,
-              "hkl": "(324)",
-              "rel_int": 0.062,
-              "two_theta": 99.835
-            }
-          ],
-          "cif_check": {
-            "cell": {
-              "a": 4.7285431,
-              "alpha": 90,
-              "b": 5.20975702,
-              "beta": 90,
-              "c": 6.05260249,
-              "gamma": 90
-            },
-            "expected_sg": 60,
-            "messages": [
-              "Source CIF is P1/full-cell; GSAS-II prep will attempt a symmetry-safe reduction before refinement."
-            ],
-            "ok": true,
-            "parsed_sg": 1,
-            "site_count": 12,
-            "status": "warn"
-          },
-          "validation": {
-            "cell": {
-              "a": 4.7285431,
-              "alpha": 90,
-              "b": 5.20975702,
-              "beta": 90,
-              "c": 6.05260249,
-              "gamma": 90
-            },
-            "expected_sg": 60,
-            "messages": [
-              "Source CIF is P1/full-cell; GSAS-II prep will attempt a symmetry-safe reduction before refinement."
-            ],
-            "ok": true,
-            "parsed_sg": 1,
-            "site_count": 12,
-            "status": "warn"
-          },
-          "_plot_color": "#56d364"
-        }
-      ],
-      "phase_options": [
-        {
-          "refine_cell": true,
-          "refine_uiso": false,
-          "refine_size": false,
-          "refine_mustrain": false,
-          "po_mode": "off",
-          "po_value": 1,
-          "po_axis": "1 1 1",
-          "uniform_cell": false
-        },
-        {
-          "refine_cell": true,
-          "refine_uiso": false,
-          "refine_size": false,
-          "refine_mustrain": false,
-          "po_mode": "off",
-          "po_value": 1,
-          "po_axis": "",
-          "uniform_cell": false
-        }
-      ],
-      "controls": {
-        "wavelength": "1.54056",
-        "wavelength_source": "1.54056",
-        "tt_min": "20",
-        "tt_max": "60",
-        "n_bg_coeffs": "auto",
-        "instrument": "smartlab",
-        "fix_y_value": "",
-        "checkboxes": {
-          "xrd-calibration-mode": false,
-          "xrd-verification-mode": true,
-          "xrd-verify-cell": true,
-          "xrd-phase-isolation": true,
-          "xrd-zero-not-disp": false,
-          "xrd-refine-x": true,
-          "xrd-fix-y": false,
-          "xrd-y-nonneg": true,
-          "xrd-refine-uiso": false,
-          "xrd-refine-xyz": false
-        }
-      },
-      "result_summary": {
-        "method": "GSAS-II",
-        "statistics": {
-          "GoF": 0.629,
-          "Rp": 5.59,
-          "Rwp": 7.04,
-          "chi2": 0.396
-        },
-        "fit_warnings": [
-          "Refined Y became negative and was clamped to 0; this is a sign that X/Y broadening terms may be trading off.",
-          "Phase 1 cell refinement is active. Cell motion shifts tick positions and can compensate for zero/sample-displacement errors; compare refined cell changes against the starting CIF and nearby phase overlaps.",
-          "Phase 2 cell refinement is active. Cell motion shifts tick positions and can compensate for zero/sample-displacement errors; compare refined cell changes against the starting CIF and nearby phase overlaps.",
-          "Large b cell change for 'Mo2C Pbcn' (16.181% vs input CIF); check phase identity and sample displacement/zero correction.",
-          "Large c cell change for 'Mo2C Pbcn' (-13.939% vs input CIF); check phase identity and sample displacement/zero correction."
-        ],
-        "zero_shift": 0,
-        "displacement_um": 0,
-        "displacement_param": "DisplaceX",
-        "phase_results": [
-          {
-            "name": "MoC Fm-3m",
-            "formula": "MoC",
-            "spacegroup": "Fm-3m",
-            "weight_fraction_pct": 38.3,
-            "weight_fraction_err_pct": 1.51,
-            "weight_fraction_err_source": "full_covariance+systematic_floor+binary_closure",
-            "crystallite_size_nm": 29.75,
-            "crystallite_size_source": "scherrer_phase_pattern",
-            "fwhm_reference_two_theta": 35.4555,
-            "fwhm_reference_hkl": [
-              1,
-              1,
-              1
-            ],
-            "fwhm_reference_source": "strongest_phase_pattern_peak",
-            "preferred_orientation_value": 1,
-            "preferred_orientation_axis": [
-              0,
-              0,
-              1
-            ],
-            "preferred_orientation_axis_input": null,
-            "preferred_orientation_axis_notation": null,
-            "preferred_orientation_mode": "off",
-            "preferred_orientation_refined": false,
-            "delta_a_pct": 0,
-            "delta_b_pct": 0,
-            "delta_c_pct": 0,
-            "delta_volume_pct": -0.001
-          },
-          {
-            "name": "Mo2C Pbcn",
-            "formula": "Mo2C",
-            "spacegroup": "Pbcn",
-            "weight_fraction_pct": 61.7,
-            "weight_fraction_err_pct": 1.51,
-            "weight_fraction_err_source": "full_covariance+systematic_floor+binary_closure",
-            "crystallite_size_nm": 23.41,
-            "crystallite_size_source": "scherrer_phase_pattern",
-            "fwhm_reference_two_theta": 39.3794,
-            "fwhm_reference_hkl": [
-              1,
-              2,
-              1
-            ],
-            "fwhm_reference_source": "strongest_phase_pattern_peak",
-            "preferred_orientation_value": 1,
-            "preferred_orientation_axis": [
-              0,
-              0,
-              1
-            ],
-            "preferred_orientation_axis_input": null,
-            "preferred_orientation_axis_notation": null,
-            "preferred_orientation_mode": "off",
-            "preferred_orientation_refined": false,
-            "delta_a_pct": -0.011,
-            "delta_b_pct": 16.181,
-            "delta_c_pct": -13.939,
-            "delta_volume_pct": -0.024
           }
         ]
       }
@@ -1171,6 +748,471 @@
             "delta_b_pct": 0,
             "delta_c_pct": 0,
             "delta_volume_pct": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "moc-mo2c-synth-20260512093817",
+      "name": "MoC-Mo2C Synth",
+      "description": "",
+      "created_at": "2026-05-12T09:38:17",
+      "updated_at": "2026-05-18T11:21:28",
+      "version": 1,
+      "phases": [
+        {
+          "name": "MoC",
+          "formula": "MoC",
+          "source": "mp",
+          "cod_id": "mp-2746",
+          "mp_id": "mp-2746",
+          "cache_key": "mp:mp-2746",
+          "a": 4.38296,
+          "b": 4.38296,
+          "c": 4.38296,
+          "alpha": 90,
+          "beta": 90,
+          "gamma": 90,
+          "system": "cubic",
+          "spacegroup": "Fm-3m",
+          "spacegroup_number": 225,
+          "Z": 4,
+          "stick_pattern": [
+            {
+              "d": 2.5306,
+              "hkl": "(111)",
+              "rel_int": 1,
+              "two_theta": 35.442
+            },
+            {
+              "d": 2.1916,
+              "hkl": "(200)",
+              "rel_int": 0.736,
+              "two_theta": 41.155
+            },
+            {
+              "d": 1.5497,
+              "hkl": "(220)",
+              "rel_int": 0.44,
+              "two_theta": 59.611
+            },
+            {
+              "d": 1.3216,
+              "hkl": "(311)",
+              "rel_int": 0.353,
+              "two_theta": 71.303
+            },
+            {
+              "d": 1.2653,
+              "hkl": "(222)",
+              "rel_int": 0.139,
+              "two_theta": 75.002
+            },
+            {
+              "d": 1.0958,
+              "hkl": "(400)",
+              "rel_int": 0.066,
+              "two_theta": 89.328
+            },
+            {
+              "d": 1.0056,
+              "hkl": "(331)",
+              "rel_int": 0.162,
+              "two_theta": 99.996
+            }
+          ],
+          "cif_check": {
+            "cell": {
+              "a": 3.09934095,
+              "alpha": 60,
+              "b": 3.09934095,
+              "beta": 60,
+              "c": 3.09934095,
+              "gamma": 60
+            },
+            "expected_sg": 225,
+            "messages": [
+              "Source CIF is P1/full-cell; GSAS-II prep will attempt a symmetry-safe reduction before refinement."
+            ],
+            "ok": true,
+            "parsed_sg": 1,
+            "site_count": 2,
+            "status": "warn"
+          },
+          "validation": {
+            "cell": {
+              "a": 3.09934095,
+              "alpha": 60,
+              "b": 3.09934095,
+              "beta": 60,
+              "c": 3.09934095,
+              "gamma": 60
+            },
+            "expected_sg": 225,
+            "messages": [
+              "Source CIF is P1/full-cell; GSAS-II prep will attempt a symmetry-safe reduction before refinement."
+            ],
+            "ok": true,
+            "parsed_sg": 1,
+            "site_count": 2,
+            "status": "warn"
+          },
+          "_plot_color": "#f78166"
+        },
+        {
+          "name": "Mo2C",
+          "formula": "Mo2C",
+          "source": "mp",
+          "cod_id": "mp-1552",
+          "mp_id": "mp-1552",
+          "cache_key": "mp:mp-1552",
+          "a": 4.7285431,
+          "b": 5.20975702,
+          "c": 6.05260249,
+          "alpha": 90,
+          "beta": 90,
+          "gamma": 90,
+          "system": "orthorhombic",
+          "spacegroup": "Pbcn",
+          "spacegroup_number": 60,
+          "Z": 4,
+          "stick_pattern": [
+            {
+              "d": 2.6168,
+              "hkl": "(012)",
+              "rel_int": 0.175,
+              "two_theta": 34.238
+            },
+            {
+              "d": 2.6049,
+              "hkl": "(020)",
+              "rel_int": 0.113,
+              "two_theta": 34.4
+            },
+            {
+              "d": 2.3643,
+              "hkl": "(200)",
+              "rel_int": 0.321,
+              "two_theta": 38.028
+            },
+            {
+              "d": 2.2896,
+              "hkl": "(112)",
+              "rel_int": 1,
+              "two_theta": 39.318
+            },
+            {
+              "d": 2.2816,
+              "hkl": "(120)",
+              "rel_int": 0.455,
+              "two_theta": 39.462
+            },
+            {
+              "d": 1.7543,
+              "hkl": "(212)",
+              "rel_int": 0.148,
+              "two_theta": 52.09
+            },
+            {
+              "d": 1.7507,
+              "hkl": "(220)",
+              "rel_int": 0.092,
+              "two_theta": 52.206
+            },
+            {
+              "d": 1.5132,
+              "hkl": "(004)",
+              "rel_int": 0.086,
+              "two_theta": 61.202
+            },
+            {
+              "d": 1.5062,
+              "hkl": "(032)",
+              "rel_int": 0.17,
+              "two_theta": 61.514
+            },
+            {
+              "d": 1.3502,
+              "hkl": "(312)",
+              "rel_int": 0.161,
+              "two_theta": 69.571
+            },
+            {
+              "d": 1.3485,
+              "hkl": "(320)",
+              "rel_int": 0.074,
+              "two_theta": 69.668
+            },
+            {
+              "d": 1.3084,
+              "hkl": "(024)",
+              "rel_int": 0.023,
+              "two_theta": 72.131
+            },
+            {
+              "d": 1.2745,
+              "hkl": "(204)",
+              "rel_int": 0.078,
+              "two_theta": 74.37
+            },
+            {
+              "d": 1.2703,
+              "hkl": "(232)",
+              "rel_int": 0.154,
+              "two_theta": 74.654
+            },
+            {
+              "d": 1.261,
+              "hkl": "(124)",
+              "rel_int": 0.116,
+              "two_theta": 75.3
+            },
+            {
+              "d": 1.2557,
+              "hkl": "(140)",
+              "rel_int": 0.067,
+              "two_theta": 75.677
+            },
+            {
+              "d": 1.1821,
+              "hkl": "(400)",
+              "rel_int": 0.035,
+              "two_theta": 81.325
+            },
+            {
+              "d": 1.1448,
+              "hkl": "(224)",
+              "rel_int": 0.04,
+              "two_theta": 84.575
+            },
+            {
+              "d": 1.1408,
+              "hkl": "(240)",
+              "rel_int": 0.024,
+              "two_theta": 84.942
+            },
+            {
+              "d": 1.0773,
+              "hkl": "(412)",
+              "rel_int": 0.019,
+              "two_theta": 91.287
+            },
+            {
+              "d": 1.0765,
+              "hkl": "(420)",
+              "rel_int": 0.013,
+              "two_theta": 91.378
+            },
+            {
+              "d": 1.0067,
+              "hkl": "(324)",
+              "rel_int": 0.062,
+              "two_theta": 99.835
+            }
+          ],
+          "cif_check": {
+            "cell": {
+              "a": 4.7285431,
+              "alpha": 90,
+              "b": 5.20975702,
+              "beta": 90,
+              "c": 6.05260249,
+              "gamma": 90
+            },
+            "expected_sg": 60,
+            "messages": [
+              "Source CIF is P1/full-cell; GSAS-II prep will attempt a symmetry-safe reduction before refinement."
+            ],
+            "ok": true,
+            "parsed_sg": 1,
+            "site_count": 12,
+            "status": "warn"
+          },
+          "validation": {
+            "cell": {
+              "a": 4.7285431,
+              "alpha": 90,
+              "b": 5.20975702,
+              "beta": 90,
+              "c": 6.05260249,
+              "gamma": 90
+            },
+            "expected_sg": 60,
+            "messages": [
+              "Source CIF is P1/full-cell; GSAS-II prep will attempt a symmetry-safe reduction before refinement."
+            ],
+            "ok": true,
+            "parsed_sg": 1,
+            "site_count": 12,
+            "status": "warn"
+          },
+          "_plot_color": "#56d364"
+        },
+        {
+          "name": "mo_metal_bcc_im3m",
+          "formula": "Mo",
+          "source": "manual",
+          "cod_id": "manual",
+          "a": 3.147,
+          "b": 3.147,
+          "c": 3.147,
+          "alpha": 90,
+          "beta": 90,
+          "gamma": 90,
+          "system": "cubic",
+          "spacegroup": "",
+          "spacegroup_number": 229,
+          "Z": 2,
+          "stick_pattern": [
+            {
+              "d": 2.2253,
+              "hkl": "(110)",
+              "rel_int": 1,
+              "two_theta": 40.504
+            },
+            {
+              "d": 1.5735,
+              "hkl": "(200)",
+              "rel_int": 0.155,
+              "two_theta": 58.62
+            }
+          ],
+          "cif_check": {
+            "cell": {
+              "a": 3.147,
+              "alpha": 90,
+              "b": 3.147,
+              "beta": 90,
+              "c": 3.147,
+              "gamma": 90
+            },
+            "expected_sg": 229,
+            "messages": [
+              "CIF parsed as SG 229 with 1 atom site(s)."
+            ],
+            "ok": true,
+            "parsed_sg": 229,
+            "site_count": 1,
+            "status": "ok"
+          },
+          "validation": {
+            "cell": {
+              "a": 3.147,
+              "alpha": 90,
+              "b": 3.147,
+              "beta": 90,
+              "c": 3.147,
+              "gamma": 90
+            },
+            "expected_sg": 229,
+            "messages": [
+              "CIF parsed as SG 229 with 1 atom site(s)."
+            ],
+            "ok": true,
+            "parsed_sg": 229,
+            "site_count": 1,
+            "status": "ok"
+          },
+          "_plot_color": "#e3b341",
+          "cif_text": "data_mo_metal_bcc_im3m\n_audit_creation_method\n;Created for catalysis-toolkit offline fixtures.\n Metallic molybdenum, bcc Im-3m.\n Cell parameter a = 3.1470 A from common room-temperature reference data\n (IMOA/WebElements tabulate metallic Mo as bcc with a about 3.147 A).\n;\n\n_chemical_name_common                  'Molybdenum metal'\n_chemical_formula_sum                  'Mo'\n_chemical_formula_structural           'Mo'\n_cell_length_a                         3.147000\n_cell_length_b                         3.147000\n_cell_length_c                         3.147000\n_cell_angle_alpha                      90.00000\n_cell_angle_beta                       90.00000\n_cell_angle_gamma                      90.00000\n_cell_volume                           31.17016\n_cell_formula_units_Z                  2\n_symmetry_space_group_name_H-M         'I m -3 m'\n_symmetry_Int_Tables_number            229\n_space_group_name_H-M_alt              'I m -3 m'\n_space_group_IT_number                 229\n\nloop_\n  _space_group_symop_operation_xyz\n  'x, y, z'\n  '-x, -y, -z'\n  'x+1/2, y+1/2, z+1/2'\n  '-x+1/2, -y+1/2, -z+1/2'\n\nloop_\n  _atom_site_label\n  _atom_site_type_symbol\n  _atom_site_fract_x\n  _atom_site_fract_y\n  _atom_site_fract_z\n  _atom_site_occupancy\n  Mo1  Mo  0.000000  0.000000  0.000000  1.0000\n"
+        }
+      ],
+      "phase_options": [
+        {
+          "po_axis": "1 1 1",
+          "po_mode": "off",
+          "po_value": 1,
+          "refine_cell": true,
+          "refine_mustrain": false,
+          "refine_size": false,
+          "refine_uiso": false,
+          "uniform_cell": false
+        },
+        {
+          "po_axis": "",
+          "po_mode": "off",
+          "po_value": 1,
+          "refine_cell": true,
+          "refine_mustrain": false,
+          "refine_size": false,
+          "refine_uiso": false,
+          "uniform_cell": false
+        },
+        {
+          "refine_size": false,
+          "refine_mustrain": false,
+          "po_mode": "off",
+          "po_value": 1,
+          "po_axis": "1 1 1",
+          "uniform_cell": false
+        }
+      ],
+      "controls": {
+        "wavelength": "1.54056",
+        "wavelength_source": "1.54056",
+        "tt_min": "20",
+        "tt_max": "60",
+        "n_bg_coeffs": "auto",
+        "instrument": "smartlab",
+        "fix_y_value": "",
+        "checkboxes": {
+          "xrd-calibration-mode": false,
+          "xrd-verification-mode": true,
+          "xrd-verify-cell": true,
+          "xrd-phase-isolation": true,
+          "xrd-zero-not-disp": false,
+          "xrd-refine-x": true,
+          "xrd-fix-y": false,
+          "xrd-y-nonneg": true,
+          "xrd-refine-uiso": false,
+          "xrd-refine-xyz": false
+        }
+      },
+      "result_summary": {
+        "method": "GSAS-II",
+        "statistics": {
+          "GoF": 0.58,
+          "Rp": 5.47,
+          "Rwp": 6.94,
+          "chi2": 0.336
+        },
+        "fit_warnings": [
+          "Refined Y became negative and was clamped to 0; this is a sign that X/Y broadening terms may be trading off."
+        ],
+        "zero_shift": 0.00117,
+        "displacement_um": 0,
+        "displacement_param": "DisplaceX",
+        "phase_results": [
+          {
+            "name": "mo_metal_bcc_im3m I m -3 m",
+            "formula": "Mo",
+            "spacegroup": "",
+            "weight_fraction_pct": 100,
+            "weight_fraction_err_pct": null,
+            "weight_fraction_err_source": null,
+            "crystallite_size_nm": 26.44,
+            "crystallite_size_source": "scherrer_phase_pattern",
+            "fwhm_reference_two_theta": 40.5405,
+            "fwhm_reference_hkl": [
+              1,
+              1,
+              0
+            ],
+            "fwhm_reference_source": "strongest_phase_pattern_peak",
+            "preferred_orientation_value": 1,
+            "preferred_orientation_axis": [
+              0,
+              0,
+              1
+            ],
+            "preferred_orientation_axis_input": null,
+            "preferred_orientation_axis_notation": null,
+            "preferred_orientation_mode": "off",
+            "preferred_orientation_refined": false,
+            "delta_a_pct": -0.005,
+            "delta_b_pct": -0.005,
+            "delta_c_pct": -0.005,
+            "delta_volume_pct": -0.015
           }
         ]
       }

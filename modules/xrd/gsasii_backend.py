@@ -2029,7 +2029,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
               flush=True)
     # Per-phase refinement options (dynamic, phase-agnostic).
     # phase_options is a list (one entry per phase, indexed) of dicts:
-    #   {"refine_size": bool, "refine_mustrain": bool,
+    #   {"refine_cell": bool, "refine_size": bool, "refine_mustrain": bool,
     #    "po_mode": "off"|"fixed"|"refined",
     #    "po_value": float, "po_axis": [h, k, l] or hex [h, k, i, l]}
     # When provided, the backend applies these per-phase by index instead
@@ -2078,6 +2078,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         wins over legacy WC/W2C name-based options.  Returns a dict with
         all keys present (None/defaults for unspecified)."""
         defaults = {
+            'refine_cell': False,
             'refine_size': False,
             'refine_mustrain': False,
             'po_mode': 'off',
@@ -3154,6 +3155,16 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 print(f"  Skipping cell refinement for phase {idx} "
                       f"(negligible scale).", flush=True)
                 continue
+            _popts_cell = _phase_opts_for(idx, getattr(phase_obj, 'name', ''))
+            _legacy_cell_default = not phase_options_list
+            if not bool(_popts_cell.get('refine_cell') or _legacy_cell_default):
+                print(f"  Stage 3 (cell): phase {idx} cell fixed "
+                      f"(phase option refine_cell is off).", flush=True)
+                try:
+                    phase_obj.set_refinements({'Cell': False})
+                except Exception:
+                    pass
+                continue
             sys_ = (ph_input.get('system') or 'triclinic').lower()
             # For high-symmetry systems, clamp angles before refining
             # to prevent them from drifting to unphysical values.
@@ -3468,21 +3479,31 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         #   verification_mode=True, verify_refine_cell=False  → Cell fixed
         #   verification_mode=True, verify_refine_cell=True   → Cell on
         #   verification_mode=False                            → Cell on (default)
+        _legacy_cell_default = not phase_options_list
         if verification_mode and not verify_refine_cell:
             print("  Stage 6: cell refinement disabled (verification_mode).",
                   flush=True)
-            for idx, phase_obj in enumerate(gsas_phases):
-                try:
-                    phase_obj.set_refinements({'Cell': False})
-                except Exception:
-                    pass
-        else:
-            if verification_mode and verify_refine_cell:
-                print("  Stage 6: cell refinement enabled "
-                      "(verify_refine_cell=True).", flush=True)
-            for idx, phase_obj in enumerate(gsas_phases):
-                if idx not in _negligible_phases:
-                    phase_obj.set_refinements({'Cell': True})
+        elif verification_mode and verify_refine_cell:
+            print("  Stage 6: global cell gate enabled; per-phase Cell "
+                  "checkboxes decide which phases can move.", flush=True)
+
+        for idx, phase_obj in enumerate(gsas_phases):
+            try:
+                _allow_cell = (
+                    idx not in _negligible_phases
+                    and not (verification_mode and not verify_refine_cell)
+                    and bool(
+                        _phase_opts_for(
+                            idx, getattr(phase_obj, 'name', '')
+                        ).get('refine_cell')
+                        or _legacy_cell_default
+                    )
+                )
+                phase_obj.set_refinements({'Cell': bool(_allow_cell)})
+                if not _allow_cell:
+                    print(f"  Stage 6: phase {idx} cell fixed.", flush=True)
+            except Exception:
+                pass
 
         # ── Snapshot W2C cell BEFORE Stage 6 (for uniform-scale post-fit) ──
         _uniform_scale_snapshot = {}    # idx → (a0, b0, c0, V0)
@@ -5185,6 +5206,12 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         for _idx_opt, _popts_warn in enumerate(phase_options_list or []):
             if not isinstance(_popts_warn, dict):
                 continue
+            if _popts_warn.get('refine_cell'):
+                _sanity_warnings.append(
+                    f"Phase {_idx_opt + 1} cell refinement is active. This "
+                    f"moves tick positions and should be kept only when the "
+                    f"starting CIF identity is correct and peak shifts are "
+                    f"systematic for that phase.")
             if _popts_warn.get('refine_size'):
                 _sanity_warnings.append(
                     f"Phase {_idx_opt + 1} size refinement is active. It "

@@ -74,6 +74,48 @@ _FIXTURE_DIR = os.path.join(
 _LOCAL_FIXTURES = {
     'mp-2034': 'w2c_pbcn_mp_2034.cif',   # W2C Pbcn — see CIF-Audit_v1.md
     'mp-129': 'mo_metal_bcc_im3m.cif',   # Mo bcc Im-3m — use RT conventional cell
+    'mp-1894': 'wc_p-6m2_mp_1894.cif',
+    'mp-33065': 'w2c_pnnm_mp_33065.cif',
+    'mp-684989': 'w9c4_r32_mp_684989.cif',
+    'mp-567397': 'w2c_p-31m_mp_567397.cif',
+    'mp-1008625': 'w2c_p-3m1_mp_1008625.cif',
+    'mp-13136': 'gamma_wc1x_fm3m.cif',
+    'mp-1552': 'mo2c_pbcn_mp_1552_p1_fullcell.cif',
+    'mp-2305': 'moc_p-6m2_mp_2305.cif',
+    'mp-1221498': 'mo2c_p-3m1_mp_1221498.cif',
+    'mp-1221473': 'mo3c2_p-3m1_mp_1221473.cif',
+    'mp-2746': 'gamma_moc1x_fm3m.cif',
+}
+
+_LOCAL_FIXTURE_METADATA = {
+    'mp-2034': {'formula': 'W2C', 'spacegroup': 'Pbcn',
+                'spacegroup_number': 60, 'system': 'orthorhombic', 'Z': 4},
+    'mp-129': {'formula': 'Mo', 'spacegroup': 'Im-3m',
+               'spacegroup_number': 229, 'system': 'cubic', 'Z': 2},
+    'mp-1894': {'formula': 'WC', 'spacegroup': 'P-6m2',
+                'spacegroup_number': 187, 'system': 'hexagonal', 'Z': 1},
+    'mp-33065': {'formula': 'W2C', 'spacegroup': 'Pnnm',
+                 'spacegroup_number': 58, 'system': 'orthorhombic', 'Z': 2},
+    'mp-684989': {'formula': 'W9C4', 'spacegroup': 'R32',
+                  'spacegroup_number': 155, 'system': 'trigonal', 'Z': 6},
+    'mp-567397': {'formula': 'W2C', 'spacegroup': 'P-31m',
+                  'spacegroup_number': 162, 'system': 'trigonal', 'Z': 3},
+    'mp-1008625': {'formula': 'W2C', 'spacegroup': 'P-3m1',
+                   'spacegroup_number': 164, 'system': 'trigonal', 'Z': 1},
+    'mp-13136': {'formula': 'WC1-x', 'spacegroup': 'Fm-3m',
+                 'spacegroup_number': 225, 'system': 'cubic', 'Z': 4,
+                 'gamma_wc1x': True},
+    'mp-1552': {'formula': 'Mo2C', 'spacegroup': 'Pbcn',
+                'spacegroup_number': 60, 'system': 'orthorhombic', 'Z': 4},
+    'mp-2305': {'formula': 'MoC', 'spacegroup': 'P-6m2',
+                'spacegroup_number': 187, 'system': 'hexagonal', 'Z': 1},
+    'mp-1221498': {'formula': 'Mo2C', 'spacegroup': 'P-3m1',
+                   'spacegroup_number': 164, 'system': 'trigonal', 'Z': 1},
+    'mp-1221473': {'formula': 'Mo3C2', 'spacegroup': 'P-3m1',
+                   'spacegroup_number': 164, 'system': 'trigonal', 'Z': 1},
+    'mp-2746': {'formula': 'MoC1-x', 'spacegroup': 'Fm-3m',
+                'spacegroup_number': 225, 'system': 'cubic', 'Z': 4,
+                'gamma_wc1x': True},
 }
 
 
@@ -90,6 +132,48 @@ def _fixture_cif_for(mp_id):
             return f.read()
     except Exception:
         return None
+
+
+def _fixture_metadata_for(mp_id):
+    """Return curated metadata for a local fixture, if any."""
+    return dict(_LOCAL_FIXTURE_METADATA.get(str(mp_id), {}))
+
+
+def _fixture_manifest():
+    """Load fixture provenance/role metadata, if present."""
+    path = os.path.join(_FIXTURE_DIR, 'fixture_manifest.json')
+    try:
+        with open(path, encoding='utf-8') as f:
+            return json.load(f).get('fixtures', {})
+    except Exception:
+        return {}
+
+
+def _fixture_record_for(mp_id):
+    """Return manifest record for the fixture mapped to an mp-id."""
+    fname = _LOCAL_FIXTURES.get(str(mp_id))
+    if not fname:
+        return {}
+    return dict(_fixture_manifest().get(fname, {}))
+
+
+def _apply_fixture_record(result, mp_id):
+    """Attach fixture role metadata and warnings to a phase dict."""
+    rec = _fixture_record_for(mp_id)
+    if not rec:
+        return result
+    result['fixture_cell_setting'] = rec.get('cell_setting')
+    result['fixture_intended_use'] = rec.get('intended_use') or []
+    result['fixture_normal_import_safe'] = rec.get('normal_import_safe', True)
+    if rec.get('notes'):
+        result['fixture_notes'] = rec.get('notes')
+    if rec.get('normal_import_safe') is False:
+        result['fixture_warning'] = (
+            'This local fixture is a raw/source CIF, not a validated '
+            'canonical conventional CIF. Preview may be useful, but GSAS-II '
+            'refinement should be checked carefully.'
+        )
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -283,17 +367,41 @@ def _parse(entries):
             fixture_text = _fixture_cif_for(mp_id)
             if fixture_text:
                 fixture = parse_cif(fixture_text)
-                for key in ('formula', 'a', 'b', 'c', 'alpha', 'beta',
-                            'gamma', 'spacegroup_number', 'system', 'Z'):
-                    if fixture.get(key) not in (None, ''):
-                        result[key] = fixture[key]
-                result['spacegroup'] = (
-                    fixture.get('spacegroup')
-                    or fixture.get('spacegroup_name')
-                    or result.get('spacegroup')
-                )
-                result['name'] = fixture.get('formula') or result.get('name')
+                fixture_meta = _fixture_metadata_for(mp_id)
+                fixture_sg = int(fixture.get('spacegroup_number') or 1)
+                if fixture_sg > 1:
+                    for key in ('formula', 'a', 'b', 'c', 'alpha', 'beta',
+                                'gamma', 'spacegroup_number', 'system', 'Z'):
+                        if fixture.get(key) not in (None, ''):
+                            result[key] = fixture[key]
+                    result['spacegroup'] = (
+                        fixture.get('spacegroup')
+                        or fixture.get('spacegroup_name')
+                        or result.get('spacegroup')
+                    )
+                    result['name'] = fixture.get('formula') or result.get('name')
+                for key, value in fixture_meta.items():
+                    if value not in (None, ''):
+                        result[key] = value
+                result = conventionalize_phase_cell(result)
+                if fixture_meta.get('gamma_wc1x'):
+                    result['name'] = fixture_meta.get('formula') or result.get('name')
                 result['_cif_text'] = fixture_text
+                result = _apply_fixture_record(result, mp_id)
+
+                try:
+                    for el, x, y, z, occ in fixture.get('sites') or []:
+                        if (str(el).upper() == 'C'
+                                and abs(float(x) % 1.0 - 0.5) < 1e-4
+                                and abs(float(y) % 1.0 - 0.5) < 1e-4
+                                and abs(float(z) % 1.0 - 0.5) < 1e-4):
+                            result['gamma_c_occupancy'] = float(occ)
+                            result['gamma_vacancy_x'] = max(
+                                0.0, min(1.0, 1.0 - float(occ)))
+                            result['gamma_wc1x'] = True
+                            break
+                except Exception:
+                    pass
 
             results.append(result)
         except Exception:
@@ -335,8 +443,11 @@ def fetch_cif(mp_id, api_key):
         print(f"  fetch_cif: using local fixture for {mp_id} "
               f"(no MP API call needed)", flush=True)
         parsed = parse_cif(fixture_text)
+        parsed.update(_fixture_metadata_for(mp_id))
+        parsed = conventionalize_phase_cell(parsed)
         parsed.update({"mp_id": mp_id, "cod_id": mp_id,
                        "cif_text": fixture_text, "source": "mp"})
+        parsed = _apply_fixture_record(parsed, mp_id)
         return parsed
 
     if not api_key:
