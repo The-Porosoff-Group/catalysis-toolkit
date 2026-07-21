@@ -284,6 +284,7 @@ def process_gc():
             'temperature': form.get('temperature', ''),
             'pressure':    form.get('pressure', ''),
             'ghsv':        form.get('ghsv', ''),
+            'catalyst_mass_mg': form.get('catalyst_mass_mg', ''),
             'run_duration_h': form.get('run_duration_h', ''),
             'injection_interval_min': form.get('injection_interval_min', ''),
             'rejected_initial_injections': form.get('rejected_initial_injections', ''),

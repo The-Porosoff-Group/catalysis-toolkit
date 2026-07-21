@@ -606,8 +606,12 @@
               <input type="text" id="pressure" placeholder="e.g. 300 psig">
             </div>
             <div class="form-group">
-              <label>GHSV</label>
-              <input type="text" id="ghsv" placeholder="e.g. 12000 mL/g/h">
+              <label>Nominal GHSV</label>
+              <input type="text" id="ghsv" placeholder="optional; provenance only">
+            </div>
+            <div class="form-group">
+              <label>Catalyst Mass (mg)</label>
+              <input type="number" step="0.001" min="0" id="catalyst_mass_mg" placeholder="optional">
             </div>
             <div class="form-group">
               <label>Run Duration (h)</label>
@@ -1213,6 +1217,7 @@ async function processGC() {
   formData.append('temperature',     document.getElementById('temperature').value);
   formData.append('pressure',        document.getElementById('pressure').value);
   formData.append('ghsv',            document.getElementById('ghsv').value);
+  formData.append('catalyst_mass_mg', document.getElementById('catalyst_mass_mg').value);
   formData.append('run_duration_h',  document.getElementById('run_duration_h').value);
   formData.append('injection_interval_min', document.getElementById('injection_interval_min').value);
   formData.append('rejected_initial_injections', document.getElementById('rejected_initial_injections').value);
@@ -1296,6 +1301,10 @@ function showResults(data) {
   ];
   if (data.conversion !== undefined)
     stats.push({ label: 'Conversion', val: data.conversion, unit: `± ${data.conversion_std}%` });
+  if (data.calculated_ghsv_ml_g_hr != null)
+    stats.push({ label: 'GHSV', val: Number(data.calculated_ghsv_ml_g_hr).toFixed(0), unit: 'mL/g/hr' });
+  if (data.calculated_whsv_hr != null)
+    stats.push({ label: 'WHSV', val: Number(data.calculated_whsv_hr).toFixed(4), unit: 'hr^-1' });
   stats.forEach(s => {
     statsEl.innerHTML += `
       <div class="stat-box">

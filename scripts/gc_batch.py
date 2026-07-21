@@ -133,7 +133,8 @@ def _interactive_metadata(args: argparse.Namespace, reaction_config: Dict[str, A
         "catalyst_id": _prompt("Catalyst ID", catalyst_default),
         "temperature": _prompt("Temperature", args.temperature or ""),
         "pressure": _prompt("Pressure", args.pressure or ""),
-        "ghsv": _prompt("GHSV", args.ghsv or ""),
+        "ghsv": _prompt("Nominal GHSV", args.ghsv or ""),
+        "catalyst_mass_mg": _prompt("Catalyst mass mg", args.catalyst_mass_mg or ""),
         "run_duration_h": _prompt("Run duration h", args.run_duration_h or ""),
         "injection_interval_min": _prompt("Injection interval min", args.injection_interval_min or ""),
         "rejected_initial_injections": _prompt("Rejected initial reaction injections", args.rejected_initial_injections or 0),
@@ -169,6 +170,7 @@ def _metadata_from_args(args: argparse.Namespace, input_path: Path) -> Dict[str,
         "temperature": args.temperature or "",
         "pressure": args.pressure or "",
         "ghsv": args.ghsv or "",
+        "catalyst_mass_mg": args.catalyst_mass_mg or "",
         "run_duration_h": args.run_duration_h or "",
         "injection_interval_min": args.injection_interval_min or "",
         "rejected_initial_injections": args.rejected_initial_injections or "",
@@ -230,7 +232,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--catalyst-id")
     p.add_argument("--temperature")
     p.add_argument("--pressure")
-    p.add_argument("--ghsv")
+    p.add_argument("--ghsv", help="Optional nominal/user-entered GHSV kept for provenance.")
+    p.add_argument("--catalyst-mass-mg", help="Optional catalyst mass; enables calculated GHSV/WHSV outputs.")
     p.add_argument("--run-duration-h")
     p.add_argument("--injection-interval-min")
     p.add_argument("--rejected-initial-injections")
@@ -289,6 +292,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             "conversion_%": result.get("conversion"),
             "conversion_std_%": result.get("conversion_std"),
             "carbon_balance_%": result.get("carbon_balance"),
+            "catalyst_mass_mg": result.get("catalyst_mass_mg"),
+            "total_inlet_flow_sccm": result.get("total_inlet_flow_sccm"),
+            "calculated_ghsv_ml_g_hr": result.get("calculated_ghsv_ml_g_hr"),
+            "calculated_whsv_hr": result.get("calculated_whsv_hr"),
             "n_reaction": result.get("n_reaction"),
             "n_ss": result.get("n_ss"),
             "bypass_source": result.get("bypass_source"),

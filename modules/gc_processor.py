@@ -50,6 +50,20 @@ _DEFAULT_SELECTIVITY_GROUP_ORDER = [
 ]
 
 
+_STANDARD_MOLAR_VOLUME_ML_MOL = 22414.0
+
+
+_GAS_MOLECULAR_WEIGHTS_G_MOL = {
+    'H2': 2.01588,
+    'CO2': 44.0095,
+    'CO': 28.0101,
+    'Ar': 39.948,
+    'N2': 28.0134,
+    'O2': 31.9988,
+    'CH4': 16.0425,
+}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # LOAD REACTION CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
@@ -933,6 +947,45 @@ def _metadata_int(metadata, key, default=None):
     if val is None:
         return default
     return int(round(val))
+
+
+def _space_velocity_metrics(inlet_flows, metadata):
+    total_flow = 0.0
+    feed_mass_g_h = 0.0
+    missing_mw = []
+    for label, flow in (inlet_flows or {}).items():
+        flow_val = _metadata_float({'flow': flow}, 'flow')
+        if flow_val is None:
+            continue
+        total_flow += flow_val
+        mw = _GAS_MOLECULAR_WEIGHTS_G_MOL.get(str(label))
+        if mw is None:
+            missing_mw.append(str(label))
+            continue
+        feed_mass_g_h += flow_val * 60.0 * mw / _STANDARD_MOLAR_VOLUME_ML_MOL
+
+    mass_mg = _metadata_float(metadata, 'catalyst_mass_mg')
+    mass_g = _metadata_float(metadata, 'catalyst_mass_g')
+    if mass_g is None and mass_mg is not None:
+        mass_g = mass_mg / 1000.0
+    elif mass_mg is None and mass_g is not None:
+        mass_mg = mass_g * 1000.0
+
+    out = {
+        'total_inlet_flow_sccm': round(total_flow, 6),
+        'feed_mass_flow_g_h': round(feed_mass_g_h, 9) if not missing_mw else None,
+        'standard_molar_volume_mL_mol': _STANDARD_MOLAR_VOLUME_ML_MOL,
+    }
+    if missing_mw:
+        out['whsv_missing_mw_species'] = ', '.join(missing_mw)
+    if mass_mg is not None and mass_mg > 0:
+        out['catalyst_mass_mg'] = round(mass_mg, 6)
+        out['catalyst_mass_g'] = round(mass_g, 9)
+        if total_flow > 0:
+            out['calculated_ghsv_ml_g_hr'] = round(total_flow * 60.0 / mass_g, 3)
+        if feed_mass_g_h > 0 and not missing_mw:
+            out['calculated_whsv_hr'] = round(feed_mass_g_h / mass_g, 6)
+    return out
 
 
 def _infer_run_duration_h(metadata):
@@ -2284,6 +2337,9 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
     add_setting('registered_reaction_injections', metadata.get('registered_reaction_injections'), 'Accepted/plotted reaction point count when specified.')
     npoints_cell = add_setting('plot_reaction_points', metadata.get('plot_reaction_points'), 'Number of rows with assigned time_on_stream_h.')
     add_setting('plot_style', metadata.get('plot_style', 'auto'), 'GUI-selected plot rendering mode.')
+    catalyst_mass_mg_cell = add_setting('catalyst_mass_mg', metadata.get('catalyst_mass_mg'), 'Optional. Fill in later to calculate GHSV/WHSV from total inlet flow.')
+    add_setting('nominal_ghsv', metadata.get('ghsv'), 'Optional user-entered value kept for provenance; calculated GHSV is below.')
+    standard_molar_cell = add_setting('standard_molar_volume_mL_mol', metadata.get('standard_molar_volume_mL_mol', _STANDARD_MOLAR_VOLUME_ML_MOL), 'Used to convert sccm to mol/h for WHSV.')
     add_setting('inlet_flow_source', metadata.get('inlet_flow_source'), 'manual or bypass-derived.')
     add_setting('bypass_source', metadata.get('bypass_source'), 'manual, separate_file, or same_file.')
     add_setting('bypass_file', metadata.get('bypass_file'), 'Separate bypass workbook or same input file used for inlet normalization.')
@@ -2309,6 +2365,30 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
         inlet_setting_cells[label] = add_setting(
             f'{label}_inlet_sccm', inlet_flows.get(label),
             'Ar is user-entered; non-Ar values can be bypass-derived.')
+
+    catalyst_mass_g_cell = add_setting('catalyst_mass_g', metadata.get('catalyst_mass_g'), 'Calculated from catalyst_mass_mg.')
+    settings.cell(setting_rows['catalyst_mass_g'], 2).value = (
+        f'=IF({catalyst_mass_mg_cell}>0,{catalyst_mass_mg_cell}/1000,"")')
+    total_flow_cell = add_setting('total_inlet_flow_sccm', metadata.get('total_inlet_flow_sccm'), 'Sum of inlet MFC flows after bypass normalization, in mL/min.')
+    flow_refs = [ref for ref in inlet_setting_cells.values() if ref]
+    if flow_refs:
+        settings.cell(setting_rows['total_inlet_flow_sccm'], 2).value = f'=SUM({",".join(flow_refs)})'
+    feed_mass_cell = add_setting('feed_mass_flow_g_h', metadata.get('feed_mass_flow_g_h'), 'Total inlet gas mass flow from sccm, molecular weight, and standard molar volume.')
+    mass_terms = []
+    for label, ref in inlet_setting_cells.items():
+        mw = _GAS_MOLECULAR_WEIGHTS_G_MOL.get(str(label))
+        if mw is not None and ref:
+            mass_terms.append(f'{ref}*60*{mw:.8g}/{standard_molar_cell}')
+    if mass_terms:
+        settings.cell(setting_rows['feed_mass_flow_g_h'], 2).value = '=' + '+'.join(mass_terms)
+    ghsv_cell = add_setting('calculated_GHSV_mL_g_hr', metadata.get('calculated_ghsv_ml_g_hr'), 'total_inlet_flow_sccm * 60 / catalyst_mass_g. Units: mL/g/hr.')
+    settings.cell(setting_rows['calculated_GHSV_mL_g_hr'], 2).value = (
+        f'=IF({catalyst_mass_g_cell}>0,{total_flow_cell}*60/{catalyst_mass_g_cell},"")')
+    whsv_cell = add_setting('calculated_WHSV_hr-1', metadata.get('calculated_whsv_hr'), 'feed_mass_flow_g_h / catalyst_mass_g. Units: hr^-1.')
+    settings.cell(setting_rows['calculated_WHSV_hr-1'], 2).value = (
+        f'=IF({catalyst_mass_g_cell}>0,{feed_mass_cell}/{catalyst_mass_g_cell},"")')
+    if metadata.get('whsv_missing_mw_species'):
+        add_setting('whsv_missing_mw_species', metadata.get('whsv_missing_mw_species'), 'WHSV omitted for species with no molecular weight mapping.')
     settings['A1'].font = settings['B1'].font = settings['C1'].font = Font(bold=True)
     settings.freeze_panes = 'A2'
     ar_inlet_cell = inlet_setting_cells.get('Ar')
@@ -2468,6 +2548,8 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
         (f'{reactant_label} conversion', f'({reactant_label} inlet - {reactant_label} outlet) / {reactant_label} inlet * 100.', "='Processed'!H2"),
         ('Product carbon out', 'Sum of carbon number times product flow for each product species.', "='Processed'!I2"),
         ('Carbon balance', f'({reactant_label} out + product carbon out) / {reactant_label} inlet * 100.', "='Processed'!J2"),
+        ('Calculated GHSV', 'total_inlet_flow_sccm * 60 / catalyst_mass_g. Leave catalyst mass blank to omit.', f'={ghsv_cell}'),
+        ('Calculated WHSV', 'feed_mass_flow_g_h / catalyst_mass_g using molecular weights and standard molar volume.', f'={whsv_cell}'),
     ]
     if area_fallback_count:
         example_rows.insert(3, (
@@ -2655,6 +2737,7 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
                 C_in_flow += cfg['cn'] * flow
                 break
 
+    metadata.update(_space_velocity_metrics(inlet_flows, metadata))
     metadata['inlet_flow_source'] = inlet_source
     if bypass_filepath:
         metadata['bypass_file'] = os.path.basename(bypass_filepath)
@@ -2717,6 +2800,11 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
         'injection_interval_min': _metadata_float(metadata, 'injection_interval_min'),
         'rejected_initial_injections': _metadata_int(metadata, 'rejected_initial_injections', 0),
         'plot_style':      metadata.get('plot_style', 'auto'),
+        'catalyst_mass_mg': metadata.get('catalyst_mass_mg'),
+        'total_inlet_flow_sccm': metadata.get('total_inlet_flow_sccm'),
+        'feed_mass_flow_g_h': metadata.get('feed_mass_flow_g_h'),
+        'calculated_ghsv_ml_g_hr': metadata.get('calculated_ghsv_ml_g_hr'),
+        'calculated_whsv_hr': metadata.get('calculated_whsv_hr'),
         'area_derived_amounts': len(data.get('area_derived_amounts', [])),
         'area_derivation_skipped': len(data.get('area_derivation_skipped', [])),
         'c5_unknown_response_factor': metadata.get('c5_unknown_response_factor'),
