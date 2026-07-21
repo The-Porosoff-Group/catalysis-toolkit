@@ -274,6 +274,66 @@ def parse_xlsx(filepath):
     raise ValueError('No usable GC worksheet found in the XLSX file.')
 
 
+def _species_alias_key(value):
+    return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
+
+
+def _species_alias_lookup(species_config):
+    lookup = {}
+    for header, cfg in species_config.items():
+        aliases = [header, cfg.get('label')]
+        extra = cfg.get('aliases') or cfg.get('alias') or []
+        if isinstance(extra, str):
+            aliases.extend(x.strip() for x in extra.split(',') if x.strip())
+        else:
+            aliases.extend(str(x) for x in extra if x)
+        for alias in aliases:
+            key = _species_alias_key(alias)
+            if key and key not in lookup:
+                lookup[key] = header
+    return lookup
+
+
+def _normalize_injection_species(data, species_config):
+    """Map parsed GC species headers to canonical reaction-config headers.
+
+    Workbook exports are not perfectly consistent about capitalization or
+    whether they use the long species name (Carbon Monoxide) or short label
+    (CO, MeOH). Normalize once so all downstream calculations, bypass logic,
+    and traceable workbook formulas use the same canonical keys.
+    """
+    lookup = _species_alias_lookup(species_config)
+    applied = []
+
+    def normalize_map(values, refs):
+        out = {}
+        out_refs = {}
+        for raw, val in (values or {}).items():
+            canonical = lookup.get(_species_alias_key(raw), raw)
+            if canonical not in out:
+                out[canonical] = val
+            if refs and raw in refs and canonical not in out_refs:
+                out_refs[canonical] = refs[raw]
+            if canonical != raw:
+                applied.append({'raw': raw, 'canonical': canonical})
+        return out, out_refs
+
+    for inj in (data or {}).get('injections', []):
+        refs = inj.setdefault('source_refs', {})
+        amounts, amount_refs = normalize_map(
+            inj.get('amounts'), refs.get('amounts') or {})
+        areas, area_refs = normalize_map(
+            inj.get('areas'), refs.get('areas') or {})
+        inj['amounts'] = amounts
+        inj['areas'] = areas
+        refs['amounts'] = amount_refs
+        refs['areas'] = area_refs
+
+    if applied:
+        data['species_aliases_applied'] = applied
+    return data
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # MOLAR FLOW CALCULATIONS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2539,6 +2599,7 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
         F_Ar = inlet_flows.get('Ar', 15.0)
 
     data = parse_xlsx(filepath)
+    _normalize_injection_species(data, species_config)
     _mark_source_kind(data, 'main')
     if reaction_config.get('area_response_fallback', True) is not False:
         apply_area_response_fallbacks(data, species_config, metadata)
@@ -2552,6 +2613,7 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
     bypass_warning = None
     if bypass_filepath:
         bypass_data = parse_xlsx(bypass_filepath)
+        _normalize_injection_species(bypass_data, species_config)
         _mark_source_kind(bypass_data, 'bypass_file')
         bypass_data['source'] = 'separate_file'
         bypass_data['source_sheet_name'] = 'Bypass Original'
