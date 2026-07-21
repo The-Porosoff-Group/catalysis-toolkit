@@ -50,7 +50,15 @@ _DEFAULT_SELECTIVITY_GROUP_ORDER = [
 ]
 
 
-_STANDARD_MOLAR_VOLUME_ML_MOL = 22414.0
+_REFERENCE_TEMPERATURE_K = 298.0
+_REFERENCE_PRESSURE_ATM = 1.0
+_IDEAL_GAS_R_L_ATM_MOL_K = 0.082057366080960
+_STANDARD_MOLAR_VOLUME_ML_MOL = (
+    _IDEAL_GAS_R_L_ATM_MOL_K
+    * _REFERENCE_TEMPERATURE_K
+    / _REFERENCE_PRESSURE_ATM
+    * 1000.0
+)
 
 
 _GAS_MOLECULAR_WEIGHTS_G_MOL = {
@@ -974,7 +982,9 @@ def _space_velocity_metrics(inlet_flows, metadata):
     out = {
         'total_inlet_flow_sccm': round(total_flow, 6),
         'feed_mass_flow_g_h': round(feed_mass_g_h, 9) if not missing_mw else None,
-        'standard_molar_volume_mL_mol': _STANDARD_MOLAR_VOLUME_ML_MOL,
+        'standard_molar_volume_mL_mol': round(_STANDARD_MOLAR_VOLUME_ML_MOL, 6),
+        'space_velocity_reference_temperature_K': _REFERENCE_TEMPERATURE_K,
+        'space_velocity_reference_pressure_atm': _REFERENCE_PRESSURE_ATM,
     }
     if missing_mw:
         out['whsv_missing_mw_species'] = ', '.join(missing_mw)
@@ -2339,7 +2349,9 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
     add_setting('plot_style', metadata.get('plot_style', 'auto'), 'GUI-selected plot rendering mode.')
     catalyst_mass_mg_cell = add_setting('catalyst_mass_mg', metadata.get('catalyst_mass_mg'), 'Optional. Fill in later to calculate GHSV/WHSV from total inlet flow.')
     add_setting('nominal_ghsv', metadata.get('ghsv'), 'Optional user-entered value kept for provenance; calculated GHSV is below.')
-    standard_molar_cell = add_setting('standard_molar_volume_mL_mol', metadata.get('standard_molar_volume_mL_mol', _STANDARD_MOLAR_VOLUME_ML_MOL), 'Used to convert sccm to mol/h for WHSV.')
+    add_setting('space_velocity_reference_temperature_K', metadata.get('space_velocity_reference_temperature_K', _REFERENCE_TEMPERATURE_K), 'Reference temperature for calculated WHSV gas molar volume.')
+    add_setting('space_velocity_reference_pressure_atm', metadata.get('space_velocity_reference_pressure_atm', _REFERENCE_PRESSURE_ATM), 'Reference pressure for calculated WHSV gas molar volume.')
+    standard_molar_cell = add_setting('standard_molar_volume_mL_mol', metadata.get('standard_molar_volume_mL_mol', round(_STANDARD_MOLAR_VOLUME_ML_MOL, 6)), 'Ideal-gas molar volume at 298 K and 1 atm, used to convert sccm to mol/h for WHSV.')
     add_setting('inlet_flow_source', metadata.get('inlet_flow_source'), 'manual or bypass-derived.')
     add_setting('bypass_source', metadata.get('bypass_source'), 'manual, separate_file, or same_file.')
     add_setting('bypass_file', metadata.get('bypass_file'), 'Separate bypass workbook or same input file used for inlet normalization.')
@@ -2373,7 +2385,7 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
     flow_refs = [ref for ref in inlet_setting_cells.values() if ref]
     if flow_refs:
         settings.cell(setting_rows['total_inlet_flow_sccm'], 2).value = f'=SUM({",".join(flow_refs)})'
-    feed_mass_cell = add_setting('feed_mass_flow_g_h', metadata.get('feed_mass_flow_g_h'), 'Total inlet gas mass flow from sccm, molecular weight, and standard molar volume.')
+    feed_mass_cell = add_setting('feed_mass_flow_g_h', metadata.get('feed_mass_flow_g_h'), 'Total inlet gas mass flow from sccm, molecular weight, and the 298 K / 1 atm molar volume.')
     mass_terms = []
     for label, ref in inlet_setting_cells.items():
         mw = _GAS_MOLECULAR_WEIGHTS_G_MOL.get(str(label))
@@ -2549,7 +2561,7 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
         ('Product carbon out', 'Sum of carbon number times product flow for each product species.', "='Processed'!I2"),
         ('Carbon balance', f'({reactant_label} out + product carbon out) / {reactant_label} inlet * 100.', "='Processed'!J2"),
         ('Calculated GHSV', 'total_inlet_flow_sccm * 60 / catalyst_mass_g. Leave catalyst mass blank to omit.', f'={ghsv_cell}'),
-        ('Calculated WHSV', 'feed_mass_flow_g_h / catalyst_mass_g using molecular weights and standard molar volume.', f'={whsv_cell}'),
+        ('Calculated WHSV', 'feed_mass_flow_g_h / catalyst_mass_g using molecular weights and 298 K / 1 atm molar volume.', f'={whsv_cell}'),
     ]
     if area_fallback_count:
         example_rows.insert(3, (
