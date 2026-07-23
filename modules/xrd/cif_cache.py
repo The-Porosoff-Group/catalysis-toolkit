@@ -5,21 +5,15 @@ Persistent disk cache for CIF files.
 Stores CIF text files in ~/.catalysis_toolkit_cache/ (or a custom directory
 from config.yaml). Cache is keyed by source:id strings, e.g.:
   "cod:1010048"   → COD entry (raw COD CIF)
-  "mp:mp-91"      → Materials Project entry (raw MP CIF, OR the
-                    fixture-overridden CIF when one is registered in
-                    mp_api._LOCAL_FIXTURES)
+  "mp:mp-91:normal:v2" → audited fixture or API-derived conventional CIF
   "manual:sample" → user-uploaded CIF
 
-SEPARATION RULE (raw vs. prepared):
-  Currently this cache holds whichever CIF cached_fetch_mp returned —
-  raw MP CIF when no fixture exists, or the fixture content when one
-  does.  That is convenient but conflates two roles.  The architecture
-  spec (CLAUDE OUTPUTS / Catalysis-Toolkit_Architecture_v1.md, §Step 4)
-  recommends separate cache keys for raw / prepared / preview artifacts:
-     mp:<id>:raw            — exact MP API response
-     mp:<id>:gsas:<vN>      — CIF prepared for GSAS-II refinement
-     mp:<id>:preview:<vN>   — preview reflection list
-  Future work; the current single-key cache is a known compromise.
+SEPARATION RULE (source vs. prepared):
+  MP source CIFs use versioned ``mp:<id>:normal:v2`` keys. GSAS-II
+  preparation is performed from that immutable source for each refinement;
+  prepared CIFs and preview reflections never overwrite the source key.
+  Legacy ``mp:<id>`` and ``mp:<id>:gsas:v1`` keys are intentionally ignored
+  so an older raw/P1 or display-mutated CIF cannot poison a new run.
 
 Cache never expires — CIF files don't change.
 Size is capped at max_size_mb (default 500 MB); oldest files pruned when exceeded.
@@ -27,6 +21,13 @@ Size is capped at max_size_mb (default 500 MB); oldest files pruned when exceede
 
 import os, json, hashlib, time
 from pathlib import Path
+
+
+MP_NORMAL_CACHE_VERSION = 'v2'
+
+
+def mp_normal_cache_key(mp_id):
+    return f"mp:{str(mp_id)}:normal:{MP_NORMAL_CACHE_VERSION}"
 
 
 class CIFCache:
@@ -196,7 +197,7 @@ def cached_fetch_mp(mp_id, api_key, fetch_fn):
     so downstream consumers stay consistent.
     """
     cache = get_cache()
-    key   = f'mp:{mp_id}'
+    key = mp_normal_cache_key(mp_id)
 
     # ── Fixture takes priority over cache ─────────────────────────────
     try:
@@ -205,7 +206,8 @@ def cached_fetch_mp(mp_id, api_key, fetch_fn):
             _fixture_cif_for,
             _fixture_metadata_for,
         )
-        fixture_text = _fixture_cif_for(mp_id)
+        fixture_text = _fixture_cif_for(
+            mp_id, purpose='normal_import')
     except Exception:
         fixture_text = None
     if fixture_text:
@@ -235,11 +237,21 @@ def cached_fetch_mp(mp_id, api_key, fetch_fn):
     if text:
         from .crystallography import parse_cif
         parsed = parse_cif(text)
+        # A P1/full-cell source needs MP symmetry metadata to be prepared
+        # safely downstream. The text cache cannot preserve that metadata, so
+        # refresh instead of silently returning a P1 phase on later runs.
+        if int(parsed.get('spacegroup_number') or 1) <= 1:
+            result = fetch_fn(mp_id, api_key)
+            if result.get('cif_text'):
+                cache.put(key, result['cif_text'])
+            result['cached'] = False
+            return result
         parsed['mp_id']    = mp_id
         parsed['cod_id']   = mp_id
         parsed['cif_text'] = text
         parsed['source']   = 'mp'
         parsed['cached']   = True
+        parsed['cif_preparation_policy'] = 'cached_normal_cif'
         return parsed
     result = fetch_fn(mp_id, api_key)
     if result.get('cif_text'):

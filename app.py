@@ -158,7 +158,8 @@ import gc_processor
 import tga_processor
 import bet_processor
 import xrd_processor
-from xrd.cif_cache import get_cache, cached_fetch_cod, cached_fetch_mp
+from xrd.cif_cache import (
+    get_cache, cached_fetch_cod, cached_fetch_mp, mp_normal_cache_key)
 from xrd.mp_api    import (search_by_elements  as mp_search_elements,
                             search_by_formula   as mp_search_formula,
                             search_by_name      as mp_search_name,
@@ -439,7 +440,7 @@ def xrd_search():
             cif_text = entry.pop('_cif_text', '')
             if cif_text and '_cell_length_a' in cif_text:
                 mp_id     = entry.get('mp_id', entry.get('cod_id', ''))
-                cache_key = f"mp:{mp_id}"
+                cache_key = mp_normal_cache_key(mp_id)
                 if mp_id and not _cache.has(cache_key):
                     _cache.put(cache_key, cif_text)
 
@@ -504,7 +505,8 @@ def xrd_fetch_cif():
         # from the CIF that also provides the atom positions.
         try:
             from xrd.mp_api import _fixture_cif_for as _fix_lookup
-            _has_fixture = bool(_fix_lookup(str(cod_id)))
+            _has_fixture = bool(
+                _fix_lookup(str(cod_id), purpose='normal_import'))
         except Exception:
             _has_fixture = False
 
@@ -521,10 +523,10 @@ def xrd_fetch_cif():
 
         # Store CIF text server-side; don't send over wire
         cif_text  = result.pop('cif_text', '')
-        cache_key = f"{'mp' if source=='mp' else 'cod'}:{cod_id}"
+        cache_key = (
+            mp_normal_cache_key(cod_id)
+            if source == 'mp' else f"cod:{cod_id}")
         _cache.put(cache_key, cif_text)
-        if source == 'mp':
-            _cache.put(f"{cache_key}:gsas:v1", cif_text)
 
         cif_check = {
             'status': 'error' if not cif_text else 'ok',
@@ -993,13 +995,10 @@ def process_xrd():
             if cid.startswith('mp-') and source == 'cod':
                 ph['source'] = 'mp'
                 source = 'mp'
-            cache_keys = [
-                f"{source}:{cid}:gsas:v1",
-                f"{source}:{cid}",
-                f"cod:{cid}",
-                f"mp:{cid}:gsas:v1",
-                f"mp:{cid}",
-            ]
+            cache_keys = (
+                [mp_normal_cache_key(cid)]
+                if source == 'mp'
+                else [f"{source}:{cid}", f"cod:{cid}"])
             text = None
             for cache_key in cache_keys:
                 text = _cache.get(cache_key)
@@ -1042,8 +1041,11 @@ def process_xrd():
             # Re-attach CIF text
             source = cal_phase.get('source', 'cod')
             cid = str(cal_phase.get('cod_id', cal_phase.get('mp_id', '')))
-            for key_fmt in [f"{source}:{cid}:gsas:v1", f"{source}:{cid}",
-                            f"cod:{cid}", f"mp:{cid}:gsas:v1", f"mp:{cid}"]:
+            _cal_cache_keys = (
+                [mp_normal_cache_key(cid)]
+                if source == 'mp'
+                else [f"{source}:{cid}", f"cod:{cid}"])
+            for key_fmt in _cal_cache_keys:
                 text = _cache.get(key_fmt)
                 if text:
                     cal_phase['cif_text'] = text
@@ -1299,6 +1301,8 @@ def process_xrd():
             'displacement_um':    result.get('displacement_um'),
             'displacement_param': result.get('displacement_param'),
             'fit_warnings':  result.get('warnings', []),
+            'refinement_diagnostics': result.get(
+                'refinement_diagnostics', {}),
             'pymatgen_used': result.get('pymatgen_used', False),
             'method':        result.get('method', 'Le Bail'),
             'summary_path':  result['summary_path'],

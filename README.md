@@ -5,7 +5,7 @@ A local web app for processing heterogeneous-catalysis data. Drag-and-drop inter
 Supported workflows:
 
 - **GC analysis** — molar flows, conversion, carbon selectivity, and carbon balance from Shimadzu GC output.
-- **XRD analysis** — phase identification via Materials Project and COD lookup, Le Bail and Rietveld refinement, full GSAS-II refinement with per-phase controls, instrument-profile import, and a WC/W2C production preset.
+- **XRD analysis** — phase identification via Materials Project and COD lookup, staged GSAS-II refinement with per-phase controls, instrument-profile import, and reusable production presets.
 - **Modular design** — drop a new reaction config (`.yaml`) into `modules/reaction_configs/` and the GC engine picks it up; add a new data type by writing a Python module under `modules/`.
 
 Coming later: TGA / TPR / TPO, BET / isotherm, broader XRD presets.
@@ -128,13 +128,7 @@ Then open your browser at `http://localhost:5000`.
 
 ## XRD / Rietveld workflow
 
-The XRD panel has three engines, in increasing power:
-
-| Engine | What it does | When to use |
-|--------|--------------|-------------|
-| **Le Bail** | Free peak-intensity fit. Refines cell, profile, scale. | Phase ID and quick cell parameters. |
-| **Rietveld** | Structure-constrained intensities. Requires CIF with atoms. | When you have CIFs and want weight fractions. |
-| **GSAS-II** | Full Rietveld via `GSASIIscriptable`. Per-phase controls, instrument-profile import, phase isolation, March-Dollase preferred orientation, configurable refinement stages. | Production refinements. |
+The GUI exposes the staged **GSAS-II** Rietveld workflow. Legacy Le Bail and in-house Rietveld code remains in the backend for compatibility, but is not presented as a production GUI path.
 
 ### Common steps
 
@@ -142,8 +136,8 @@ The XRD panel has three engines, in increasing power:
 2. **Pick wavelength** (Cu Kα default).
 3. **Pick the 2θ window** (auto-detected from the file).
 4. **Search Materials Project or COD** by elements, formula, or name. Add phases to the refinement list.
-5. A **per-phase refinement card** appears for each selected phase. Each card has size / mustrain checkboxes, PO mode (off / fixed / refined), PO axis (h k l), and PO value. Defaults are conservative — tick what is appropriate for your sample.
-6. **Optional:** tick the green **WC/W2C refinement preset**. It pre-fills the production recipe: verification mode, cell, phase isolation, PO hex [001], Refine Zero (fix Disp), Free X + Y ≥ 0, Fix WC PO at 0.905, and configures the WC phase card with the validated March-Dollase ratio.
+5. A **per-phase refinement card** appears for each selected phase. Each card has Cell, Size, Mustrain, and PO controls. PO accepts h k l or hexagonal/trigonal h k i l notation. Defaults are conservative.
+6. **Optional:** load the built-in **WC/W2C Synergy-S production** preset. It configures the validated constrained recipe and the fixed WC [001] March-Dollase ratio.
 7. **Optional:** click **▶ Advanced** to see all individual refinement toggles. Every option the preset turns on is also exposed here for manual override.
 8. **Click GSAS-II Refinement.** Stats and per-phase results render below the plot.
 
@@ -155,19 +149,20 @@ If you have a NIST line standard (Si 640g, LaB6, etc.) measured on your diffract
 2. Search Materials Project for the standard, for example Si.
 3. Tick **Advanced → Calibration (instprm)**.
 4. Click **GSAS-II Refinement**. It runs the calibration pipeline instead of a normal refinement and writes `<instrument>_<standard>.instprm` to the toolkit root.
-5. The next time you select the matching instrument profile in the GUI, that file is auto-loaded so U/V/W/X are pinned and only Y + sample displacement refine for your real sample.
+5. The next time you select the matching instrument profile, the calibrated instrument terms are held fixed. Shared Y is used only when no per-phase Size/Mustrain model is selected; otherwise sample broadening is handled by the selected HAP terms.
 
 A pre-computed file (`smartlab_Si640g.instprm`) is shipped for the Rigaku SmartLab. For other instruments, run the calibration once yourself.
 
 ### Local CIF fixtures
 
-Some Materials Project entries import incorrectly into GSAS-II when round-tripped through pymatgen's CIF writer. For example, `mp-2034` W2C used to land as P1 instead of Pbcn. The toolkit ships canonical CIFs in `fixtures/` that override the round-tripped MP CIF for these entries:
+Materials Project structures are converted to conventional cells with cell parameters and atomic coordinates transformed together. Production cache keys are versioned and separate from preview/prepared artifacts. Audited conventional fixtures may replace an API result; raw P1/full-cell files are retained only for regression and cannot be used as normal imports.
 
 ```text
 fixtures/w2c_pbcn_mp_2034.cif      # W2C, Pbcn — overrides mp-2034
+fixtures/mo2c_pbcn_mp_1552.cif     # Mo2C, Pbcn — validated conventional CIF
 ```
 
-To add a fixture for another MP entry, drop the CIF into `fixtures/` and add an entry to `_LOCAL_FIXTURES` in `modules/xrd/mp_api.py`.
+Fixture roles and provenance are declared in `fixtures/fixture_manifest.json`. A fixture is eligible for normal import only when `intended_use` includes `normal_import` and it is not marked unsafe.
 
 ---
 

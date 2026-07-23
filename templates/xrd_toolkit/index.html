@@ -1357,6 +1357,35 @@ function openXrdFittingGuide() {
     <p class="muted">For WC/W2C Synergy-S production, fixed WC [001] PO at 0.905 can be part of the baseline because it is already validated. For a new material system, do not assume a PO/size/strain correction until the comparison supports it.</p>
   </div>
 
+  <div class="panel">
+    <h2>CIF verification</h2>
+    <ol>
+      <li>Use the <code>CIF ok</code> badge to confirm formula, space group, cell, site count, and preview reflections before fitting.</li>
+      <li>Materials Project structures are written as conventional cells with coordinates transformed in the same operation. Raw P1/full-cell fixtures are audit inputs only and are blocked from normal import.</li>
+      <li>At refinement start, the toolkit independently checks the phase imported by GSAS-II. A space-group, cell, or asymmetric-site mismatch stops the fit instead of silently refining a different structure.</li>
+      <li>Reported cell changes use the exact prepared CIF sent to GSAS-II as the reference, so an orthorhombic axis permutation cannot create a false contraction or expansion.</li>
+    </ol>
+  </div>
+
+  <div class="panel">
+    <h2>Mo2C M1 example, 20-60 degrees</h2>
+    <ol>
+      <li>Load <code>M1.xlsx</code>, set 20-60 degrees, select SmartLab, and upload the calibrated <code>smartlab_Si640g.instprm</code>.</li>
+      <li>Import Materials Project <code>mp-1552</code>. Confirm <code>Pbcn</code>, SG 60, two asymmetric sites, and seven displayed reflection groups in this range.</li>
+      <li>Run <code>Quick constrained fit</code> with phase <code>Cell</code>, <code>Size</code>, <code>Mustrain</code>, and <code>PO</code> off. Treat this as the structural/tick baseline.</li>
+      <li>Turn on the phase <code>Cell</code> box and the global <code>Refine cell too</code> gate. Run again, then retain Cell in the final model only if peak shifts are systematic and the reported changes are plausible.</li>
+      <li>Keep Cell enabled, turn on <code>Size</code> for Mo2C, and run again. With the measured instrument profile, the global width terms stay fixed and the displayed FWHM comes from the exact GSAS-II reflection profile.</li>
+      <li>Leave <code>Mustrain</code>, <code>PO</code>, <code>Uiso</code>, <code>XYZ</code>, and <code>Free X</code> off unless a residual pattern specifically supports one of them. Add only one in the next comparison run.</li>
+    </ol>
+    <p class="muted">For the supplied M1 pattern, the validated Cell + Size model converges near Rwp 5.93%. Adding Mustrain changes Rwp by only about 0.01 point while Size and Mustrain correlate near 99%, so the extra strain term should not be retained for this sample.</p>
+  </div>
+
+  <div class="panel warn">
+    <h2>Convergence and parameter correlation</h2>
+    <p><code>Converged</code> means the final GSAS-II stage met its numerical stopping condition. <code>Provisional</code> means it reached the cycle limit or a stage failed. A low Rwp is not sufficient when the fit is provisional.</p>
+    <p>Warnings name highly correlated parameters when the covariance matrix is available. If Size/Mustrain is used without a measured instrument file, the toolkit also warns that sample and instrument broadening are not uniquely separated.</p>
+  </div>
+
   <div class="grid">
     <div class="panel">
       <h2>Safer early parameters</h2>
@@ -1398,7 +1427,7 @@ function openXrdFittingGuide() {
       <li>Add gamma WC1-x/MoC1-x with the CIF generator, plus hexagonal WC and orthorhombic W2C/Mo2C as needed.</li>
       <li>Run <code>Quick constrained fit</code> with all phase-card <code>Cell</code>, <code>Size</code>, <code>Mustrain</code>, and <code>PO</code> controls off unless a prior recipe already validates them.</li>
       <li>Turn on <code>Cell</code> for one phase at a time. If the gamma cubic peaks are shifted, test only the gamma phase first; if W2C/Mo2C peaks are shifted, test only that phase.</li>
-      <li>After a cell value is plausible, save the preset or leave <code>Cell</code> off for that phase in the next experiment so the value is held while testing PO/size/strain.</li>
+      <li>Each run starts from the selected CIF. Keep <code>Cell</code> enabled in a final model that requires the refined lattice, or export/use a validated CIF with that lattice before switching Cell off in later runs.</li>
       <li>Add PO, size, or microstrain only when the residuals point to that mechanism. Do not turn on size and strain for every phase just because Rwp drops.</li>
     </ol>
   </div>
@@ -2783,6 +2812,7 @@ function summarizeResultForPreset(data) {
     method: data.method || '',
     statistics: data.statistics || {},
     fit_warnings: data.fit_warnings || data.warnings || [],
+    refinement_diagnostics: data.refinement_diagnostics || {},
     zero_shift: data.zero_shift,
     displacement_um: data.displacement_um,
     displacement_param: data.displacement_param,
@@ -2795,6 +2825,8 @@ function summarizeResultForPreset(data) {
       weight_fraction_err_source: ph.weight_fraction_err_source,
       crystallite_size_nm: ph.crystallite_size_nm,
       crystallite_size_source: ph.crystallite_size_source,
+      microstrain_microstrain: ph.microstrain_microstrain,
+      microstrain_source: ph.microstrain_source,
       fwhm_reference_two_theta: ph.fwhm_reference_two_theta,
       fwhm_reference_hkl: ph.fwhm_reference_hkl,
       fwhm_reference_source: ph.fwhm_reference_source,
@@ -2808,6 +2840,8 @@ function summarizeResultForPreset(data) {
       delta_b_pct: ph.delta_b_pct,
       delta_c_pct: ph.delta_c_pct,
       delta_volume_pct: ph.delta_volume_pct,
+      cell_reference: ph.cell_reference,
+      cell_reference_spacegroup: ph.cell_reference_spacegroup,
     })),
   };
 }
@@ -3179,6 +3213,12 @@ function renderReusableFitParameters(data) {
     const sizeSource = ph.crystallite_size_source
       ? ` (${escHtml(String(ph.crystallite_size_source).replace(/_/g, ' '))})`
       : '';
+    const microstrainLine = ph.microstrain_microstrain != null
+      ? `${fmtResultValue(ph.microstrain_microstrain, 1)} microstrain`
+      : 'not refined';
+    const microstrainSource = ph.microstrain_source
+      ? ` (${escHtml(String(ph.microstrain_source).replace(/_/g, ' '))})`
+      : '';
     const wtErr = ph['weight_fraction_err_%'] != null
       ? ` &plusmn; ${fmtResultValue(ph['weight_fraction_err_%'], 2)}`
       : '';
@@ -3196,7 +3236,7 @@ function renderReusableFitParameters(data) {
       <div><span class="reuse-chip">${poText}</span>${hapBits.map(x => `<span class="reuse-chip">${escHtml(x)}</span>`).join('')}</div>
       <div class="reuse-metrics">
         <div class="reuse-metric">
-          <div class="reuse-label">Cell change</div>
+          <div class="reuse-label">Cell change vs prepared CIF</div>
           <div class="reuse-value">${cellBits.length ? cellBits.join('<br>') : 'no deltas reported'}</div>
         </div>
         <div class="reuse-metric">
@@ -3210,6 +3250,10 @@ function renderReusableFitParameters(data) {
         <div class="reuse-metric">
           <div class="reuse-label">Size output</div>
           <div class="reuse-value">${sizeLine}${sizeSource}</div>
+        </div>
+        <div class="reuse-metric">
+          <div class="reuse-label">Microstrain</div>
+          <div class="reuse-value">${microstrainLine}${microstrainSource}</div>
         </div>
         <div class="reuse-metric">
           <div class="reuse-label">Wt% uncertainty</div>
@@ -3510,6 +3554,13 @@ function showXRDResults(data) {
       v: Number(data.displacement_um).toFixed(1) + ' µm'
     });
   }
+  const fitDiag = data.refinement_diagnostics || {};
+  if (fitDiag.converged === true || fitDiag.converged === false) {
+    statBoxes.push({
+      l: 'Convergence',
+      v: fitDiag.converged ? 'Converged' : 'Provisional'
+    });
+  }
   statBoxes.forEach(s => {
     sg.innerHTML += `<div class="stat-box">
       <div class="stat-label">${s.l}</div>
@@ -3525,12 +3576,17 @@ function showXRDResults(data) {
   pr.innerHTML = '';
   (data.phase_results || []).forEach((ph, i) => {
     const c = (xrdPhases[i] && xrdPhases[i]._plot_color) || PHASE_COLORS[i % PHASE_COLORS.length];
-    const fwhmRef = ph.fwhm_reference_two_theta ?? 40;
+    const fwhmRef = Number(ph.fwhm_reference_two_theta);
+    const hasFwhmRef = Number.isFinite(fwhmRef);
+    const fwhmRefText = hasFwhmRef ? `${fwhmRef.toFixed(2)}&deg;` : 'phase peak';
     const fwhmHkl = Array.isArray(ph.fwhm_reference_hkl)
       ? ` (${ph.fwhm_reference_hkl.join('')})`
       : '';
     const sizeSource = ph.crystallite_size_source
       ? ` <span style="color:var(--muted);font-size:10px;">(${String(ph.crystallite_size_source).replace(/_/g, ' ')})</span>`
+      : '';
+    const microstrainHtml = ph.microstrain_microstrain != null
+      ? `<div><span style="color:var(--muted);">Microstrain = </span>${fmtResultValue(ph.microstrain_microstrain, 1)} microstrain${ph.microstrain_source ? ` <span style="color:var(--muted);font-size:10px;">(${escHtml(String(ph.microstrain_source).replace(/_/g, ' '))})</span>` : ''}</div>`
       : '';
     const wtErrSource = ph.weight_fraction_err_source
       ? ` title="Uncertainty source: ${String(ph.weight_fraction_err_source).replace(/"/g, '&quot;')}"`
@@ -3548,7 +3604,7 @@ function showXRDResults(data) {
     if (ph.delta_b_pct != null) cellDeltaParts.push(`Δb/b0=${ph.delta_b_pct}%`);
     if (ph.delta_c_pct != null) cellDeltaParts.push(`Δc/c0=${ph.delta_c_pct}%`);
     const cellDeltaHtml = cellDeltaParts.length
-      ? `<div style="grid-column:1/-1;padding-top:4px;border-top:1px solid rgba(255,255,255,0.06);"><span style="color:var(--muted);">Cell change vs input CIF = </span>${cellDeltaParts.join(' · ')}</div>`
+      ? `<div style="grid-column:1/-1;padding-top:4px;border-top:1px solid rgba(255,255,255,0.06);"><span style="color:var(--muted);">Cell change vs prepared GSAS CIF${ph.cell_reference_spacegroup ? ` (${escHtml(ph.cell_reference_spacegroup)})` : ''} = </span>${cellDeltaParts.join(' · ')}</div>`
       : '';
     const poAxis = Array.isArray(ph.preferred_orientation_axis)
       ? ph.preferred_orientation_axis.join(' ')
@@ -3586,8 +3642,9 @@ function showXRDResults(data) {
           <div><span style="color:var(--muted);">β = </span>${ph.beta}°</div>
           <div><span style="color:var(--muted);">γ = </span>${ph.gamma}°</div>
           <div><span style="color:var(--muted);">Size = </span>${ph.crystallite_size_nm ?? '—'} nm${sizeSource}</div>
-          <div><span style="color:var(--muted);">FWHM @ ${Number(fwhmRef).toFixed(2)}°${fwhmHkl} = </span>${ph.fwhm_deg}°</div>
-          <div><span style="color:var(--muted);">η @ ${Number(fwhmRef).toFixed(2)}° = </span>${ph.eta_at_fwhm_reference ?? ph.eta_at_40deg ?? ph.eta_at_strongest ?? ph.eta ?? '—'}</div>
+          <div><span style="color:var(--muted);">FWHM @ ${fwhmRefText}${fwhmHkl} = </span>${ph.fwhm_deg ?? 'n/a'}${ph.fwhm_deg != null ? '&deg;' : ''}</div>
+          <div><span style="color:var(--muted);">Eta @ ${fwhmRefText} = </span>${ph.eta_at_fwhm_reference ?? ph.eta_at_strongest ?? ph.eta ?? 'n/a'}</div>
+          ${microstrainHtml}
           ${ph.Y != null ? `<div><span style="color:var(--muted);">Y = </span>${ph.Y} (size)</div>` : ''}
           ${ph.X != null ? `<div><span style="color:var(--muted);">X = </span>${ph.X} (strain)</div>` : ''}
           ${ph.scale_sigma != null ? `<div><span style="color:var(--muted);">Scale sigma = </span>${ph.scale_sigma}${ph['scale_sigma_rel_%'] != null ? ` (${ph['scale_sigma_rel_%']}%)` : ''}</div>` : ''}

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated": "2026-05-21",
+  "updated": "2026-07-23",
   "policy": {
     "normal_import": "Use fixtures whose intended_use includes normal_import and whose cell_setting is conventional or generated_conventional.",
     "raw_regression": "Raw/P1/full-cell fixtures are allowed only as source/regression inputs. Do not treat them as canonical conventional CIFs.",
@@ -27,6 +27,17 @@
       "intended_use": ["raw_regression", "preview_source"],
       "normal_import_safe": false,
       "notes": "Raw MP structure dump: CIF declares P1 with all 12 atoms. Local pymatgen/spglib identifies Pbcn but crashes during conventional CIF generation in this environment; do not header-patch."
+    },
+    "mo2c_pbcn_mp_1552.cif": {
+      "formula": "Mo2C",
+      "source": "materials_project",
+      "mp_id": "mp-1552",
+      "spacegroup": "Pbcn",
+      "spacegroup_number": 60,
+      "cell_setting": "conventional_cifwriter",
+      "intended_use": ["normal_import", "preview", "gsas_refinement"],
+      "normal_import_safe": true,
+      "notes": "Validated conventional Pbcn CIF. GSAS-II imports two asymmetric sites in SG 60; cell and coordinates use the same CifWriter setting."
     },
     "moc_fm3m_mp_2746_primitive.cif": {
       "formula": "MoC",
