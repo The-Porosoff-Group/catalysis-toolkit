@@ -12,7 +12,7 @@ inlet_species:
   - label: CO2
     default_sccm: 10
   - label: H2
-    default_sccm: 40
+    default_sccm: 30
   - label: Ar
     default_sccm: 15
 

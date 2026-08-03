@@ -17,10 +17,21 @@ from modules.gc_processor import (  # noqa: E402
     _add_time_on_stream_column,
     _copy_source_sheet_to_workbook,
     _reaction_mask,
+    load_reaction_config,
 )
 
 
 class GcRegressionTests(unittest.TestCase):
+    def test_co2_reaction_hydrogen_defaults_are_30_sccm(self):
+        config_dir = os.path.join(ROOT, 'modules', 'reaction_configs')
+        for filename in ('co2_hydrogenation.yaml', 'rwgs.yaml'):
+            config = load_reaction_config(os.path.join(config_dir, filename))
+            defaults = {
+                item['label']: item['default_sccm']
+                for item in config['inlet_species']
+            }
+            self.assertEqual(defaults['H2'], 30, filename)
+
     def _minimal_gc_xlsx(self, path):
         main_ns = (
             'http://schemas.openxmlformats.org/spreadsheetml/2006/main')
