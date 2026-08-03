@@ -87,6 +87,31 @@ class GcRegressionTests(unittest.TestCase):
         self.assertEqual(result.loc[2, 'time_on_stream_h'], 0.0)
         self.assertAlmostEqual(result.loc[3, 'time_on_stream_h'], 22 / 60)
 
+    def test_final_reaction_points_are_preserved_but_excluded(self):
+        frame = pd.DataFrame([
+            {'label': 'sample Rxn 1', 'inj_num': 1, 'is_bypass': False},
+            {'label': 'sample Rxn 2', 'inj_num': 2, 'is_bypass': False},
+            {'label': 'sample Rxn 3', 'inj_num': 3, 'is_bypass': False},
+            {'label': 'sample Rxn 4', 'inj_num': 4, 'is_bypass': False},
+        ])
+        metadata = {
+            'injection_interval_min': 30,
+            'rejected_final_injections': 2,
+        }
+        result, count = _add_time_on_stream_column(frame, metadata)
+
+        self.assertEqual(count, 2)
+        self.assertListEqual(
+            result['analysis_include'].tolist(), [True, True, False, False])
+        self.assertEqual(result.loc[2, 'row_status'],
+                         'Excluded: final reaction point')
+        self.assertEqual(result.loc[3, 'row_status'],
+                         'Excluded: final reaction point')
+        self.assertTrue(pd.isna(result.loc[2, 'time_on_stream_h']))
+        self.assertTrue(pd.isna(result.loc[3, 'time_on_stream_h']))
+        self.assertEqual(result.loc[0, 'time_on_stream_h'], 0.0)
+        self.assertEqual(result.loc[1, 'time_on_stream_h'], 0.5)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -626,6 +626,10 @@
               <input type="number" step="1" min="0" id="rejected_initial_injections" placeholder="0">
             </div>
             <div class="form-group">
+              <label>Reject Last Rxn Points</label>
+              <input type="number" step="1" min="0" id="rejected_final_injections" placeholder="0">
+            </div>
+            <div class="form-group">
               <label>Registered Rxn Injections</label>
               <input type="number" step="1" min="1" id="registered_reaction_injections" placeholder="auto">
             </div>
@@ -1222,6 +1226,7 @@ async function processGC() {
   formData.append('run_duration_h',  document.getElementById('run_duration_h').value);
   formData.append('injection_interval_min', document.getElementById('injection_interval_min').value);
   formData.append('rejected_initial_injections', document.getElementById('rejected_initial_injections').value);
+  formData.append('rejected_final_injections', document.getElementById('rejected_final_injections').value);
   formData.append('registered_reaction_injections', document.getElementById('registered_reaction_injections').value);
   formData.append('bypass_omit_initial', document.getElementById('bypass_omit_initial').value);
   formData.append('bypass_points_used', document.getElementById('bypass_points_used').value);

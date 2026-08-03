@@ -1039,9 +1039,14 @@ def _add_time_on_stream_column(df, metadata):
 
     rxn_idx_all = list(df.index[_reaction_mask(df)])
     rxn_idx = list(rxn_idx_all)
-    rejected = max(0, _metadata_int(metadata, 'rejected_initial_injections', 0) or 0)
-    if rejected:
-        rxn_idx = rxn_idx[min(rejected, len(rxn_idx)):]
+    rejected_initial = max(
+        0, _metadata_int(metadata, 'rejected_initial_injections', 0) or 0)
+    rejected_final = max(
+        0, _metadata_int(metadata, 'rejected_final_injections', 0) or 0)
+    if rejected_initial:
+        rxn_idx = rxn_idx[min(rejected_initial, len(rxn_idx)):]
+    if rejected_final:
+        rxn_idx = rxn_idx[:max(0, len(rxn_idx) - rejected_final)]
     requested = _metadata_int(metadata, 'registered_reaction_injections')
     if requested and requested > 0:
         rxn_idx = rxn_idx[:min(requested, len(rxn_idx))]
@@ -1051,8 +1056,10 @@ def _add_time_on_stream_column(df, metadata):
     for pos, idx in enumerate(rxn_idx_all):
         if idx in included:
             continue
-        if pos < rejected:
+        if pos < rejected_initial:
             df.loc[idx, 'row_status'] = 'Excluded: initial reaction point'
+        elif pos >= max(0, len(rxn_idx_all) - rejected_final):
+            df.loc[idx, 'row_status'] = 'Excluded: final reaction point'
         else:
             df.loc[idx, 'row_status'] = 'Excluded: beyond requested reaction count'
 
@@ -2460,6 +2467,7 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
     duration_cell = add_setting('run_duration_h', metadata.get('run_duration_h'), 'Optional axis extent for time-on-stream plots.')
     interval_cell = add_setting('injection_interval_min', metadata.get('injection_interval_min'), 'Used to convert accepted injection count to time.')
     add_setting('rejected_initial_injections', metadata.get('rejected_initial_injections'), 'Initial reaction rows excluded from the plotted time axis.')
+    add_setting('rejected_final_injections', metadata.get('rejected_final_injections'), 'Final reaction rows excluded after shutdown or another known end-of-run event.')
     add_setting('blank_excluded_points', metadata.get('blank_excluded_points'), 'Rows labeled blank are preserved but automatically excluded from reaction plots and summaries.')
     add_setting('registered_reaction_injections', metadata.get('registered_reaction_injections'), 'Accepted/plotted reaction point count when specified.')
     npoints_cell = add_setting('plot_reaction_points', metadata.get('plot_reaction_points'), 'Number of rows with assigned time_on_stream_h.')
@@ -2902,6 +2910,7 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
         metadata['run_duration_h'] = _infer_run_duration_h(metadata)
         metadata['injection_interval_min'] = _metadata_float(metadata, 'injection_interval_min')
         metadata['rejected_initial_injections'] = _metadata_int(metadata, 'rejected_initial_injections', 0)
+        metadata['rejected_final_injections'] = _metadata_int(metadata, 'rejected_final_injections', 0)
 
     # Steady-state mask
     ss_mask = (
@@ -2941,6 +2950,7 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
         'run_duration_h':  _infer_run_duration_h(metadata),
         'injection_interval_min': _metadata_float(metadata, 'injection_interval_min'),
         'rejected_initial_injections': _metadata_int(metadata, 'rejected_initial_injections', 0),
+        'rejected_final_injections': _metadata_int(metadata, 'rejected_final_injections', 0),
         'plot_style':      metadata.get('plot_style', 'auto'),
         'catalyst_mass_mg': metadata.get('catalyst_mass_mg'),
         'total_inlet_flow_sccm': metadata.get('total_inlet_flow_sccm'),

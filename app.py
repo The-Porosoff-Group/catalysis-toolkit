@@ -289,6 +289,7 @@ def process_gc():
             'run_duration_h': form.get('run_duration_h', ''),
             'injection_interval_min': form.get('injection_interval_min', ''),
             'rejected_initial_injections': form.get('rejected_initial_injections', ''),
+            'rejected_final_injections': form.get('rejected_final_injections', ''),
             'registered_reaction_injections': form.get('registered_reaction_injections', ''),
             'bypass_omit_initial': form.get('bypass_omit_initial', ''),
             'bypass_points_used': form.get('bypass_points_used', ''),
