@@ -876,10 +876,14 @@ def calculate_results(df, reactant_label, F_reactant_inlet, species_config,
         df['conversion'] = (F_reactant_inlet - df[reactant_basis_label]) / F_reactant_inlet
     else:
         df['conversion'] = np.nan
+    excluded_rows = df['is_bypass'].fillna(False).astype(bool)
+    if 'is_blank' in df.columns:
+        excluded_rows |= df['is_blank'].fillna(False).astype(bool)
+    df.loc[excluded_rows, 'conversion'] = np.nan
 
     meta_cols = {
-        'label', 'inj_num', 'is_bypass', 'source_kind', 'analysis_include',
-        'row_status', 'conversion', 'time_on_stream_h'
+        'label', 'inj_num', 'is_bypass', 'is_blank', 'source_kind',
+        'analysis_include', 'row_status', 'conversion', 'time_on_stream_h'
     }
     reactant_exclusions = set(basis_candidates)
     reactant_exclusions.add(reactant_label)
@@ -907,6 +911,8 @@ def calculate_results(df, reactant_label, F_reactant_inlet, species_config,
     else:
         total_C_out = pd.Series(np.nan, index=df.index)
         df_sel = pd.DataFrame(index=df.index)
+    if not df_sel.empty:
+        df_sel.loc[excluded_rows, :] = np.nan
 
     return df, df_sel, total_C_out, carbon_cols
 
@@ -932,8 +938,15 @@ def _analysis_mask(df):
     return ~df['is_bypass']
 
 
+def _reaction_mask(df):
+    mask = ~df['is_bypass'].fillna(False).astype(bool)
+    if 'is_blank' in df.columns:
+        mask &= ~df['is_blank'].fillna(False).astype(bool)
+    return mask
+
+
 def _analysis_reaction_rows(df):
-    return df[(~df['is_bypass']) & _analysis_mask(df)].copy()
+    return df[_reaction_mask(df) & _analysis_mask(df)].copy()
 
 
 def _metadata_float(metadata, key, default=None):
@@ -1013,15 +1026,18 @@ def _add_time_on_stream_column(df, metadata):
     df = df.copy()
     duration = _infer_run_duration_h(metadata)
     interval_min = _metadata_float(metadata, 'injection_interval_min')
+    blank_mask = df['label'].fillna('').astype(str).str.contains(
+        r'\bblank\b', case=False, regex=True)
+    df['is_blank'] = blank_mask
+    metadata['blank_excluded_points'] = int(blank_mask.sum())
     df['time_on_stream_h'] = np.nan
     df['analysis_include'] = False
-    df['row_status'] = np.where(
-        df['is_bypass'],
-        'Bypass / inlet normalization',
-        'Reaction included'
-    )
+    df['row_status'] = np.select(
+        [df['is_bypass'], blank_mask],
+        ['Bypass / inlet normalization', 'Blank / excluded'],
+        default='Reaction included')
 
-    rxn_idx_all = list(df.index[~df['is_bypass']])
+    rxn_idx_all = list(df.index[_reaction_mask(df)])
     rxn_idx = list(rxn_idx_all)
     rejected = max(0, _metadata_int(metadata, 'rejected_initial_injections', 0) or 0)
     if rejected:
@@ -2087,32 +2103,132 @@ def _amount_expr_for_header(inj, species_header, sheet_name='Raw Original',
     return None
 
 
+def _xlsx_export_cell_value(cell, strings):
+    """Return a cell's cached value without loading its style table."""
+    cell_type = cell.get('t', '')
+    if cell_type == 'inlineStr':
+        texts = [
+            node.text or ''
+            for node in cell.findall(f'.//{{{_XLSX_NS}}}t')
+        ]
+        return ''.join(texts)
+
+    value = cell.find(f'{{{_XLSX_NS}}}v')
+    if value is None or value.text is None:
+        return None
+    raw = value.text
+    if cell_type == 's':
+        try:
+            return strings[int(raw)]
+        except (TypeError, ValueError, IndexError):
+            return None
+    if cell_type in {'str', 'e', 'd'}:
+        return raw
+    if cell_type == 'b':
+        return raw == '1'
+    try:
+        number = float(raw)
+        return int(number) if number.is_integer() and 'e' not in raw.lower() else number
+    except (TypeError, ValueError):
+        return raw
+
+
+def _copy_source_sheet_values_from_xml(out_wb, source_filepath,
+                                       worksheet_index=0,
+                                       sheet_name='Raw Original', insert_at=1):
+    """Copy source values at their original coordinates, ignoring styles.
+
+    Some instrument workbooks contain valid measurement cells but malformed
+    style records that openpyxl cannot deserialize. The GC parser already
+    reads those workbooks directly from OpenXML, so use the same strategy for
+    the traceability sheet instead of leaving formulas pointed at an empty tab.
+    """
+    with zipfile.ZipFile(source_filepath) as archive:
+        strings = _xlsx_shared_strings(archive)
+        sheet_paths = _xlsx_worksheet_paths(archive)
+        if not sheet_paths:
+            raise ValueError('No worksheet XML found in source workbook.')
+        index = min(max(int(worksheet_index or 0), 0), len(sheet_paths) - 1)
+        with archive.open(sheet_paths[index]) as stream:
+            root = ET.parse(stream).getroot()
+
+    raw_ws = out_wb.create_sheet(sheet_name, insert_at)
+    for row in root.findall(f'.//{{{_XLSX_NS}}}row'):
+        row_number = int(row.get('r') or 0)
+        if row_number and row.get('ht'):
+            try:
+                raw_ws.row_dimensions[row_number].height = float(row.get('ht'))
+            except (TypeError, ValueError):
+                pass
+        for cell in row.findall(f'{{{_XLSX_NS}}}c'):
+            ref = cell.get('r')
+            if not ref:
+                continue
+            value = _xlsx_export_cell_value(cell, strings)
+            if value is not None:
+                raw_ws[ref].value = value
+
+    for col in root.findall(f'.//{{{_XLSX_NS}}}cols/{{{_XLSX_NS}}}col'):
+        try:
+            start = int(col.get('min'))
+            end = int(col.get('max'))
+            width = float(col.get('width'))
+        except (TypeError, ValueError):
+            continue
+        for col_index in range(start, end + 1):
+            raw_ws.column_dimensions[
+                raw_ws.cell(1, col_index).column_letter
+            ].width = width
+
+    for merged in root.findall(
+            f'.//{{{_XLSX_NS}}}mergeCells/{{{_XLSX_NS}}}mergeCell'):
+        ref = merged.get('ref')
+        if ref:
+            raw_ws.merge_cells(ref)
+    return raw_ws
+
+
 def _copy_source_sheet_to_workbook(out_wb, source_filepath, worksheet_index=0,
                                    sheet_name='Raw Original', insert_at=1):
     from copy import copy
     from openpyxl import load_workbook
 
-    src_wb = load_workbook(source_filepath, data_only=False)
-    src_ws = src_wb.worksheets[min(max(int(worksheet_index or 0), 0), len(src_wb.worksheets) - 1)]
-    raw_ws = out_wb.create_sheet(sheet_name, insert_at)
-    for row in src_ws.iter_rows():
-        for cell in row:
-            dst = raw_ws[cell.coordinate]
-            dst.value = cell.value
-            if cell.has_style:
-                dst.font = copy(cell.font)
-                dst.fill = copy(cell.fill)
-                dst.border = copy(cell.border)
-                dst.alignment = copy(cell.alignment)
-                dst.number_format = cell.number_format
-    for key, dim in src_ws.column_dimensions.items():
-        raw_ws.column_dimensions[key].width = dim.width
-    for key, dim in src_ws.row_dimensions.items():
-        raw_ws.row_dimensions[key].height = dim.height
-    for merged in src_ws.merged_cells.ranges:
-        raw_ws.merge_cells(str(merged))
-    raw_ws.freeze_panes = src_ws.freeze_panes
-    return raw_ws
+    try:
+        src_wb = load_workbook(source_filepath, data_only=False)
+        src_ws = src_wb.worksheets[
+            min(max(int(worksheet_index or 0), 0), len(src_wb.worksheets) - 1)
+        ]
+        raw_ws = out_wb.create_sheet(sheet_name, insert_at)
+        for row in src_ws.iter_rows():
+            for cell in row:
+                dst = raw_ws[cell.coordinate]
+                dst.value = cell.value
+                if cell.has_style:
+                    dst.font = copy(cell.font)
+                    dst.fill = copy(cell.fill)
+                    dst.border = copy(cell.border)
+                    dst.alignment = copy(cell.alignment)
+                    dst.number_format = cell.number_format
+        for key, dim in src_ws.column_dimensions.items():
+            raw_ws.column_dimensions[key].width = dim.width
+        for key, dim in src_ws.row_dimensions.items():
+            raw_ws.row_dimensions[key].height = dim.height
+        for merged in src_ws.merged_cells.ranges:
+            raw_ws.merge_cells(str(merged))
+        raw_ws.freeze_panes = src_ws.freeze_panes
+        src_wb.close()
+        return raw_ws
+    except Exception as exc:
+        if sheet_name in out_wb.sheetnames:
+            out_wb.remove(out_wb[sheet_name])
+        print(
+            f"  Source workbook styles could not be loaded for {sheet_name}; "
+            f"copying values directly from OpenXML instead ({exc}).",
+            flush=True,
+        )
+        return _copy_source_sheet_values_from_xml(
+            out_wb, source_filepath, worksheet_index,
+            sheet_name=sheet_name, insert_at=insert_at)
 
 
 def _flow_formula_for_header(inj, species_header, species_config, has_bridge,
@@ -2344,6 +2460,7 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
     duration_cell = add_setting('run_duration_h', metadata.get('run_duration_h'), 'Optional axis extent for time-on-stream plots.')
     interval_cell = add_setting('injection_interval_min', metadata.get('injection_interval_min'), 'Used to convert accepted injection count to time.')
     add_setting('rejected_initial_injections', metadata.get('rejected_initial_injections'), 'Initial reaction rows excluded from the plotted time axis.')
+    add_setting('blank_excluded_points', metadata.get('blank_excluded_points'), 'Rows labeled blank are preserved but automatically excluded from reaction plots and summaries.')
     add_setting('registered_reaction_injections', metadata.get('registered_reaction_injections'), 'Accepted/plotted reaction point count when specified.')
     npoints_cell = add_setting('plot_reaction_points', metadata.get('plot_reaction_points'), 'Number of rows with assigned time_on_stream_h.')
     add_setting('plot_style', metadata.get('plot_style', 'auto'), 'GUI-selected plot rendering mode.')
@@ -2470,6 +2587,7 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
     flow_start_col = 11 + len(present_groups)
     raw_label_col = flow_start_col + len(flow_labels)
     raw_label_example_ref = None
+    analysis_example_row = None
     excluded_fill = PatternFill('solid', fgColor='FFF2CC')
     bypass_fill = PatternFill('solid', fgColor='DDEBF7')
     outside_fill = PatternFill('solid', fgColor='E7E6E6')
@@ -2487,7 +2605,8 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
         ws.cell(excel_row, 5).value = row.get('inj_num')
         ws.cell(excel_row, 6).value = metadata.get('catalyst_id') or ''
         ws.cell(excel_row, raw_label_col).value = raw_label_formula
-        if raw_label_example_ref is None:
+        if bool(row.get('analysis_include', False)) and analysis_example_row is None:
+            analysis_example_row = excel_row
             raw_label_example_ref = f"='Processed'!{ws.cell(excel_row, raw_label_col).coordinate}"
 
         flow_cell_by_label = {}
@@ -2503,8 +2622,11 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
 
         reactant_flow_cell = flow_cell_by_label.get(reactant_label)
         ws.cell(excel_row, 7).value = f'={reactant_flow_cell}' if reactant_flow_cell else row.get(reactant_label)
+        excluded_formula = (
+            f'OR($B{excel_row}="Bypass / inlet normalization",'
+            f'$B{excel_row}="Blank / excluded")')
         ws.cell(excel_row, 8).value = (
-            f'=IF($B{excel_row}="Bypass / inlet normalization","",'
+            f'=IF({excluded_formula},"",'
             f'({reactant_inlet_cell}-G{excel_row})/{reactant_inlet_cell}*100)')
 
         product_terms = []
@@ -2515,7 +2637,7 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
                 product_terms.append(f'{cn}*{cell}')
         ws.cell(excel_row, 9).value = '=' + '+'.join(product_terms) if product_terms else '=0'
         ws.cell(excel_row, 10).value = (
-            f'=IF($B{excel_row}="Bypass / inlet normalization","",'
+            f'=IF({excluded_formula},"",'
             f'(G{excel_row}+I{excel_row})/{reactant_inlet_cell}*100)')
 
         for g_idx, group in enumerate(present_groups, start=11):
@@ -2527,7 +2649,8 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
                 if cell and cn:
                     terms.append(f'{cn}*{cell}')
             ws.cell(excel_row, g_idx).value = (
-                f'=IF(I{excel_row}>0,({"+".join(terms)})/I{excel_row}*100,"")'
+                f'=IF({excluded_formula},"",'
+                f'IF(I{excel_row}>0,({"+".join(terms)})/I{excel_row}*100,""))'
                 if terms else '')
 
         row_fill = None
@@ -2550,16 +2673,17 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
         cell.value = value
         cell.font = Font(bold=True, color='FFFFFF')
         cell.fill = PatternFill('solid', fgColor='7030A0')
+    example_row = analysis_example_row or 2
     example_rows = [
-        ('Catalyst ID row label', 'Processed row identifiers use the Catalyst ID entered in the GUI.', "='Processed'!F2"),
+        ('Catalyst ID row label', 'Processed row identifiers use the Catalyst ID entered in the GUI.', f"='Processed'!F{example_row}"),
         ('Raw label carried over', "The final Processed column still points directly to Raw Original column A.", raw_label_example_ref or ''),
-        ('Row inclusion', 'Processed column A says whether the row is included in the steady-state summary; highlighted rows remain visible but are not averaged.', "='Processed'!A2"),
-        ('Time on stream', 'Processed!D2 = (accepted point - 1) * injection_interval_min / 60 when spacing is set.', "='Processed'!D2"),
+        ('Row inclusion', 'Processed column A says whether the row is included in the steady-state summary; highlighted rows remain visible but are not averaged.', f"='Processed'!A{example_row}"),
+        ('Time on stream', f'Processed!D{example_row} = (accepted point - 1) * injection_interval_min / 60 when spacing is set.', f"='Processed'!D{example_row}"),
         ('Bypass inlet flow', f'{reactant_label}_inlet_sccm comes from Bypass Processed average when bypass is used.', f'={reactant_inlet_cell}'),
-        (f'{reactant_label} outlet flow', 'Processed!G2 references the calculated flow column for the reactant.', "='Processed'!G2"),
-        (f'{reactant_label} conversion', f'({reactant_label} inlet - {reactant_label} outlet) / {reactant_label} inlet * 100.', "='Processed'!H2"),
-        ('Product carbon out', 'Sum of carbon number times product flow for each product species.', "='Processed'!I2"),
-        ('Carbon balance', f'({reactant_label} out + product carbon out) / {reactant_label} inlet * 100.', "='Processed'!J2"),
+        (f'{reactant_label} outlet flow', f'Processed!G{example_row} references the calculated flow column for the reactant.', f"='Processed'!G{example_row}"),
+        (f'{reactant_label} conversion', f'({reactant_label} inlet - {reactant_label} outlet) / {reactant_label} inlet * 100.', f"='Processed'!H{example_row}"),
+        ('Product carbon out', 'Sum of carbon number times product flow for each product species.', f"='Processed'!I{example_row}"),
+        ('Carbon balance', f'({reactant_label} out + product carbon out) / {reactant_label} inlet * 100.', f"='Processed'!J{example_row}"),
         ('Calculated GHSV', 'total_inlet_flow_sccm * 60 / catalyst_mass_g. Leave catalyst mass blank to omit.', f'={ghsv_cell}'),
         ('Calculated WHSV', 'feed_mass_flow_g_h / catalyst_mass_g using molecular weights and 298 K / 1 atm molar volume.', f'={whsv_cell}'),
     ]
@@ -2577,7 +2701,7 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
         example_rows.append((
             f'{present_groups[0]} selectivity',
             f'{present_groups[0]} carbon out / total product carbon out * 100.',
-            "='Processed'!K2"))
+            f"='Processed'!K{example_row}"))
     for concept, trace, example in example_rows:
         settings.append((concept, trace, example))
 
@@ -2606,12 +2730,15 @@ def save_outputs(df, df_sel, total_C_out, C_in_flow,
                  reactant_label, ss_mask, metadata, species_config, output_dir,
                  source_filepath=None, raw_data=None, inlet_flows=None,
                  has_bridge=False, bypass_filepath=None, bypass_data=None):
-    rxn    = df[~df['is_bypass']]
+    rxn = df[_reaction_mask(df)]
     ss_rxn = ss_mask[rxn.index]
     row    = dict(metadata)
 
     row['n_bypass']   = int(df['is_bypass'].sum())
-    row['n_reaction'] = int((~df['is_bypass']).sum())
+    row['n_reaction'] = int(_reaction_mask(df).sum())
+    row['n_blank_excluded'] = (
+        int(df['is_blank'].fillna(False).sum())
+        if 'is_blank' in df.columns else 0)
     if ss_rxn.any():
         row['ss_inj_start'] = int(rxn.loc[ss_rxn, 'inj_num'].min())
         row['ss_inj_end']   = int(rxn.loc[ss_rxn, 'inj_num'].max())
@@ -2778,7 +2905,7 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
 
     # Steady-state mask
     ss_mask = (
-        (~df['is_bypass']) &
+        _reaction_mask(df) &
         _analysis_mask(df) &
         (df['inj_num'] >= ss_start) &
         (df['inj_num'] <= ss_end)
@@ -2800,12 +2927,15 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
         bypass_data=bypass_data)
 
     # Build result dict for UI
-    rxn    = df[~df['is_bypass']]
+    rxn = df[_reaction_mask(df)]
     ss_rxn = ss_mask[rxn.index]
     result = {
         'sequence_name':  data['sequence_name'],
         'n_bypass':       int(df['is_bypass'].sum()),
-        'n_reaction':     int((~df['is_bypass']).sum()),
+        'n_reaction':     int(_reaction_mask(df).sum()),
+        'n_blank_excluded': (
+            int(df['is_blank'].fillna(False).sum())
+            if 'is_blank' in df.columns else 0),
         'n_ss':           int(ss_rxn.sum()),
         'plot_reaction_points': int(plot_reaction_points),
         'run_duration_h':  _infer_run_duration_h(metadata),
