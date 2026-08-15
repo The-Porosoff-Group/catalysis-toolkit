@@ -58,6 +58,15 @@ PLOT_THEMES = {
 }
 
 
+def _stack_phase_tick_label(label):
+    """Place formula and space group on separate lines in the label gutter."""
+    text = str(label or '').strip()
+    formula, separator, space_group = text.rpartition(' (')
+    if separator and space_group.endswith(')'):
+        return f'{formula}\n({space_group}'
+    return text
+
+
 def make_xrd_plot(result, metadata, output_path, theme=None):
     """Render a fitted XRD pattern at its intended publication dimensions.
 
@@ -210,11 +219,14 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
     )
     figure_legend.get_frame().set_linewidth(0.7)
 
-    # One spacious row per phase.  Vertical hkl labels show every reflection
-    # without running into neighboring labels at manuscript width.
-    ax_ticks.set_yticks([])
-    ax_ticks.yaxis.set_visible(False)
+    # One spacious row per phase. Phase names live in the left gutter while
+    # the reflection marks occupy the lower part of each row and hkl labels
+    # sit above them. This keeps all three elements visually separate without
+    # increasing the figure height.
     ax_ticks.set_ylim(0, max(n_phases, 1))
+    phase_label_positions = []
+    phase_label_texts = []
+    phase_label_colors = []
     for index, phase in enumerate(phases):
         color = phase_colors[index % len(phase_colors)]
         row_center = max(n_phases, 1) - index - 0.5
@@ -224,28 +236,35 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
         for reflection in phase.get('tick_reflections', []) or []:
             position = float(reflection['two_theta'])
             label = reflection.get('label') or ''
-            ax_ticks.vlines(position, row_center - 0.24, row_center + 0.03,
+            ax_ticks.vlines(position, row_center - 0.27, row_center - 0.08,
                             color=color, linewidth=1.45, alpha=1.0)
             if label:
                 ax_ticks.text(
-                    position, row_center, label,
-                    ha='center', va='center', rotation=60,
+                    position, row_center - 0.015, label,
+                    ha='center', va='bottom', rotation=60,
+                    rotation_mode='anchor',
                     fontsize=7.0,
                     color=text_color, clip_on=True)
             labeled_positions.add(round(position, 3))
         for position in phase.get('tick_positions', []) or []:
             if round(float(position), 3) not in labeled_positions:
-                ax_ticks.vlines(float(position), row_center - 0.24,
-                                row_center + 0.03, color=color,
+                ax_ticks.vlines(float(position), row_center - 0.27,
+                                row_center - 0.08, color=color,
                                 linewidth=1.45, alpha=1.0)
         phase_label = phase.get('tick_label') or clean_descriptive_text(
             phase.get('name', ''), fallback=f"Phase {index + 1}")
-        ax_ticks.text(
-            0.006, row_center / max(n_phases, 1), phase_label,
-            transform=ax_ticks.transAxes, ha='left', va='center',
-            fontsize=8.5, color=color, fontweight='bold',
-            bbox=dict(boxstyle='square,pad=0.16', fc=surface,
-                      ec='none', alpha=0.92))
+        phase_label_positions.append(row_center)
+        phase_label_texts.append(_stack_phase_tick_label(phase_label))
+        phase_label_colors.append(color)
+
+    ax_ticks.set_yticks(phase_label_positions, labels=phase_label_texts)
+    ax_ticks.tick_params(axis='y', length=0, pad=5, labelsize=8.0)
+    for tick_label, color in zip(ax_ticks.get_yticklabels(),
+                                 phase_label_colors):
+        tick_label.set_color(color)
+        tick_label.set_fontweight('bold')
+        tick_label.set_ha('right')
+        tick_label.set_linespacing(0.9)
 
     ax_res.plot(tt, resid, color=palette['residual'], linewidth=1.1,
                 alpha=1.0)

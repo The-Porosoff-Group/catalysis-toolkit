@@ -17,7 +17,7 @@ from modules.xrd.presentation import (
     phase_legend_label,
     phase_tick_label,
 )
-from modules.xrd.xrd_plots import make_xrd_plot
+from modules.xrd.xrd_plots import _stack_phase_tick_label, make_xrd_plot
 
 
 def _gaussian(x, center, width, amplitude):
@@ -81,6 +81,11 @@ def publication_result():
 
 
 class XrdPublicationExportTests(unittest.TestCase):
+    def test_phase_labels_are_stacked_away_from_reflection_marks(self):
+        self.assertEqual(
+            _stack_phase_tick_label('WC₁₋ₓ (P6̄m2)'),
+            'WC₁₋ₓ\n(P6̄m2)')
+
     def test_scientific_labels_use_subscripts_and_overbars(self):
         self.assertEqual(format_chemical_formula('Mo2C'), 'Mo₂C')
         self.assertEqual(format_chemical_formula('WC1-x'), 'WC₁₋ₓ')
@@ -150,6 +155,8 @@ class XrdPublicationExportTests(unittest.TestCase):
             self.assertIn('id="xrd-figure-title"', html)
             self.assertIn("fd.append('figure_title'", html)
             self.assertIn('escHtml(figureTitle)', html)
+            self.assertIn("x:-0.012,y:rowCenter", html)
+            self.assertIn("yanchor:'bottom'", html)
 
     def test_custom_figure_title_is_used_without_changing_sample_identity(self):
         metadata = {

@@ -3512,35 +3512,36 @@ function renderXrdPublicationPlot(data) {
     phases.forEach((phase, i) => {
       const color = phasePalette[i % phasePalette.length];
       const rowBottom = tickFloor + (nPhases - i - 1) * rowHeight;
-      const rowCenter = rowBottom + rowHeight * 0.48;
+      const rowCenter = rowBottom + rowHeight * 0.50;
       const reflections = phase.tick_reflections || [];
       const represented = new Set();
       reflections.forEach(reflection => {
         const position = Number(reflection.two_theta);
         represented.add(position.toFixed(3));
         shapes.push({type:'line',xref:'x',yref:'paper',x0:position,x1:position,
-          y0:rowBottom + rowHeight * 0.08,y1:rowBottom + rowHeight * 0.34,
+          y0:rowBottom + rowHeight * 0.08,y1:rowBottom + rowHeight * 0.22,
           line:{color:color,width:1.8}});
         const label = reflection.label || (Array.isArray(reflection.hkl)
           ? `(${reflection.hkl.join(' ')})` : '');
         if (label) annotations.push({
-          x:position,y:rowCenter,xref:'x',yref:'paper',
-          text:label,showarrow:false,textangle:-60,xanchor:'center',yanchor:'middle',
+          x:position,y:rowBottom + rowHeight * 0.30,xref:'x',yref:'paper',
+          text:label,showarrow:false,textangle:-60,xanchor:'center',yanchor:'bottom',
           font:{color:palette.text,size:10},
         });
       });
       (phase.tick_positions || []).forEach(position => {
         if (represented.has(Number(position).toFixed(3))) return;
         shapes.push({type:'line',xref:'x',yref:'paper',x0:position,x1:position,
-          y0:rowBottom + rowHeight * 0.08,y1:rowBottom + rowHeight * 0.34,
+          y0:rowBottom + rowHeight * 0.08,y1:rowBottom + rowHeight * 0.22,
           line:{color:color,width:1.8}});
       });
       const rowLabel = phase.tick_label || phase.display_label || String(
         phase.formula || phase.name || 'Fitted phase').replace(/[_-]+/g, ' ');
+      const stackedRowLabel = escHtml(rowLabel).replace(/\s+\(/, '<br>(');
       annotations.push({
-        x:0.006,y:rowCenter,xref:'paper',yref:'paper',text:`<b>${escHtml(rowLabel)}</b>`,
-        showarrow:false,xanchor:'left',yanchor:'middle',font:{color:color,size:12},
-        bgcolor:'rgba(22,27,34,.88)',borderpad:2,
+        x:-0.012,y:rowCenter,xref:'paper',yref:'paper',text:`<b>${stackedRowLabel}</b>`,
+        showarrow:false,xanchor:'right',yanchor:'middle',align:'right',
+        font:{color:color,size:11},bgcolor:'rgba(13,17,23,.92)',borderpad:1,
       });
     });
 
