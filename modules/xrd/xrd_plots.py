@@ -114,8 +114,8 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
     # Author at the final 6.5-inch manuscript width on a compact landscape
     # canvas so downstream software never has to stretch the export.
     extra_rows = max(n_phases - 2, 0)
-    figure_height = min(4.75, 4.25 + 0.16 * extra_rows)
-    tick_height = max(1.3, 0.58 * max(n_phases, 1))
+    figure_height = min(4.95, 4.45 + 0.16 * extra_rows)
+    tick_height = max(1.55, 0.64 * max(n_phases, 1))
 
     fig = plt.figure(figsize=(6.5, figure_height),
                      facecolor=palette['figure'])
@@ -201,7 +201,7 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
         or 'Sample')
     title_fontsize = max(9.2, 12.4 - max(len(sample_label) - 42, 0) * 0.08)
     ax_main.set_title(
-        sample_label, loc='left', pad=7, fontsize=title_fontsize,
+        sample_label, loc='center', pad=7, fontsize=title_fontsize,
         color=text_color, fontweight='bold')
     ax_main.text(
         0.995, 0.985, stats_text, transform=ax_main.transAxes,
@@ -239,9 +239,12 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
 
     # One spacious row per phase. Phase names live in the left gutter while
     # the reflection marks occupy the lower part of each row and hkl labels
-    # sit above them. This keeps all three elements visually separate without
-    # increasing the figure height.
-    ax_ticks.set_ylim(0, max(n_phases, 1))
+    # sit above them. The slightly taller panel keeps all three elements
+    # visually separate at the final publication dimensions.
+    # Leave dedicated headroom above the first phase row so long, rotated
+    # Miller indices remain inside the reflection panel instead of being
+    # clipped by its upper boundary.
+    ax_ticks.set_ylim(0, max(n_phases, 1) + 0.38)
     phase_label_positions = []
     phase_label_texts = []
     phase_label_colors = []

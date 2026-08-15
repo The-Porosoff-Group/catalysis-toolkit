@@ -1107,7 +1107,7 @@
             <div id="xrd-baseline-comparison"></div>
             <div id="xrd-reusable-fit"></div>
             <div id="xrd-phase-results"></div>
-            <div id="xrd-interactive-plot" style="display:none;width:100%;height:500px;border-radius:8px;border:1px solid var(--border);"></div>
+            <div id="xrd-interactive-plot" style="display:none;width:100%;height:540px;border-radius:8px;border:1px solid var(--border);"></div>
             <img class="plot-img" id="xrd-result-plot" src="" alt="XRD refinement plot"
                  style="display:none;">
             <div class="download-row" id="xrd-download-row"></div>
@@ -3480,14 +3480,14 @@ function renderXrdPublicationPlot(data) {
       hovertemplate:'2θ: %{x:.3f}°<br>Residual intensity: %{y:.4g}<extra></extra>',
     });
 
-    const tickFloor = 0.19;
-    const mainBottom = 0.415;
-    const tickCeiling = 0.295;
+    const tickFloor = 0.18;
+    const mainBottom = 0.45;
+    const tickCeiling = 0.35;
     const tickSpace = tickCeiling - tickFloor;
     const rowHeight = tickSpace / nPhases;
     const shapes = [];
     const annotations = [{
-      x:0.5,y:0.345,xref:'paper',yref:'paper',
+      x:0.5,y:0.395,xref:'paper',yref:'paper',
       text:'Diffraction angle, 2θ (degrees)',showarrow:false,
       xanchor:'center',yanchor:'middle',font:{color:palette.text,size:12},
     }];
@@ -3535,7 +3535,7 @@ function renderXrdPublicationPlot(data) {
       font:{color:palette.text,size:12,family:'Arial, sans-serif'},
       margin:{l:110,r:22,t:70,b:58},
       title:{text:`<b>${escHtml(figureTitle)}</b><br><span style="font-size:11px">${statsTitle}</span>`,
-             x:0.015,xanchor:'left',font:{size:17}},
+             x:0.5,xanchor:'center',font:{size:17}},
       xaxis:{gridcolor:palette.grid,zeroline:false,tickfont:{size:12}},
       yaxis:{title:{text:'Intensity (arbitrary units)',font:{size:14}},
              gridcolor:palette.grid,zeroline:false,domain:[mainBottom,1],tickfont:{size:12}},

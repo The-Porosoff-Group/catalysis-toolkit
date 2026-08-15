@@ -131,8 +131,8 @@ class XrdPublicationExportTests(unittest.TestCase):
                     copy.deepcopy(publication_result()), metadata, path,
                     theme=theme)
                 with Image.open(path) as image:
-                    self.assertEqual(image.size, (1950, 1275))
-                    self.assertGreater(image.width / image.height, 1.5)
+                    self.assertEqual(image.size, (1950, 1335))
+                    self.assertGreater(image.width / image.height, 1.4)
                     self.assertAlmostEqual(image.info['dpi'][0], 300, delta=1)
                     corner = image.convert('RGB').getpixel((2, 2))
                     if theme == 'light':
@@ -168,9 +168,11 @@ class XrdPublicationExportTests(unittest.TestCase):
             self.assertIn("yanchor:'bottom'", html)
             self.assertIn('Light Publication Figure (PNG)', html)
             self.assertIn('Dark Presentation Figure (PNG)', html)
-            self.assertIn('const mainBottom = 0.415', html)
-            self.assertIn('const tickCeiling = 0.295', html)
-            self.assertIn("x:0.5,y:0.345", html)
+            self.assertIn('height:540px', html)
+            self.assertIn('const mainBottom = 0.45', html)
+            self.assertIn('const tickCeiling = 0.35', html)
+            self.assertIn("x:0.5,y:0.395", html)
+            self.assertIn("x:0.5,xanchor:'center'", html)
             self.assertNotIn('stackedRowLabel', html)
 
     def test_custom_figure_title_is_used_without_changing_sample_identity(self):
@@ -187,6 +189,7 @@ class XrdPublicationExportTests(unittest.TestCase):
             self.assertEqual(
                 set_title.call_args.args[0],
                 'Tungsten carbide catalyst after reduction')
+            self.assertEqual(set_title.call_args.kwargs['loc'], 'center')
 
     def test_workbook_filename_and_content_include_sample_date_and_hkl(self):
         metadata = {
