@@ -168,10 +168,13 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
         f"$R_{{\\mathrm{{p}}}}$ {stats['Rp']} %   "
         f"$\\chi^2$ {stats['chi2']}   GoF {stats['GoF']}"
     )
-    sample_label = str(metadata.get('sample_id', 'Sample')).strip().replace(
-        '_', ' ') or 'Sample'
+    custom_title = str(metadata.get('figure_title', '')).strip()
+    sample_label = custom_title or (
+        str(metadata.get('sample_id', 'Sample')).strip().replace('_', ' ')
+        or 'Sample')
+    title_fontsize = max(9.5, 13.0 - max(len(sample_label) - 42, 0) * 0.09)
     ax_main.set_title(
-        sample_label, loc='left', pad=7, fontsize=13,
+        sample_label, loc='left', pad=7, fontsize=title_fontsize,
         color=text_color, fontweight='bold')
     ax_main.text(
         0.995, 0.985, stats_text, transform=ax_main.transAxes,

@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 from openpyxl import load_workbook
@@ -146,10 +147,29 @@ class XrdPublicationExportTests(unittest.TestCase):
             self.assertIn("paper:'#0d1117'", html)
             self.assertIn('data.plot_paths?.dark', html)
             self.assertIn("modeBarButtonsToRemove:['toImage']", html)
+            self.assertIn('id="xrd-figure-title"', html)
+            self.assertIn("fd.append('figure_title'", html)
+            self.assertIn('escHtml(figureTitle)', html)
+
+    def test_custom_figure_title_is_used_without_changing_sample_identity(self):
+        metadata = {
+            'sample_id': 'traceable_sample_01',
+            'figure_title': 'Tungsten carbide catalyst after reduction',
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'custom_title.png')
+            with patch('matplotlib.axes.Axes.set_title') as set_title:
+                make_xrd_plot(
+                    copy.deepcopy(publication_result()), metadata, path,
+                    theme='light')
+            self.assertEqual(
+                set_title.call_args.args[0],
+                'Tungsten carbide catalyst after reduction')
 
     def test_workbook_filename_and_content_include_sample_date_and_hkl(self):
         metadata = {
             'sample_id': 'β-Mo2C_350C',
+            'figure_title': 'Carbide catalyst after reduction',
             'analysis_date': '2026-08-15',
             'source_file': 'M1.xlsx',
         }
@@ -169,6 +189,9 @@ class XrdPublicationExportTests(unittest.TestCase):
                     row[0]: row[1:] for row in summary_rows[1:]}
                 self.assertIn(
                     '2026-08-15', summary_by_parameter['Analysis date'])
+                self.assertIn(
+                    'Carbide catalyst after reduction',
+                    summary_by_parameter['Figure title'])
                 self.assertIn(
                     'M1.xlsx', summary_by_parameter['Source data file'])
 

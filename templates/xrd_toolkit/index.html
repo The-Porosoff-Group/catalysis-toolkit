@@ -775,6 +775,10 @@
                 <label>Sample ID</label>
                 <input type="text" id="xrd-sample-id" placeholder="e.g. β-Mo₂C_350C">
               </div>
+              <div class="form-group full">
+                <label>Figure Title <span style="color:var(--muted);font-weight:400;">— optional</span></label>
+                <input type="text" id="xrd-figure-title" maxlength="80" placeholder="Leave blank to use the Sample ID">
+              </div>
               <div class="form-group">
                 <label>2θ Min (°)</label>
                 <input type="number" id="xrd-tt-min" value="10" step="0.5">
@@ -3038,6 +3042,7 @@ async function runXRD(method) {
       document.getElementById('xrd-source').options[
         document.getElementById('xrd-source').selectedIndex].text);
     fd.append('sample_id',   document.getElementById('xrd-sample-id').value || xrdFile.name);
+    fd.append('figure_title', document.getElementById('xrd-figure-title').value.trim());
     fd.append('tt_min',      document.getElementById('xrd-tt-min').value);
     fd.append('tt_max',      document.getElementById('xrd-tt-max').value);
     fd.append('n_bg_coeffs', document.getElementById('xrd-bg-coeffs').value || 'auto');
@@ -3650,13 +3655,14 @@ function renderXrdPublicationPlot(data) {
     });
 
     const sample = document.getElementById('xrd-sample-id')?.value || xrdFile?.name || 'Sample';
+    const figureTitle = document.getElementById('xrd-figure-title')?.value.trim() || sample;
     const stats = data.statistics || {};
     const statsTitle = `Rwp ${stats.Rwp ?? '—'} % · Rp ${stats.Rp ?? '—'} % · χ² ${stats.chi2 ?? '—'} · GoF ${stats.GoF ?? '—'}`;
     const layout = {
       paper_bgcolor:palette.paper, plot_bgcolor:palette.plot,
       font:{color:palette.text,size:13,family:'Arial, sans-serif'},
-      margin:{l:82,r:22,t:58,b:64},
-      title:{text:`<b>${escHtml(sample)}</b>   <span style="font-size:13px">${statsTitle}</span>`,
+      margin:{l:82,r:22,t:72,b:64},
+      title:{text:`<b>${escHtml(figureTitle)}</b><br><span style="font-size:12px">${statsTitle}</span>`,
              x:0.015,xanchor:'left',font:{size:18}},
       xaxis:{title:{text:'Diffraction angle, 2θ (degrees)',font:{size:15}},
              gridcolor:palette.grid,zeroline:false,tickfont:{size:13}},
@@ -3869,7 +3875,7 @@ function resetXRD() {
 
   // Reset search UI
   ['xrd-elements','xrd-phase-name','xrd-formula','xrd-filter',
-   'xrd-sample-id','xrd-output-dir'].forEach(id => {
+   'xrd-sample-id','xrd-figure-title','xrd-output-dir'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });

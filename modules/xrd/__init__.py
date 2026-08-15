@@ -509,6 +509,7 @@ def _write_summary_xlsx(result, metadata, method_label, output_dir):
     # Define the parameters we want to show (order matters)
     param_keys = [
         ('sample',             'Sample'),
+        ('figure_title',       'Figure title'),
         ('analysis_date',      'Analysis date'),
         ('source_file',        'Source data file'),
         ('method',             'Method'),
@@ -596,6 +597,8 @@ def _write_summary_xlsx(result, metadata, method_label, output_dir):
         for i, ph in enumerate(phases):
             if key == 'sample':
                 row[col_names[i]] = metadata.get('sample_id', '')
+            elif key == 'figure_title':
+                row[col_names[i]] = metadata.get('figure_title', '')
             elif key == 'analysis_date':
                 row[col_names[i]] = metadata.get(
                     'analysis_date', metadata.get('output_date', ''))
@@ -951,6 +954,7 @@ def run(filepath, output_dir, metadata, params):
         requested_theme = 'light'
     plot_metadata = {
         'sample_id':       metadata.get('sample_id', 'Sample'),
+        'figure_title':    metadata.get('figure_title', ''),
         'wavelength_label': params.get('wavelength_label',
                                         f"λ={wavelength:.5f} Å"),
         'method':           method_label,
