@@ -90,6 +90,16 @@ def phase_legend_label(phase, index=None):
     return label
 
 
+def phase_tick_label(phase, index=None):
+    """Return a compact formula-and-space-group reflection-row label."""
+    formula = format_chemical_formula(phase.get("formula", ""))
+    if not formula:
+        fallback = f"Fitted phase {index + 1}" if index is not None else "Fitted phase"
+        formula = clean_descriptive_text(phase.get("name", ""), fallback)
+    space_group = format_space_group(phase.get("spacegroup", ""))
+    return f"{formula} ({space_group})" if space_group else formula
+
+
 def format_wavelength_label(value):
     """Normalize wavelength labels such as Cu Kalpha2 to Cu Kα₂."""
     text = clean_descriptive_text(value, fallback="")
@@ -209,6 +219,7 @@ def enrich_phase_results(result):
     for index, phase in enumerate(result.get("phase_results", []) or []):
         phase["display_label"] = phase_display_label(phase, index=index)
         phase["legend_label"] = phase_legend_label(phase, index=index)
+        phase["tick_label"] = phase_tick_label(phase, index=index)
         phase["tick_reflections"] = reflection_labels_for_phase(
             phase, wavelength, tt_min, tt_max)
     return result

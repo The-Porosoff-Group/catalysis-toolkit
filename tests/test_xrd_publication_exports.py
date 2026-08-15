@@ -13,6 +13,7 @@ from modules.xrd.presentation import (
     format_chemical_formula,
     format_space_group,
     phase_legend_label,
+    phase_tick_label,
 )
 from modules.xrd.xrd_plots import make_xrd_plot
 
@@ -87,6 +88,9 @@ class XrdPublicationExportTests(unittest.TestCase):
         self.assertIn('space group P6̅m2', label)
         self.assertIn('weight %', label)
         self.assertNotIn('_', label)
+        self.assertEqual(
+            phase_tick_label(publication_result()['phase_results'][1]),
+            'WC₁₋ₓ (P6̅m2)')
 
     def test_export_prefix_contains_date_and_sample(self):
         self.assertEqual(
@@ -97,7 +101,7 @@ class XrdPublicationExportTests(unittest.TestCase):
             '2026-08-15_β-Mo2C_350C',
         )
 
-    def test_light_and_dark_figures_are_300_dpi_publication_width(self):
+    def test_light_and_dark_figures_are_compact_300_dpi_landscape(self):
         metadata = {
             'sample_id': 'β-Mo2C_350C',
             'wavelength_label': 'Cu Kα2 (1.54439 Å)',
@@ -110,13 +114,24 @@ class XrdPublicationExportTests(unittest.TestCase):
                     copy.deepcopy(publication_result()), metadata, path,
                     theme=theme)
                 with Image.open(path) as image:
-                    self.assertGreaterEqual(image.width, 1800)
-                    self.assertGreaterEqual(image.height, 1500)
+                    self.assertEqual(image.size, (1950, 1275))
+                    self.assertGreater(image.width / image.height, 1.5)
+                    self.assertAlmostEqual(image.info['dpi'][0], 300, delta=1)
                     corner = image.convert('RGB').getpixel((2, 2))
                     if theme == 'light':
                         self.assertGreater(min(corner), 240)
                     else:
                         self.assertLess(max(corner), 40)
+
+    def test_dark_is_the_default_export_theme(self):
+        metadata = {'sample_id': 'Default_theme_sample'}
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'figure_default.png')
+            make_xrd_plot(
+                copy.deepcopy(publication_result()), metadata, path)
+            with Image.open(path) as image:
+                corner = image.convert('RGB').getpixel((2, 2))
+                self.assertLess(max(corner), 40)
 
     def test_workbook_filename_and_content_include_sample_date_and_hkl(self):
         metadata = {

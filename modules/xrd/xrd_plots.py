@@ -1,7 +1,5 @@
 """Publication-quality XRD refinement and candidate-preview figures."""
 
-import math
-
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.gridspec as gridspec
@@ -14,7 +12,6 @@ from .presentation import (
     clean_descriptive_text,
     enrich_phase_results,
     format_chemical_formula,
-    format_wavelength_label,
     phase_legend_label,
 )
 
@@ -73,11 +70,11 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
     output_path : str
         Destination PNG path.
     theme : {"light", "dark"}, optional
-        Explicit figure theme.  Light is the publication default.
+        Explicit figure theme. Dark matches the native XRD interface.
     """
-    theme = str(theme or metadata.get('plot_theme') or 'light').lower()
+    theme = str(theme or metadata.get('plot_theme') or 'dark').lower()
     if theme not in PLOT_THEMES:
-        theme = 'light'
+        theme = 'dark'
     palette = PLOT_THEMES[theme]
 
     # This enriches labels and tick metadata only.  Fit arrays and statistics
@@ -94,124 +91,119 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
     n_phases = len(phases)
     stats = result['statistics']
 
-    # Author at the target 6.5-inch manuscript width.  This avoids the former
-    # 13-inch canvas being shrunk by half (and shrinking 7–9 point text with it).
-    legend_count = 3 + n_phases
-    legend_columns = 2 if legend_count > 3 else max(legend_count, 1)
-    legend_rows = max(1, math.ceil(legend_count / legend_columns))
-    tick_height = max(1.25, 0.78 * max(n_phases, 1))
-    height_ratios = [4.6, tick_height, 1.45]
-    figure_height = 4.85 + tick_height + 0.28 * legend_rows
+    # Author at the final 6.5-inch manuscript width on a compact landscape
+    # canvas so downstream software never has to stretch the export.
+    extra_rows = max(n_phases - 2, 0)
+    figure_height = min(4.75, 4.25 + 0.16 * extra_rows)
+    tick_height = max(1.3, 0.58 * max(n_phases, 1))
 
     fig = plt.figure(figsize=(6.5, figure_height),
                      facecolor=palette['figure'])
     grid = gridspec.GridSpec(
-        3, 1, figure=fig, hspace=0.08, height_ratios=height_ratios)
+        3, 1, figure=fig, hspace=0.035,
+        height_ratios=[4.8, tick_height, 1.05])
     ax_main = fig.add_subplot(grid[0])
     ax_ticks = fig.add_subplot(grid[1], sharex=ax_main)
     ax_res = fig.add_subplot(grid[2], sharex=ax_main)
 
-    background = palette['figure']
     surface = palette['surface']
     grid_color = palette['grid']
     text_color = palette['text']
     muted_color = palette['muted']
     phase_colors = palette['phase_colors']
+    if theme == 'dark':
+        observed_color = '#58a6ff'
+        calculated_color = '#f0f6fc'
+    else:
+        observed_color = '#1d4ed8'
+        calculated_color = '#111827'
 
     def style_axis(axis, show_xlabel=False, show_grid=True):
         axis.set_facecolor(surface)
         axis.tick_params(
-            colors=text_color, labelsize=9, width=0.8, length=3.5,
+            colors=text_color, labelsize=9.5, width=1.0, length=4.0,
             labelbottom=show_xlabel)
         axis.xaxis.label.set_color(text_color)
         axis.yaxis.label.set_color(text_color)
         for spine in axis.spines.values():
             spine.set_edgecolor(grid_color)
-            spine.set_linewidth(0.75)
+            spine.set_linewidth(0.9)
         if show_grid:
-            axis.grid(True, color=grid_color, alpha=0.55, linewidth=0.55)
+            axis.grid(True, color=grid_color, alpha=0.48, linewidth=0.65)
         else:
             axis.grid(False)
+        axis.set_axisbelow(True)
 
     style_axis(ax_main)
     style_axis(ax_ticks, show_grid=False)
     style_axis(ax_res, show_xlabel=True)
 
-    # Shaded, stacked fitted components sit behind the precise total fit line.
-    cumulative = np.array(y_bg, dtype=float)
+    # Draw every phase against the fitted background.  These are true filled
+    # component areas, not faint cumulative envelopes.
     for index, pattern in enumerate(phase_patterns[:n_phases]):
         color = phase_colors[index % len(phase_colors)]
         component = np.asarray(pattern, dtype=float)
-        if component.size != cumulative.size:
-            fitted_component = np.zeros_like(cumulative)
-            copy_count = min(component.size, cumulative.size)
+        if component.size != y_bg.size:
+            fitted_component = np.zeros_like(y_bg)
+            copy_count = min(component.size, y_bg.size)
             fitted_component[:copy_count] = component[:copy_count]
             component = fitted_component
-        new_top = cumulative + np.maximum(component, 0)
+        phase_top = y_bg + np.maximum(component, 0)
         ax_main.fill_between(
-            tt, cumulative, new_top, color=color,
-            alpha=0.34 if theme == 'light' else 0.42,
+            tt, y_bg, phase_top, color=color,
+            alpha=0.42 if theme == 'dark' else 0.30,
             linewidth=0, zorder=1)
-        ax_main.plot(tt, new_top, color=color, linewidth=0.55,
-                     alpha=0.85, zorder=2)
-        cumulative = new_top
+        ax_main.plot(tt, phase_top, color=color, linewidth=1.25,
+                     alpha=0.98, zorder=2)
 
-    ax_main.plot(tt, y_bg, color=muted_color, linewidth=0.9,
+    ax_main.plot(tt, y_bg, color=muted_color, linewidth=1.15,
                  linestyle=(0, (4, 2)), alpha=0.95, zorder=2)
-    ax_main.plot(tt, y_obs, color=palette['observed'], linewidth=0.65,
-                 alpha=0.9, zorder=3)
-    ax_main.plot(tt, y_calc, color=palette['calculated'], linewidth=1.15,
-                 alpha=1.0, zorder=4)
+    ax_main.plot(tt, y_obs, color=observed_color, linewidth=1.25,
+                 alpha=0.92, zorder=4)
+    ax_main.plot(tt, y_calc, color=calculated_color, linewidth=1.75,
+                 alpha=1.0, zorder=5)
 
     stats_text = (
-        f"$R_{{\\mathrm{{wp}}}}$ = {stats['Rwp']} %    "
-        f"$R_{{\\mathrm{{p}}}}$ = {stats['Rp']} %    "
-        f"$\\chi^2$ = {stats['chi2']}    "
-        f"goodness of fit = {stats['GoF']}"
+        f"$R_{{\\mathrm{{wp}}}}$ {stats['Rwp']} %   "
+        f"$R_{{\\mathrm{{p}}}}$ {stats['Rp']} %   "
+        f"$\\chi^2$ {stats['chi2']}   GoF {stats['GoF']}"
     )
-    # Keep statistics outside the data region so the annotation can never hide
-    # a high-intensity reflection.
+    sample_label = str(metadata.get('sample_id', 'Sample')).strip().replace(
+        '_', ' ') or 'Sample'
     ax_main.set_title(
-        stats_text, loc='right', pad=8, fontsize=8.3, color=text_color,
+        sample_label, loc='left', pad=7, fontsize=13,
+        color=text_color, fontweight='bold')
+    ax_main.text(
+        0.995, 0.985, stats_text, transform=ax_main.transAxes,
+        ha='right', va='top', fontsize=8.8, color=text_color,
         bbox=dict(boxstyle='round,pad=0.30', fc=palette['stats_face'],
-                  ec=grid_color, alpha=0.96, linewidth=0.7))
+                  ec=grid_color, alpha=0.90, linewidth=0.7), zorder=8)
 
-    wavelength_label = metadata.get('wavelength_label')
-    if not wavelength_label:
-        wavelength_label = f"λ={result.get('wavelength', 1.54056):.4f} Å"
-    wavelength_label = format_wavelength_label(wavelength_label)
-    method_label = clean_descriptive_text(metadata.get('method', 'Le Bail'))
-    sample_label = clean_descriptive_text(metadata.get('sample_id', 'Sample'))
-    fig.suptitle(sample_label, color=text_color, fontsize=12.5,
-                 fontweight='bold', y=0.988)
-    fig.text(
-        0.5, 0.954, f"{method_label} refinement  •  {wavelength_label}",
-        ha='center', va='top', color=muted_color, fontsize=9.3)
-
-    ax_main.set_ylabel('Intensity (arbitrary units)', fontsize=10,
+    ax_main.set_ylabel('Intensity (arbitrary units)', fontsize=10.5,
                        color=text_color)
     ax_main.set_ylim(bottom=0)
 
     legend_handles = [
-        Line2D([0], [0], color=palette['observed'], lw=1.3,
+        Line2D([0], [0], color=observed_color, lw=1.7,
                label='Observed intensity'),
-        Line2D([0], [0], color=palette['calculated'], lw=1.6,
-               label='Calculated total pattern'),
-        Line2D([0], [0], color=muted_color, lw=1.1,
+        Line2D([0], [0], color=calculated_color, lw=2.0,
+               label='Calculated pattern'),
+        Line2D([0], [0], color=muted_color, lw=1.4,
                ls=(0, (4, 2)), label='Fitted background'),
     ]
     for index, phase in enumerate(phases):
         color = phase_colors[index % len(phase_colors)]
         legend_handles.append(Patch(
-            facecolor=color, edgecolor=color, alpha=0.55,
+            facecolor=color, edgecolor=color, alpha=0.70,
             label=phase_legend_label(phase, index=index)))
-    figure_legend = fig.legend(
-        handles=legend_handles, fontsize=8.1, ncol=legend_columns,
+    figure_legend = ax_main.legend(
+        handles=legend_handles, fontsize=8.7,
+        ncol=1,
         facecolor=palette['stats_face'], edgecolor=grid_color,
-        labelcolor=text_color, loc='upper center',
-        bbox_to_anchor=(0.5, 0.925), frameon=True, fancybox=False,
-        borderpad=0.55, columnspacing=1.0, handlelength=1.7,
-        handletextpad=0.55,
+        labelcolor=text_color, loc='upper right',
+        bbox_to_anchor=(0.995, 0.875), frameon=True, fancybox=True,
+        framealpha=0.88, borderpad=0.48, columnspacing=0.9,
+        handlelength=1.65, handletextpad=0.48,
     )
     figure_legend.get_frame().set_linewidth(0.7)
 
@@ -223,61 +215,56 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
     for index, phase in enumerate(phases):
         color = phase_colors[index % len(phase_colors)]
         row_center = max(n_phases, 1) - index - 0.5
-        ax_ticks.hlines(row_center - 0.23, tt.min(), tt.max(),
-                        color=grid_color, linewidth=0.5, alpha=0.6)
+        ax_ticks.hlines(row_center - 0.28, tt.min(), tt.max(),
+                        color=grid_color, linewidth=0.55, alpha=0.65)
         labeled_positions = set()
         for reflection in phase.get('tick_reflections', []) or []:
             position = float(reflection['two_theta'])
             label = reflection.get('label') or ''
-            ax_ticks.vlines(position, row_center - 0.20, row_center + 0.02,
-                            color=color, linewidth=1.0, alpha=0.95)
+            ax_ticks.vlines(position, row_center - 0.24, row_center + 0.03,
+                            color=color, linewidth=1.45, alpha=1.0)
             if label:
                 ax_ticks.text(
-                    position, row_center + 0.06, label,
-                    ha='center', va='bottom', rotation=90,
-                    rotation_mode='anchor', fontsize=7.3,
+                    position, row_center, label,
+                    ha='center', va='center', rotation=60,
+                    fontsize=7.0,
                     color=text_color, clip_on=True)
             labeled_positions.add(round(position, 3))
         for position in phase.get('tick_positions', []) or []:
             if round(float(position), 3) not in labeled_positions:
-                ax_ticks.vlines(float(position), row_center - 0.20,
-                                row_center + 0.02, color=color,
-                                linewidth=1.0, alpha=0.95)
+                ax_ticks.vlines(float(position), row_center - 0.24,
+                                row_center + 0.03, color=color,
+                                linewidth=1.45, alpha=1.0)
+        phase_label = phase.get('tick_label') or clean_descriptive_text(
+            phase.get('name', ''), fallback=f"Phase {index + 1}")
         ax_ticks.text(
-            0.006, row_center / max(n_phases, 1), f"Phase {index + 1}",
+            0.006, row_center / max(n_phases, 1), phase_label,
             transform=ax_ticks.transAxes, ha='left', va='center',
-            fontsize=7.8, color=color, fontweight='bold',
-            bbox=dict(boxstyle='square,pad=0.18', fc=surface,
-                      ec='none', alpha=0.9))
-    ax_ticks.set_ylabel('Reflection\npositions', fontsize=9,
-                        color=text_color, labelpad=11)
+            fontsize=8.5, color=color, fontweight='bold',
+            bbox=dict(boxstyle='square,pad=0.16', fc=surface,
+                      ec='none', alpha=0.92))
 
-    ax_res.plot(tt, resid, color=palette['residual'], linewidth=0.8,
-                alpha=0.95)
-    ax_res.axhline(0, color=palette['zero'], linewidth=0.75,
-                   linestyle=(0, (4, 2)), alpha=0.85)
+    ax_res.plot(tt, resid, color=palette['residual'], linewidth=1.1,
+                alpha=1.0)
+    ax_res.axhline(0, color=palette['zero'], linewidth=0.9,
+                   linestyle=(0, (4, 2)), alpha=0.9)
     ax_res.fill_between(tt, resid, 0, where=(resid > 0),
-                        color=palette['residual'], alpha=0.16)
+                        color=palette['residual'], alpha=0.20)
     ax_res.fill_between(tt, resid, 0, where=(resid < 0),
-                        color=palette['calculated'], alpha=0.16)
-    ax_res.set_ylabel('Observed −\ncalculated', fontsize=9, color=text_color)
-    ax_res.set_xlabel('Diffraction angle, 2θ (degrees)', fontsize=10,
+                        color=phase_colors[0], alpha=0.20)
+    ax_res.set_ylabel('Difference', fontsize=9.5, color=text_color)
+    ax_res.set_xlabel('Diffraction angle, 2θ (degrees)', fontsize=10.5,
                       color=text_color)
 
     ax_main.set_xlim(tt.min(), tt.max())
-    top_margin_inches = 0.72 + 0.27 * legend_rows
-    fig.subplots_adjust(
-        left=0.14, right=0.985, bottom=0.085,
-        top=1.0 - top_margin_inches / figure_height)
+    fig.subplots_adjust(left=0.105, right=0.985, bottom=0.12, top=0.925)
 
-    plt.savefig(
-        output_path, dpi=300, bbox_inches='tight', pad_inches=0.08,
-        facecolor=background,
+    fig.savefig(
+        output_path, dpi=300, facecolor=palette['figure'], edgecolor='none',
         metadata={
             'Title': f"{sample_label} XRD refinement",
             'Description': (
-                f"{method_label} refinement; {wavelength_label}; {theme} theme; "
-                "phase contributions shown as shaded fitted components"
+                f"{theme} theme; phase contributions shown as filled areas"
             ),
             'Software': 'Catalysis Data Toolkit',
         },
