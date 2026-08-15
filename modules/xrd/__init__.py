@@ -946,9 +946,9 @@ def run(filepath, output_dir, metadata, params):
     method_label = {'rietveld': 'Rietveld', 'gsas2': 'GSAS-II',
                     }.get(method, 'Le Bail')
     prefix = export_file_prefix(metadata)
-    requested_theme = str(params.get('plot_theme', 'dark')).lower()
+    requested_theme = str(params.get('plot_theme', 'light')).lower()
     if requested_theme not in ('light', 'dark'):
-        requested_theme = 'dark'
+        requested_theme = 'light'
     plot_metadata = {
         'sample_id':       metadata.get('sample_id', 'Sample'),
         'wavelength_label': params.get('wavelength_label',

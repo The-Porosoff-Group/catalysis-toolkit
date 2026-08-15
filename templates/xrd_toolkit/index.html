@@ -138,6 +138,17 @@
   .form-grid.three { grid-template-columns: 1fr 1fr 1fr; }
   .form-group { display: flex; flex-direction: column; gap: 5px; }
   .form-group.full { grid-column: 1 / -1; }
+  .xrd-export-theme {
+    grid-column: 1 / -1;
+    padding: 13px 15px;
+    border: 1px solid rgba(88,166,255,0.55);
+    border-radius: 8px;
+    background: rgba(88,166,255,0.08);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+  .xrd-export-theme label { color: var(--accent); font-size: 13px; }
+  .xrd-export-theme select { max-width: 390px; }
+  .xrd-export-theme-note { color: var(--muted); font-size: 11px; line-height: 1.45; }
   label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; }
   input[type=text], input[type=number], textarea, select {
     background: var(--surface2);
@@ -777,14 +788,14 @@
               <label>Output Folder</label>
               <input type="text" id="xrd-output-dir" placeholder="Leave blank → results/ next to app">
             </div>
-            <div class="form-group">
-              <label>Figure Theme</label>
-              <select id="xrd-plot-theme" onchange="refreshXrdPlotTheme()">
-                <option value="dark" selected>Dark — default</option>
-                <option value="light">Light — alternate</option>
+            <div class="form-group xrd-export-theme">
+              <label>Exported Figure Appearance</label>
+              <select id="xrd-export-theme">
+                <option value="light" selected>Light background — publication default</option>
+                <option value="dark">Dark background — presentation option</option>
               </select>
-              <div style="font-size:11px;color:var(--muted);margin-top:5px;">
-                Both 300 dpi versions are saved; this choice controls the on-screen preview.
+              <div class="xrd-export-theme-note">
+                The web preview always stays dark. Both 300 dpi PNG versions are saved for download.
               </div>
             </div>
             <div class="form-group">
@@ -3031,7 +3042,7 @@ async function runXRD(method) {
     fd.append('tt_max',      document.getElementById('xrd-tt-max').value);
     fd.append('n_bg_coeffs', document.getElementById('xrd-bg-coeffs').value || 'auto');
     fd.append('output_dir',  document.getElementById('xrd-output-dir').value);
-    fd.append('plot_theme',  document.getElementById('xrd-plot-theme').value || 'dark');
+    fd.append('plot_theme',  document.getElementById('xrd-export-theme').value || 'light');
     fd.append('method',      method);
     // Instrument selection
     const instSelect = document.getElementById('xrd-instrument');
@@ -3532,24 +3543,14 @@ function renderBaselineComparison() {
   </div>`;
 }
 
-function refreshXrdPlotTheme() {
-  if (xrdLastResult) renderXrdPublicationPlot(xrdLastResult);
-}
-
 function renderXrdPublicationPlot(data) {
   const plotEl = document.getElementById('xrd-result-plot');
   const interactivePlot = document.getElementById('xrd-interactive-plot');
-  const theme = document.getElementById('xrd-plot-theme')?.value || data.plot_theme || 'dark';
-  const dark = theme === 'dark';
-  const palette = dark ? {
+  const palette = {
     paper:'#0d1117', plot:'#161b22', text:'#f0f3f6', grid:'#39414d',
     observed:'#58a6ff', calculated:'#f0f6fc', background:'#a7b0bd', residual:'#79c0ff'
-  } : {
-    paper:'#ffffff', plot:'#ffffff', text:'#111827', grid:'#d9dee7',
-    observed:'#1d4ed8', calculated:'#111827', background:'#596273', residual:'#1d4ed8'
   };
-  const phasePalette = dark ? PHASE_COLORS :
-    ['#0072b2','#d55e00','#009e73','#cc79a7','#e69f00','#56b4e9','#7b61a8','#8c6d31'];
+  const phasePalette = PHASE_COLORS;
 
   if (data.plot_data?.tt?.length) {
     const pd = data.plot_data;
@@ -3585,7 +3586,7 @@ function renderXrdPublicationPlot(data) {
       traces.push({
         x:pd.tt, y:phaseTop, name:phase.legend_label || `${phaseLabel}${weightText}`,
         type:'scatter', mode:'lines', line:{color:color,width:1.8},
-        fill:'tonexty', fillcolor:colorWithAlpha(color, dark ? 0.42 : 0.30),
+        fill:'tonexty', fillcolor:colorWithAlpha(color, 0.42),
         hovertemplate:`2θ: %{x:.3f}°<br>${phaseLabel} contribution: %{y:.4g}<extra></extra>`,
       });
     });
@@ -3644,7 +3645,7 @@ function renderXrdPublicationPlot(data) {
       annotations.push({
         x:0.006,y:rowCenter,xref:'paper',yref:'paper',text:`<b>${escHtml(rowLabel)}</b>`,
         showarrow:false,xanchor:'left',yanchor:'middle',font:{color:color,size:12},
-        bgcolor:dark ? 'rgba(22,27,34,.88)' : 'rgba(255,255,255,.9)',borderpad:2,
+        bgcolor:'rgba(22,27,34,.88)',borderpad:2,
       });
     });
 
@@ -3665,24 +3666,21 @@ function renderXrdPublicationPlot(data) {
               gridcolor:palette.grid,zeroline:true,zerolinecolor:palette.background,
               domain:[0,0.16],anchor:'x',tickfont:{size:12}},
       legend:{orientation:'v',x:0.992,y:0.985,xanchor:'right',yanchor:'top',
-              bgcolor:dark?'rgba(28,33,40,.90)':'rgba(247,248,250,.92)',
+              bgcolor:'rgba(28,33,40,.90)',
               bordercolor:palette.grid,borderwidth:1,font:{size:12}},
       shapes:shapes,annotations:annotations,dragmode:'zoom',
     };
-    const dateText = new Date().toISOString().slice(0,10);
-    const safeSample = String(sample).replace(/\.[^.]+$/, '').replace(/[^A-Za-z0-9._-]+/g,'_');
     const config = {
       responsive:true,displayModeBar:true,displaylogo:false,
       modeBarButtonsToAdd:['pan2d','zoomIn2d','zoomOut2d','autoScale2d'],
-      toImageButtonOptions:{format:'png',filename:`${dateText}_${safeSample}_xrd_refinement_${theme}`,
-        width:1950,height:1275,scale:1},
+      modeBarButtonsToRemove:['toImage'],
     };
     interactivePlot.style.display = 'block';
     plotEl.style.display = 'none';
     Plotly.react(interactivePlot,traces,layout,config);
-  } else if (data.plot_paths?.[theme]) {
+  } else if (data.plot_paths?.dark) {
     interactivePlot.style.display = 'none';
-    plotEl.src = '/api/download?path=' + encodeURIComponent(data.plot_paths[theme]);
+    plotEl.src = '/api/download?path=' + encodeURIComponent(data.plot_paths.dark);
     plotEl.style.display = 'block';
   } else if (data.plot_b64) {
     interactivePlot.style.display = 'none';
@@ -3832,9 +3830,9 @@ function showXRDResults(data) {
     `<button class="btn-sm green" onclick="openFolder('${escPath(data.output_dir)}')">📁 Open Folder</button>`
   ];
   if (data.plot_paths?.light) xrdDownloads.push(
-    `<button class="btn-sm" onclick="downloadFile('${escPath(data.plot_paths.light)}')">⬇ Light Figure (PNG)</button>`);
+    `<button class="btn-sm green" onclick="downloadFile('${escPath(data.plot_paths.light)}')">⬇ Light Publication Figure (PNG)</button>`);
   if (data.plot_paths?.dark) xrdDownloads.push(
-    `<button class="btn-sm" onclick="downloadFile('${escPath(data.plot_paths.dark)}')">⬇ Dark Figure (PNG)</button>`);
+    `<button class="btn-sm" onclick="downloadFile('${escPath(data.plot_paths.dark)}')">⬇ Dark Presentation Figure (PNG)</button>`);
   if (data.summary_path) xrdDownloads.push(
     `<button class="btn-sm" onclick="downloadFile('${escPath(data.summary_path)}')">⬇ Refinement Workbook</button>`);
   document.getElementById('xrd-download-row').innerHTML = xrdDownloads.join('');

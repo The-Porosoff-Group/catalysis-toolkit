@@ -70,11 +70,11 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
     output_path : str
         Destination PNG path.
     theme : {"light", "dark"}, optional
-        Explicit figure theme. Dark matches the native XRD interface.
+        Explicit figure theme. Light is the publication-export default.
     """
-    theme = str(theme or metadata.get('plot_theme') or 'dark').lower()
+    theme = str(theme or metadata.get('plot_theme') or 'light').lower()
     if theme not in PLOT_THEMES:
-        theme = 'dark'
+        theme = 'light'
     palette = PLOT_THEMES[theme]
 
     # This enriches labels and tick metadata only.  Fit arrays and statistics

@@ -1025,9 +1025,9 @@ def process_xrd():
         safe_id = re.sub(r'[^\w\-]', '_', os.path.splitext(sample_id)[0])
         out_dir = os.path.join(output_base, f'XRD_{safe_id}_{ts}')
         analysis_date = datetime.now().strftime('%Y-%m-%d')
-        plot_theme = form.get('plot_theme', 'dark').strip().lower()
+        plot_theme = form.get('plot_theme', 'light').strip().lower()
         if plot_theme not in ('light', 'dark'):
-            plot_theme = 'dark'
+            plot_theme = 'light'
 
         # ── Calibration mode: separate backend ──────────────────────────
         calibration_mode = form.get('calibration_mode', '').lower() == 'true'

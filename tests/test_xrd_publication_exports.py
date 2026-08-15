@@ -2,6 +2,7 @@ import copy
 import os
 import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 from openpyxl import load_workbook
@@ -123,7 +124,7 @@ class XrdPublicationExportTests(unittest.TestCase):
                     else:
                         self.assertLess(max(corner), 40)
 
-    def test_dark_is_the_default_export_theme(self):
+    def test_light_is_the_default_export_theme(self):
         metadata = {'sample_id': 'Default_theme_sample'}
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, 'figure_default.png')
@@ -131,7 +132,20 @@ class XrdPublicationExportTests(unittest.TestCase):
                 copy.deepcopy(publication_result()), metadata, path)
             with Image.open(path) as image:
                 corner = image.convert('RGB').getpixel((2, 2))
-                self.assertLess(max(corner), 40)
+                self.assertGreater(min(corner), 240)
+
+    def test_web_preview_is_fixed_dark_and_export_choice_defaults_light(self):
+        root = Path(__file__).resolve().parents[1]
+        for relative_path in ('templates/index.html',
+                              'templates/xrd_toolkit/index.html'):
+            html = (root / relative_path).read_text(encoding='utf-8')
+            self.assertIn('id="xrd-export-theme"', html)
+            self.assertIn(
+                '<option value="light" selected>Light background', html)
+            self.assertNotIn('id="xrd-plot-theme"', html)
+            self.assertIn("paper:'#0d1117'", html)
+            self.assertIn('data.plot_paths?.dark', html)
+            self.assertIn("modeBarButtonsToRemove:['toImage']", html)
 
     def test_workbook_filename_and_content_include_sample_date_and_hkl(self):
         metadata = {
