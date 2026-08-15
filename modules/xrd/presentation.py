@@ -79,14 +79,14 @@ def phase_display_label(phase, index=None):
 
 def phase_legend_label(phase, index=None):
     """Return the publication legend text for one fitted phase."""
-    label = phase_display_label(phase, index=index)
+    label = phase_tick_label(phase, index=index)
     weight = phase.get("weight_fraction_%")
     uncertainty = phase.get("weight_fraction_err_%")
     if weight not in (None, ""):
         value = f"{weight}"
         if uncertainty not in (None, ""):
             value += f" ± {uncertainty}"
-        label += f", {value} weight %"
+        label += f", {value} wt. %"
     return label
 
 

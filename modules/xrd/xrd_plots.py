@@ -236,11 +236,11 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
         for reflection in phase.get('tick_reflections', []) or []:
             position = float(reflection['two_theta'])
             label = reflection.get('label') or ''
-            ax_ticks.vlines(position, row_center - 0.27, row_center - 0.08,
+            ax_ticks.vlines(position, row_center - 0.28, row_center - 0.04,
                             color=color, linewidth=1.45, alpha=1.0)
             if label:
                 ax_ticks.text(
-                    position, row_center - 0.015, label,
+                    position, row_center + 0.015, label,
                     ha='center', va='bottom', rotation=60,
                     rotation_mode='anchor',
                     fontsize=7.0,
@@ -248,8 +248,8 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
             labeled_positions.add(round(position, 3))
         for position in phase.get('tick_positions', []) or []:
             if round(float(position), 3) not in labeled_positions:
-                ax_ticks.vlines(float(position), row_center - 0.27,
-                                row_center - 0.08, color=color,
+                ax_ticks.vlines(float(position), row_center - 0.28,
+                                row_center - 0.04, color=color,
                                 linewidth=1.45, alpha=1.0)
         phase_label = phase.get('tick_label') or clean_descriptive_text(
             phase.get('name', ''), fallback=f"Phase {index + 1}")
@@ -275,6 +275,7 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
     ax_res.fill_between(tt, resid, 0, where=(resid < 0),
                         color=phase_colors[0], alpha=0.20)
     ax_res.set_ylabel('Difference', fontsize=9.5, color=text_color)
+    ax_res.yaxis.set_label_coords(-0.085, 0.42)
     ax_res.set_xlabel('Diffraction angle, 2θ (degrees)', fontsize=10.5,
                       color=text_color)
 

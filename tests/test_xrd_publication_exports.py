@@ -91,9 +91,10 @@ class XrdPublicationExportTests(unittest.TestCase):
         self.assertEqual(format_chemical_formula('WC1-x'), 'WC₁₋ₓ')
         self.assertNotIn('-', format_space_group('P-6m2'))
         label = phase_legend_label(publication_result()['phase_results'][1])
-        self.assertIn('WC₁₋ₓ', label)
-        self.assertIn('space group P6̅m2', label)
-        self.assertIn('weight %', label)
+        self.assertEqual(
+            label, 'WC₁₋ₓ (P6̅m2), 37.6 ± 1.2 wt. %')
+        self.assertNotIn('space group', label)
+        self.assertNotIn('weight %', label)
         self.assertNotIn('_', label)
         self.assertEqual(
             phase_tick_label(publication_result()['phase_results'][1]),

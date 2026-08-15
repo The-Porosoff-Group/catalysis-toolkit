@@ -3581,7 +3581,7 @@ function renderXrdPublicationPlot(data) {
       const weight = phase['weight_fraction_%'];
       const uncertainty = phase['weight_fraction_err_%'];
       const weightText = weight == null ? '' :
-        `, ${weight}${uncertainty == null ? '' : ` ± ${uncertainty}`} weight %`;
+        `, ${weight}${uncertainty == null ? '' : ` ± ${uncertainty}`} wt. %`;
       const phaseLabel = phase.display_label || String(
         phase.formula || phase.name || 'Fitted phase').replace(/[_-]+/g, ' ');
       traces.push({
@@ -3629,12 +3629,12 @@ function renderXrdPublicationPlot(data) {
         const position = Number(reflection.two_theta);
         represented.add(position.toFixed(3));
         shapes.push({type:'line',xref:'x',yref:'paper',x0:position,x1:position,
-          y0:rowBottom + rowHeight * 0.08,y1:rowBottom + rowHeight * 0.22,
+          y0:rowBottom + rowHeight * 0.08,y1:rowBottom + rowHeight * 0.26,
           line:{color:color,width:1.8}});
         const label = reflection.label || (Array.isArray(reflection.hkl)
           ? `(${reflection.hkl.join(' ')})` : '');
         if (label) annotations.push({
-          x:position,y:rowBottom + rowHeight * 0.30,xref:'x',yref:'paper',
+          x:position,y:rowBottom + rowHeight * 0.34,xref:'x',yref:'paper',
           text:label,showarrow:false,textangle:-60,xanchor:'center',yanchor:'bottom',
           font:{color:palette.text,size:10},
         });
@@ -3642,7 +3642,7 @@ function renderXrdPublicationPlot(data) {
       (phase.tick_positions || []).forEach(position => {
         if (represented.has(Number(position).toFixed(3))) return;
         shapes.push({type:'line',xref:'x',yref:'paper',x0:position,x1:position,
-          y0:rowBottom + rowHeight * 0.08,y1:rowBottom + rowHeight * 0.22,
+          y0:rowBottom + rowHeight * 0.08,y1:rowBottom + rowHeight * 0.26,
           line:{color:color,width:1.8}});
       });
       const rowLabel = phase.tick_label || phase.display_label || String(
