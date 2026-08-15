@@ -17,7 +17,11 @@ from modules.xrd.presentation import (
     phase_legend_label,
     phase_tick_label,
 )
-from modules.xrd.xrd_plots import _stack_phase_tick_label, make_xrd_plot
+from modules.xrd.xrd_plots import (
+    _inclusive_two_theta_ticks,
+    _phase_axis_label,
+    make_xrd_plot,
+)
 
 
 def _gaussian(x, center, width, amplitude):
@@ -81,10 +85,15 @@ def publication_result():
 
 
 class XrdPublicationExportTests(unittest.TestCase):
-    def test_phase_labels_are_stacked_away_from_reflection_marks(self):
+    def test_phase_axis_labels_remain_on_one_line(self):
         self.assertEqual(
-            _stack_phase_tick_label('WC₁₋ₓ (P6̄m2)'),
-            'WC₁₋ₓ\n(P6̄m2)')
+            _phase_axis_label('WC₁₋ₓ (P6̄m2)'),
+            'WC₁₋ₓ (P6̄m2)')
+
+    def test_two_theta_ticks_include_both_end_ranges(self):
+        ticks = _inclusive_two_theta_ticks(20, 80)
+        self.assertEqual(ticks[0], 20)
+        self.assertEqual(ticks[-1], 80)
 
     def test_scientific_labels_use_subscripts_and_overbars(self):
         self.assertEqual(format_chemical_formula('Mo2C'), 'Mo₂C')
@@ -141,14 +150,13 @@ class XrdPublicationExportTests(unittest.TestCase):
                 corner = image.convert('RGB').getpixel((2, 2))
                 self.assertGreater(min(corner), 240)
 
-    def test_web_preview_is_fixed_dark_and_export_choice_defaults_light(self):
+    def test_web_preview_is_fixed_dark_and_both_exports_are_available(self):
         root = Path(__file__).resolve().parents[1]
         for relative_path in ('templates/index.html',
                               'templates/xrd_toolkit/index.html'):
             html = (root / relative_path).read_text(encoding='utf-8')
-            self.assertIn('id="xrd-export-theme"', html)
-            self.assertIn(
-                '<option value="light" selected>Light background', html)
+            self.assertNotIn('id="xrd-export-theme"', html)
+            self.assertNotIn("fd.append('plot_theme'", html)
             self.assertNotIn('id="xrd-plot-theme"', html)
             self.assertIn("paper:'#0d1117'", html)
             self.assertIn('data.plot_paths?.dark', html)
@@ -158,6 +166,12 @@ class XrdPublicationExportTests(unittest.TestCase):
             self.assertIn('escHtml(figureTitle)', html)
             self.assertIn("x:-0.012,y:rowCenter", html)
             self.assertIn("yanchor:'bottom'", html)
+            self.assertIn('Light Publication Figure (PNG)', html)
+            self.assertIn('Dark Presentation Figure (PNG)', html)
+            self.assertIn('const mainBottom = 0.415', html)
+            self.assertIn('const tickCeiling = 0.295', html)
+            self.assertIn("x:0.5,y:0.345", html)
+            self.assertNotIn('stackedRowLabel', html)
 
     def test_custom_figure_title_is_used_without_changing_sample_identity(self):
         metadata = {

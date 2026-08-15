@@ -138,17 +138,6 @@
   .form-grid.three { grid-template-columns: 1fr 1fr 1fr; }
   .form-group { display: flex; flex-direction: column; gap: 5px; }
   .form-group.full { grid-column: 1 / -1; }
-  .xrd-export-theme {
-    grid-column: 1 / -1;
-    padding: 13px 15px;
-    border: 1px solid rgba(88,166,255,0.55);
-    border-radius: 8px;
-    background: rgba(88,166,255,0.08);
-    box-shadow: inset 3px 0 0 var(--accent);
-  }
-  .xrd-export-theme label { color: var(--accent); font-size: 13px; }
-  .xrd-export-theme select { max-width: 390px; }
-  .xrd-export-theme-note { color: var(--muted); font-size: 11px; line-height: 1.45; }
   label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; }
   input[type=text], input[type=number], textarea, select {
     background: var(--surface2);
@@ -847,16 +836,6 @@
             <div class="form-group">
               <label>Output Folder</label>
               <input type="text" id="xrd-output-dir" placeholder="Leave blank → results/ next to app">
-            </div>
-            <div class="form-group xrd-export-theme">
-              <label>Exported Figure Appearance</label>
-              <select id="xrd-export-theme">
-                <option value="light" selected>Light background — publication default</option>
-                <option value="dark">Dark background — presentation option</option>
-              </select>
-              <div class="xrd-export-theme-note">
-                The web preview always stays dark. Both 300 dpi PNG versions are saved for download.
-              </div>
             </div>
             <div class="form-group">
               <label title="Auto mode analyzes your data to pick the right number of background terms. Override manually for samples with known amorphous backgrounds.">
@@ -2943,7 +2922,6 @@ async function runXRD(method) {
     fd.append('tt_max',      document.getElementById('xrd-tt-max').value);
     fd.append('n_bg_coeffs', document.getElementById('xrd-bg-coeffs').value || 'auto');
     fd.append('output_dir',  document.getElementById('xrd-output-dir').value);
-    fd.append('plot_theme',  document.getElementById('xrd-export-theme').value || 'light');
     fd.append('method',      method);
     // Instrument selection
     const instSelect = document.getElementById('xrd-instrument');
@@ -3480,7 +3458,7 @@ function renderXrdPublicationPlot(data) {
       });
       traces.push({
         x:pd.tt, y:phaseTop, name:phase.legend_label || `${phaseLabel}${weightText}`,
-        type:'scatter', mode:'lines', line:{color:color,width:1.8},
+        type:'scatter', mode:'lines', line:{color:color,width:1.5},
         fill:'tonexty', fillcolor:colorWithAlpha(color, 0.42),
         hovertemplate:`2θ: %{x:.3f}°<br>${phaseLabel} contribution: %{y:.4g}<extra></extra>`,
       });
@@ -3488,27 +3466,31 @@ function renderXrdPublicationPlot(data) {
 
     traces.push(
       {x:pd.tt, y:pd.y_background, name:'Fitted background', type:'scattergl', mode:'lines',
-       line:{color:palette.background,width:1.6,dash:'dash'}, hovertemplate:'2θ: %{x:.3f}°<br>Background intensity: %{y:.4g}<extra></extra>'},
+       line:{color:palette.background,width:1.35,dash:'dash'}, hovertemplate:'2θ: %{x:.3f}°<br>Background intensity: %{y:.4g}<extra></extra>'},
       {x:pd.tt, y:pd.y_obs, name:'Observed intensity', type:'scattergl', mode:'lines',
-       line:{color:palette.observed,width:1.8}, hovertemplate:'2θ: %{x:.3f}°<br>Observed intensity: %{y:.4g}<extra></extra>'},
+       line:{color:palette.observed,width:1.5}, hovertemplate:'2θ: %{x:.3f}°<br>Observed intensity: %{y:.4g}<extra></extra>'},
       {x:pd.tt, y:pd.y_calc, name:'Calculated pattern', type:'scattergl', mode:'lines',
-       line:{color:palette.calculated,width:2.4}, hovertemplate:'2θ: %{x:.3f}°<br>Calculated intensity: %{y:.4g}<extra></extra>'}
+       line:{color:palette.calculated,width:2.0}, hovertemplate:'2θ: %{x:.3f}°<br>Calculated intensity: %{y:.4g}<extra></extra>'}
     );
 
     traces.push({
       x:pd.tt, y:pd.residuals, name:'Observed minus calculated',
-      type:'scattergl', mode:'lines', line:{color:palette.residual,width:1.5},
+      type:'scattergl', mode:'lines', line:{color:palette.residual,width:1.25},
       yaxis:'y2', showlegend:false,
       hovertemplate:'2θ: %{x:.3f}°<br>Residual intensity: %{y:.4g}<extra></extra>',
     });
 
-    const tickFloor = 0.205;
-    const mainBottom = 0.38;
-    const tickCeiling = 0.355;
+    const tickFloor = 0.19;
+    const mainBottom = 0.415;
+    const tickCeiling = 0.295;
     const tickSpace = tickCeiling - tickFloor;
     const rowHeight = tickSpace / nPhases;
     const shapes = [];
-    const annotations = [];
+    const annotations = [{
+      x:0.5,y:0.345,xref:'paper',yref:'paper',
+      text:'Diffraction angle, 2θ (degrees)',showarrow:false,
+      xanchor:'center',yanchor:'middle',font:{color:palette.text,size:12},
+    }];
     phases.forEach((phase, i) => {
       const color = phasePalette[i % phasePalette.length];
       const rowBottom = tickFloor + (nPhases - i - 1) * rowHeight;
@@ -3537,11 +3519,10 @@ function renderXrdPublicationPlot(data) {
       });
       const rowLabel = phase.tick_label || phase.display_label || String(
         phase.formula || phase.name || 'Fitted phase').replace(/[_-]+/g, ' ');
-      const stackedRowLabel = escHtml(rowLabel).replace(/\s+\(/, '<br>(');
       annotations.push({
-        x:-0.012,y:rowCenter,xref:'paper',yref:'paper',text:`<b>${stackedRowLabel}</b>`,
+        x:-0.012,y:rowCenter,xref:'paper',yref:'paper',text:`<b>${escHtml(rowLabel)}</b>`,
         showarrow:false,xanchor:'right',yanchor:'middle',align:'right',
-        font:{color:color,size:11},bgcolor:'rgba(13,17,23,.92)',borderpad:1,
+        font:{color:color,size:10},bgcolor:'rgba(13,17,23,.92)',borderpad:1,
       });
     });
 
@@ -3551,20 +3532,19 @@ function renderXrdPublicationPlot(data) {
     const statsTitle = `Rwp ${stats.Rwp ?? '—'} % · Rp ${stats.Rp ?? '—'} % · χ² ${stats.chi2 ?? '—'} · GoF ${stats.GoF ?? '—'}`;
     const layout = {
       paper_bgcolor:palette.paper, plot_bgcolor:palette.plot,
-      font:{color:palette.text,size:13,family:'Arial, sans-serif'},
-      margin:{l:82,r:22,t:72,b:64},
-      title:{text:`<b>${escHtml(figureTitle)}</b><br><span style="font-size:12px">${statsTitle}</span>`,
-             x:0.015,xanchor:'left',font:{size:18}},
-      xaxis:{title:{text:'Diffraction angle, 2θ (degrees)',font:{size:15}},
-             gridcolor:palette.grid,zeroline:false,tickfont:{size:13}},
-      yaxis:{title:{text:'Intensity (arbitrary units)',font:{size:15}},
-             gridcolor:palette.grid,zeroline:false,domain:[mainBottom,1],tickfont:{size:13}},
-      yaxis2:{title:{text:'Difference',font:{size:13}},
+      font:{color:palette.text,size:12,family:'Arial, sans-serif'},
+      margin:{l:110,r:22,t:70,b:58},
+      title:{text:`<b>${escHtml(figureTitle)}</b><br><span style="font-size:11px">${statsTitle}</span>`,
+             x:0.015,xanchor:'left',font:{size:17}},
+      xaxis:{gridcolor:palette.grid,zeroline:false,tickfont:{size:12}},
+      yaxis:{title:{text:'Intensity (arbitrary units)',font:{size:14}},
+             gridcolor:palette.grid,zeroline:false,domain:[mainBottom,1],tickfont:{size:12}},
+      yaxis2:{title:{text:'Difference',font:{size:12}},
               gridcolor:palette.grid,zeroline:true,zerolinecolor:palette.background,
-              domain:[0,0.16],anchor:'x',tickfont:{size:12}},
+              domain:[0,0.15],anchor:'x',tickfont:{size:11}},
       legend:{orientation:'v',x:0.992,y:0.985,xanchor:'right',yanchor:'top',
               bgcolor:'rgba(28,33,40,.90)',
-              bordercolor:palette.grid,borderwidth:1,font:{size:12}},
+              bordercolor:palette.grid,borderwidth:1,font:{size:11}},
       shapes:shapes,annotations:annotations,dragmode:'zoom',
     };
     const config = {

@@ -6,6 +6,7 @@ import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
+from matplotlib.ticker import FuncFormatter, MaxNLocator
 import numpy as np
 
 from .presentation import (
@@ -58,13 +59,23 @@ PLOT_THEMES = {
 }
 
 
-def _stack_phase_tick_label(label):
-    """Place formula and space group on separate lines in the label gutter."""
-    text = str(label or '').strip()
-    formula, separator, space_group = text.rpartition(' (')
-    if separator and space_group.endswith(')'):
-        return f'{formula}\n({space_group}'
-    return text
+def _phase_axis_label(label):
+    """Return a single-line label for the phase-identification axis."""
+    return str(label or '').strip()
+
+
+def _inclusive_two_theta_ticks(lower, upper):
+    """Return readable major ticks that always include both data limits."""
+    lower = float(lower)
+    upper = float(upper)
+    if upper <= lower:
+        return np.asarray([lower])
+    locator = MaxNLocator(nbins=7, steps=[1, 2, 2.5, 5, 10])
+    epsilon = (upper - lower) * 1e-7
+    interior = locator.tick_values(lower, upper)
+    interior = interior[(interior > lower + epsilon)
+                        & (interior < upper - epsilon)]
+    return np.concatenate(([lower], interior, [upper]))
 
 
 def make_xrd_plot(result, metadata, output_path, theme=None):
@@ -109,11 +120,12 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
     fig = plt.figure(figsize=(6.5, figure_height),
                      facecolor=palette['figure'])
     grid = gridspec.GridSpec(
-        3, 1, figure=fig, hspace=0.035,
-        height_ratios=[4.8, tick_height, 1.05])
+        4, 1, figure=fig, hspace=0.035,
+        height_ratios=[4.8, 0.70, tick_height, 1.05])
     ax_main = fig.add_subplot(grid[0])
-    ax_ticks = fig.add_subplot(grid[1], sharex=ax_main)
-    ax_res = fig.add_subplot(grid[2], sharex=ax_main)
+    ax_angle = fig.add_subplot(grid[1])
+    ax_ticks = fig.add_subplot(grid[2], sharex=ax_main)
+    ax_res = fig.add_subplot(grid[3], sharex=ax_main)
 
     surface = palette['surface']
     grid_color = palette['grid']
@@ -130,7 +142,7 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
     def style_axis(axis, show_xlabel=False, show_grid=True):
         axis.set_facecolor(surface)
         axis.tick_params(
-            colors=text_color, labelsize=9.5, width=1.0, length=4.0,
+            colors=text_color, labelsize=9.0, width=0.9, length=3.6,
             labelbottom=show_xlabel)
         axis.xaxis.label.set_color(text_color)
         axis.yaxis.label.set_color(text_color)
@@ -143,9 +155,15 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
             axis.grid(False)
         axis.set_axisbelow(True)
 
-    style_axis(ax_main)
+    style_axis(ax_main, show_xlabel=True)
     style_axis(ax_ticks, show_grid=False)
-    style_axis(ax_res, show_xlabel=True)
+    style_axis(ax_res)
+    ax_main.tick_params(axis='x', pad=2)
+    ax_angle.set_axis_off()
+    ax_angle.text(
+        0.5, 0.25, 'Diffraction angle, 2θ (degrees)',
+        transform=ax_angle.transAxes, ha='center', va='center',
+        fontsize=9.5, color=text_color)
 
     # Draw every phase against the fitted background.  These are true filled
     # component areas, not faint cumulative envelopes.
@@ -162,14 +180,14 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
             tt, y_bg, phase_top, color=color,
             alpha=0.42 if theme == 'dark' else 0.30,
             linewidth=0, zorder=1)
-        ax_main.plot(tt, phase_top, color=color, linewidth=1.25,
+        ax_main.plot(tt, phase_top, color=color, linewidth=1.05,
                      alpha=0.98, zorder=2)
 
-    ax_main.plot(tt, y_bg, color=muted_color, linewidth=1.15,
+    ax_main.plot(tt, y_bg, color=muted_color, linewidth=0.95,
                  linestyle=(0, (4, 2)), alpha=0.95, zorder=2)
-    ax_main.plot(tt, y_obs, color=observed_color, linewidth=1.25,
+    ax_main.plot(tt, y_obs, color=observed_color, linewidth=1.05,
                  alpha=0.92, zorder=4)
-    ax_main.plot(tt, y_calc, color=calculated_color, linewidth=1.75,
+    ax_main.plot(tt, y_calc, color=calculated_color, linewidth=1.45,
                  alpha=1.0, zorder=5)
 
     stats_text = (
@@ -181,26 +199,26 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
     sample_label = custom_title or (
         str(metadata.get('sample_id', 'Sample')).strip().replace('_', ' ')
         or 'Sample')
-    title_fontsize = max(9.5, 13.0 - max(len(sample_label) - 42, 0) * 0.09)
+    title_fontsize = max(9.2, 12.4 - max(len(sample_label) - 42, 0) * 0.08)
     ax_main.set_title(
         sample_label, loc='left', pad=7, fontsize=title_fontsize,
         color=text_color, fontweight='bold')
     ax_main.text(
         0.995, 0.985, stats_text, transform=ax_main.transAxes,
-        ha='right', va='top', fontsize=8.8, color=text_color,
+        ha='right', va='top', fontsize=8.3, color=text_color,
         bbox=dict(boxstyle='round,pad=0.30', fc=palette['stats_face'],
                   ec=grid_color, alpha=0.90, linewidth=0.7), zorder=8)
 
-    ax_main.set_ylabel('Intensity (arbitrary units)', fontsize=10.5,
+    ax_main.set_ylabel('Intensity (arbitrary units)', fontsize=10.0,
                        color=text_color)
     ax_main.set_ylim(bottom=0)
 
     legend_handles = [
-        Line2D([0], [0], color=observed_color, lw=1.7,
+        Line2D([0], [0], color=observed_color, lw=1.45,
                label='Observed intensity'),
-        Line2D([0], [0], color=calculated_color, lw=2.0,
+        Line2D([0], [0], color=calculated_color, lw=1.65,
                label='Calculated pattern'),
-        Line2D([0], [0], color=muted_color, lw=1.4,
+        Line2D([0], [0], color=muted_color, lw=1.2,
                ls=(0, (4, 2)), label='Fitted background'),
     ]
     for index, phase in enumerate(phases):
@@ -209,7 +227,7 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
             facecolor=color, edgecolor=color, alpha=0.70,
             label=phase_legend_label(phase, index=index)))
     figure_legend = ax_main.legend(
-        handles=legend_handles, fontsize=8.7,
+        handles=legend_handles, fontsize=8.2,
         ncol=1,
         facecolor=palette['stats_face'], edgecolor=grid_color,
         labelcolor=text_color, loc='upper right',
@@ -254,11 +272,11 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
         phase_label = phase.get('tick_label') or clean_descriptive_text(
             phase.get('name', ''), fallback=f"Phase {index + 1}")
         phase_label_positions.append(row_center)
-        phase_label_texts.append(_stack_phase_tick_label(phase_label))
+        phase_label_texts.append(_phase_axis_label(phase_label))
         phase_label_colors.append(color)
 
     ax_ticks.set_yticks(phase_label_positions, labels=phase_label_texts)
-    ax_ticks.tick_params(axis='y', length=0, pad=5, labelsize=8.0)
+    ax_ticks.tick_params(axis='y', length=0, pad=5, labelsize=7.5)
     for tick_label, color in zip(ax_ticks.get_yticklabels(),
                                  phase_label_colors):
         tick_label.set_color(color)
@@ -266,7 +284,7 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
         tick_label.set_ha('right')
         tick_label.set_linespacing(0.9)
 
-    ax_res.plot(tt, resid, color=palette['residual'], linewidth=1.1,
+    ax_res.plot(tt, resid, color=palette['residual'], linewidth=0.95,
                 alpha=1.0)
     ax_res.axhline(0, color=palette['zero'], linewidth=0.9,
                    linestyle=(0, (4, 2)), alpha=0.9)
@@ -274,13 +292,14 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
                         color=palette['residual'], alpha=0.20)
     ax_res.fill_between(tt, resid, 0, where=(resid < 0),
                         color=phase_colors[0], alpha=0.20)
-    ax_res.set_ylabel('Difference', fontsize=9.5, color=text_color)
+    ax_res.set_ylabel('Difference', fontsize=9.0, color=text_color)
     ax_res.yaxis.set_label_coords(-0.085, 0.42)
-    ax_res.set_xlabel('Diffraction angle, 2θ (degrees)', fontsize=10.5,
-                      color=text_color)
 
     ax_main.set_xlim(tt.min(), tt.max())
-    fig.subplots_adjust(left=0.105, right=0.985, bottom=0.12, top=0.925)
+    ax_main.set_xticks(_inclusive_two_theta_ticks(tt.min(), tt.max()))
+    ax_main.xaxis.set_major_formatter(
+        FuncFormatter(lambda value, _position: f'{value:g}'))
+    fig.subplots_adjust(left=0.14, right=0.985, bottom=0.045, top=0.925)
 
     fig.savefig(
         output_path, dpi=300, facecolor=palette['figure'], edgecolor='none',
