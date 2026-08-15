@@ -4756,12 +4756,18 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             # display).  When use_gsas_ref_ticks is True, switch to
             # GSAS-II's RefList (all reflections including weak ones).
             if use_gsas_ticks_opt and gsas_phase_refs:
-                tick_positions = [round(r[0], 3) for r in gsas_phase_refs
-                                   if tt_min <= r[0] <= tt_max]
+                tick_source_refs = [
+                    r for r in gsas_phase_refs if tt_min <= r[0] <= tt_max]
                 _tick_src_label = 'GSAS-II RefList'
             else:
-                tick_positions = [round(r[0], 3) for r in phase_refs]
+                tick_source_refs = list(phase_refs)
                 _tick_src_label = 'Python refs'
+            tick_reflections = [{
+                'two_theta': round(float(reflection[0]), 3),
+                'hkl': list(reflection[2]),
+            } for reflection in tick_source_refs]
+            tick_positions = [
+                reflection['two_theta'] for reflection in tick_reflections]
             print(f"  Tick positions for '{ph.get('name', '?')}' (SG {sg}): "
                   f"{len(tick_positions)} reflections in "
                   f"{tt_min:.1f}–{tt_max:.1f}° 2θ "
@@ -4909,6 +4915,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 'weight_fraction_method': weight_fraction_method,
                 'n_reflections':           len(tick_positions),
                 'tick_positions':      tick_positions,
+                'tick_reflections':    tick_reflections,
                 'seeded_by':           'gsas2',
             })
 
