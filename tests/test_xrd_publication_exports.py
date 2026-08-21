@@ -90,10 +90,11 @@ class XrdPublicationExportTests(unittest.TestCase):
             _phase_axis_label('WC₁₋ₓ (P6̄m2)'),
             'WC₁₋ₓ (P6̄m2)')
 
-    def test_two_theta_ticks_include_both_end_ranges(self):
-        ticks = _inclusive_two_theta_ticks(20, 80)
+    def test_two_theta_ticks_enclose_range_as_whole_degrees(self):
+        ticks = _inclusive_two_theta_ticks(20.0000000004, 79.9999999996)
         self.assertEqual(ticks[0], 20)
         self.assertEqual(ticks[-1], 80)
+        self.assertTrue(all(float(tick).is_integer() for tick in ticks))
 
     def test_scientific_labels_use_subscripts_and_overbars(self):
         self.assertEqual(format_chemical_formula('Mo2C'), 'Mo₂C')

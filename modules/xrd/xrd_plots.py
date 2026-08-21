@@ -65,17 +65,31 @@ def _phase_axis_label(label):
 
 
 def _inclusive_two_theta_ticks(lower, upper):
-    """Return readable major ticks that always include both data limits."""
+    """Return whole-degree major ticks enclosing both data limits."""
     lower = float(lower)
     upper = float(upper)
     if upper <= lower:
-        return np.asarray([lower])
-    locator = MaxNLocator(nbins=7, steps=[1, 2, 2.5, 5, 10])
-    epsilon = (upper - lower) * 1e-7
-    interior = locator.tick_values(lower, upper)
-    interior = interior[(interior > lower + epsilon)
-                        & (interior < upper - epsilon)]
-    return np.concatenate(([lower], interior, [upper]))
+        return np.asarray([np.floor(lower)])
+
+    # Measured scans commonly begin or end a few floating-point increments
+    # away from the requested range (for example, 10.0000000004 degrees).
+    # Enclose the data in whole-degree display limits so those acquisition
+    # artifacts never become long fractional labels on the exported plot.
+    display_lower = np.floor(lower)
+    display_upper = np.ceil(upper)
+    if display_upper <= display_lower:
+        display_upper = display_lower + 1
+
+    locator = MaxNLocator(
+        nbins=7, steps=[1, 2, 2.5, 5, 10], integer=True)
+    epsilon = (display_upper - display_lower) * 1e-7
+    interior = locator.tick_values(display_lower, display_upper)
+    interior = interior[(interior > display_lower + epsilon)
+                        & (interior < display_upper - epsilon)]
+    interior = np.rint(interior[
+        np.isclose(interior, np.rint(interior), atol=1e-9)])
+    return np.unique(np.concatenate(
+        ([display_lower], interior, [display_upper])))
 
 
 def make_xrd_plot(result, metadata, output_path, theme=None):
@@ -298,10 +312,11 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
     ax_res.set_ylabel('Difference', fontsize=9.0, color=text_color)
     ax_res.yaxis.set_label_coords(-0.085, 0.42)
 
-    ax_main.set_xlim(tt.min(), tt.max())
-    ax_main.set_xticks(_inclusive_two_theta_ticks(tt.min(), tt.max()))
+    two_theta_ticks = _inclusive_two_theta_ticks(tt.min(), tt.max())
+    ax_main.set_xlim(two_theta_ticks[0], two_theta_ticks[-1])
+    ax_main.set_xticks(two_theta_ticks)
     ax_main.xaxis.set_major_formatter(
-        FuncFormatter(lambda value, _position: f'{value:g}'))
+        FuncFormatter(lambda value, _position: f'{value:.0f}'))
     fig.subplots_adjust(left=0.14, right=0.985, bottom=0.045, top=0.925)
 
     fig.savefig(
