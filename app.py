@@ -628,7 +628,7 @@ def xrd_fetch_cif():
             k: result.get(k) for k in (
                 'formula', 'name', 'spacegroup', 'spacegroup_number',
                 'system', 'a', 'b', 'c', 'alpha', 'beta', 'gamma',
-                'Z', 'source', 'cod_id', 'mp_id')
+                'Z', 'source', 'cod_id', 'mp_id', 'mp_api_id')
             if k in result
         }
         # Ensure source is in the response so the frontend preserves it
@@ -669,7 +669,8 @@ def xrd_preview_cif():
             'beta': parsed.get('beta') or 90.0,
             'gamma': parsed.get('gamma') or 90.0,
             'system': parsed.get('system') or 'cubic',
-            'spacegroup': parsed.get('spacegroup') or '',
+            'spacegroup': (parsed.get('spacegroup')
+                           or parsed.get('spacegroup_name') or ''),
             'spacegroup_number': parsed.get('spacegroup_number') or 1,
             'Z': parsed.get('Z'),
             'cod_id': 'manual',
@@ -748,7 +749,7 @@ def xrd_preview_cif():
                 k: phase.get(k) for k in (
                     'formula', 'name', 'spacegroup', 'spacegroup_number',
                     'system', 'a', 'b', 'c', 'alpha', 'beta', 'gamma',
-                    'Z', 'source', 'cod_id')
+                    'Z', 'source', 'cod_id', 'mp_id', 'mp_api_id')
                 if k in phase
             },
         })

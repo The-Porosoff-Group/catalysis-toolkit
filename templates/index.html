@@ -937,7 +937,7 @@
                         padding:5px 10px;background:var(--surface2);border:1px solid var(--border);
                         border-radius:6px 6px 0 0;font-size:10px;font-weight:700;color:var(--muted);
                         text-transform:uppercase;letter-spacing:.8px;">
-              <span>COD ID</span><span>Formula / Name</span><span>Space group</span>
+              <span>MP ID</span><span>Formula / Name</span><span>Space group</span>
               <span>a (Å)</span><span>b (Å)</span><span>c (Å)</span><span>Year</span><span></span>
             </div>
             <div id="xrd-candidate-list"
@@ -1786,6 +1786,10 @@ function removeStickPhase(cod_id) {
 }
 
 function computeSticks(phase, wavelength) {
+  // Never invent reflection ticks for a CIF the backend could not validate.
+  // The exact CIF is still passed to refinement, but an approximate browser
+  // lattice enumeration can show systematically absent reflections.
+  if (phase.preview_unavailable) return [];
   // Priority 1: tick positions computed server-side after refinement
   if (phase.tick_positions && phase.tick_positions.length > 0) {
     return phase.tick_positions.map(tt => ({two_theta: tt, rel_int: 1.0, hkl: ''}));
@@ -2156,7 +2160,7 @@ function filterCandidates() {
         (c.formula||'').toLowerCase().includes(q) ||
         (c.name||'').toLowerCase().includes(q) ||
         (c.spacegroup||'').toLowerCase().includes(q) ||
-        (c.cod_id||'').includes(q) ||
+        (c.mp_id||c.cod_id||'').includes(q) ||
         (c.mineral||'').toLowerCase().includes(q))
     : [...xrdCandidates];
   renderCandidates();
@@ -2192,7 +2196,7 @@ function renderCandidates() {
     const stabStr = c.stability ? `<span style="color:${MUT};font-size:9px;">${c.stability}</span>` : '';
 
     row.innerHTML = `
-      <span style="color:${MUT};font-family:var(--mono);font-size:11px;">${c.cod_id||c.mp_id||''}</span>
+      <span style="color:${MUT};font-family:var(--mono);font-size:11px;">${c.mp_id||c.cod_id||''}</span>
       <span style="display:flex;flex-direction:column;gap:1px;">${fmtStr}
         <span style="color:${MUT};font-size:10px;">${nameStr}</span>
         ${stabStr}</span>
@@ -2324,19 +2328,20 @@ async function uploadCIF(e) {
     cod_id: 'manual',
     source: 'manual',
     cif_text: text,
+    preview_unavailable: true,
     cif_check: {
-      status: 'ok',
-      ok: true,
+      status: 'warn',
+      ok: false,
       parsed_sg: sg,
       expected_sg: sg,
       site_count: null,
-      messages: ['Manual CIF loaded in browser; GSAS-II will refine this exact CIF text.'],
+      messages: ['Exact preview unavailable; ticks are hidden until backend CIF validation succeeds. GSAS-II will still refine this exact CIF text.'],
     },
   };
   xrdPhases.push(phase);
   addStickPhase(phase);
   renderSelectedPhases();
-  setXrdStatus(`✓ Added ${formula} from uploaded CIF.`, 'ok');
+  setXrdStatus(`⚠ Added ${formula}, but exact preview validation was unavailable; preview ticks are hidden.`, 'warn');
   e.target.value = '';
 }
 
@@ -2692,7 +2697,7 @@ function applyXrdControlState(controls = {}) {
 
 function stripPhaseForPreset(phase) {
   const keep = [
-    'name', 'formula', 'source', 'cod_id', 'mp_id', 'cache_key',
+    'name', 'formula', 'source', 'cod_id', 'mp_id', 'mp_api_id', 'cache_key',
     'a', 'b', 'c', 'alpha', 'beta', 'gamma',
     'system', 'spacegroup', 'spacegroup_number', 'Z',
     'stick_pattern', 'tick_positions', 'cif_check', 'validation',
@@ -3666,7 +3671,7 @@ function showXRDResults(data) {
         <div style="font-weight:800;font-size:14px;color:${c};margin-bottom:10px;">
           ${ph.name}
           <span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:8px;">
-            ${ph.spacegroup||''} · COD ${ph.cod_id||'manual'}
+            ${ph.spacegroup||''} · ${ph.source === 'mp' ? 'MP' : (ph.source === 'manual' ? 'Manual CIF' : 'COD')} ${ph.mp_id||ph.cod_id||''}
           </span>
           ${ph.seeded_by==='pymatgen'
             ? '<span class="pill green" style="font-size:10px;padding:2px 8px;margin-left:8px;">SF ✓</span>'
