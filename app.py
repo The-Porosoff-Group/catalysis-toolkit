@@ -60,10 +60,15 @@ import numpy as np
 import yaml
 from flask import Flask, render_template, request, jsonify, send_file
 from flask.json.provider import DefaultJSONProvider
+from modules.json_safety import json_safe_value
 
 
 class NumpyJSONProvider(DefaultJSONProvider):
-    """JSON provider that serialises numpy scalars and arrays."""
+    """JSON provider for numpy values and standards-compliant numbers."""
+
+    def dumps(self, obj, **kwargs):
+        kwargs['allow_nan'] = False
+        return super().dumps(json_safe_value(obj), **kwargs)
 
     def default(self, o):
         if isinstance(o, np.integer):

@@ -36,6 +36,14 @@ _DEFAULT_UNKNOWN_AREA_RESPONSE_FACTORS = {
 }
 
 
+_BUILTIN_SPECIES_ALIASES = {
+    # Some GC exports spell out the shared Ar/O2 TCD channel.  Reaction
+    # configurations use Ar/O2 as the canonical header, so normalize both
+    # the standalone gas name and the combined channel name to that entry.
+    'Ar': ('Argon', 'Argon/O2'),
+}
+
+
 _COELUTED_SPLIT_RULES = {
     'cis-2-butene/butane': (
         {'label': 'c2C4H8', 'cn': 4, 'det': 'FID', 'fraction': 0.5},
@@ -303,7 +311,9 @@ def _species_alias_key(value):
 def _species_alias_lookup(species_config):
     lookup = {}
     for header, cfg in species_config.items():
-        aliases = [header, cfg.get('label')]
+        label = cfg.get('label')
+        aliases = [header, label]
+        aliases.extend(_BUILTIN_SPECIES_ALIASES.get(label, ()))
         extra = cfg.get('aliases') or cfg.get('alias') or []
         if isinstance(extra, str):
             aliases.extend(x.strip() for x in extra.split(',') if x.strip())

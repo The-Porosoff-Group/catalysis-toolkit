@@ -3,8 +3,10 @@ import sys
 import tempfile
 import unittest
 import zipfile
+import json
 from unittest import mock
 
+import numpy as np
 import pandas as pd
 from openpyxl import Workbook
 
@@ -18,15 +20,64 @@ from modules.gc_processor import (  # noqa: E402
     _copy_source_sheet_to_workbook,
     _draw_legend_label,
     _metadata_bool,
+    _normalize_injection_species,
     _reaction_mask,
     _select_bypass_data,
+    build_flow_table,
     load_reaction_config,
     make_plots,
     validate_bypass_settings,
 )
+from modules.json_safety import json_safe_value  # noqa: E402
 
 
 class GcRegressionTests(unittest.TestCase):
+    def test_argon_o2_header_alias_supports_flow_calculation(self):
+        config = load_reaction_config(os.path.join(
+            ROOT, 'modules', 'reaction_configs', 'rwgs.yaml'))
+        data = {
+            'injections': [{
+                'label': 'sample Rxn 1',
+                'inj_num': 1,
+                'is_bypass': False,
+                'amounts': {
+                    'Argon/O2': 15.0,
+                    'Carbon Dioxide': 10.0,
+                },
+                'areas': {'Argon/O2': 150.0},
+                'source_refs': {
+                    'amounts': {'Argon/O2': 'K6'},
+                    'areas': {'Argon/O2': 'L6'},
+                },
+            }],
+        }
+
+        _normalize_injection_species(data, config['species'])
+        injection = data['injections'][0]
+        self.assertEqual(injection['amounts']['Ar/O2'], 15.0)
+        self.assertNotIn('Argon/O2', injection['amounts'])
+        self.assertEqual(injection['source_refs']['amounts']['Ar/O2'], 'K6')
+        self.assertIn(
+            {'raw': 'Argon/O2', 'canonical': 'Ar/O2'},
+            data['species_aliases_applied'])
+
+        flows, _ = build_flow_table(data, 15.0, config['species'])
+        self.assertEqual(flows.loc[0, 'Ar'], 15.0)
+        self.assertEqual(flows.loc[0, 'CO2'], 10.0)
+
+    def test_non_finite_values_are_converted_to_json_null(self):
+        safe = json_safe_value({
+            'balance': float('nan'),
+            'nested': [np.inf, np.float64(-np.inf), np.array([1, np.nan])],
+            'conversion': 4.25,
+        })
+
+        self.assertIsNone(safe['balance'])
+        self.assertEqual(safe['nested'], [None, None, [1.0, None]])
+        encoded = json.dumps(safe, allow_nan=False)
+        self.assertNotIn('NaN', encoded)
+        self.assertNotIn('Infinity', encoded)
+
     def test_bypass_omit_cannot_exceed_points_used(self):
         invalid = {
             'bypass_omit_initial': 4,
