@@ -1042,14 +1042,14 @@ def _add_time_on_stream_column(df, metadata):
     df = df.copy()
     duration = _infer_run_duration_h(metadata)
     interval_min = _metadata_float(metadata, 'injection_interval_min')
-    blank_mask = df['label'].fillna('').astype(str).str.contains(
-        r'\bblank\b', case=False, regex=True)
-    df['is_blank'] = blank_mask
-    metadata['blank_excluded_points'] = int(blank_mask.sum())
+    excluded_label_mask = df['label'].fillna('').astype(str).str.contains(
+        r'\bblank\b|\bleak[\s_-]*check\b', case=False, regex=True)
+    df['is_blank'] = excluded_label_mask
+    metadata['blank_excluded_points'] = int(excluded_label_mask.sum())
     df['time_on_stream_h'] = np.nan
     df['analysis_include'] = False
     df['row_status'] = np.select(
-        [df['is_bypass'], blank_mask],
+        [df['is_bypass'], excluded_label_mask],
         ['Bypass / inlet normalization', 'Blank / excluded'],
         default='Reaction included')
 
@@ -2549,7 +2549,7 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
     interval_cell = add_setting('injection_interval_min', metadata.get('injection_interval_min'), 'Used to convert accepted injection count to time.')
     add_setting('rejected_initial_injections', metadata.get('rejected_initial_injections'), 'Initial reaction rows excluded from the plotted time axis.')
     add_setting('rejected_final_injections', metadata.get('rejected_final_injections'), 'Final reaction rows excluded after shutdown or another known end-of-run event.')
-    add_setting('blank_excluded_points', metadata.get('blank_excluded_points'), 'Rows labeled blank are preserved but automatically excluded from reaction plots and summaries.')
+    add_setting('blank_excluded_points', metadata.get('blank_excluded_points'), 'Rows labeled blank or leak check are preserved but automatically excluded from reaction plots and summaries.')
     add_setting('registered_reaction_injections', metadata.get('registered_reaction_injections'), 'Accepted/plotted reaction point count when specified.')
     npoints_cell = add_setting('plot_reaction_points', metadata.get('plot_reaction_points'), 'Number of rows with assigned time_on_stream_h.')
     add_setting(

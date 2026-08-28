@@ -154,6 +154,31 @@ class GcRegressionTests(unittest.TestCase):
         self.assertEqual(result.loc[2, 'time_on_stream_h'], 0.0)
         self.assertAlmostEqual(result.loc[3, 'time_on_stream_h'], 22 / 60)
 
+    def test_labeled_leak_checks_follow_blank_exclusion_path(self):
+        frame = pd.DataFrame([
+            {'label': 'Leak Check 1', 'inj_num': 1, 'is_bypass': False},
+            {'label': 'leak-check 2', 'inj_num': 2, 'is_bypass': False},
+            {'label': 'LeakCheck 3', 'inj_num': 3, 'is_bypass': False},
+            {'label': 'sample bypass 1', 'inj_num': 4, 'is_bypass': True},
+            {'label': 'sample Rxn 14', 'inj_num': 14, 'is_bypass': False},
+            {'label': 'sample Rxn 15', 'inj_num': 15, 'is_bypass': False},
+        ])
+        metadata = {'injection_interval_min': 22}
+        result, count = _add_time_on_stream_column(frame, metadata)
+
+        self.assertEqual(count, 2)
+        self.assertEqual(metadata['blank_excluded_points'], 3)
+        self.assertListEqual(
+            result.loc[:2, 'is_blank'].tolist(), [True, True, True])
+        self.assertListEqual(
+            result.loc[:2, 'analysis_include'].tolist(), [False, False, False])
+        self.assertTrue(result.loc[:2, 'time_on_stream_h'].isna().all())
+        self.assertTrue(
+            (result.loc[:2, 'row_status'] == 'Blank / excluded').all())
+        self.assertEqual(int(_reaction_mask(result).sum()), 2)
+        self.assertEqual(result.loc[4, 'time_on_stream_h'], 0.0)
+        self.assertAlmostEqual(result.loc[5, 'time_on_stream_h'], 22 / 60)
+
     def test_final_reaction_points_are_preserved_but_excluded(self):
         frame = pd.DataFrame([
             {'label': 'sample Rxn 1', 'inj_num': 1, 'is_bypass': False},
