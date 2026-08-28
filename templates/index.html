@@ -566,11 +566,13 @@
               </div>
               <div class="form-group">
                 <label>Bypass Omit First</label>
-                <input type="number" step="1" min="0" id="bypass_omit_initial" placeholder="0">
+                <input type="number" step="1" min="0" id="bypass_omit_initial" placeholder="0"
+                       oninput="validateBypassCounts()">
               </div>
               <div class="form-group">
                 <label>Bypass Points Used</label>
-                <input type="number" step="1" min="1" id="bypass_points_used" value="3">
+                <input type="number" step="1" min="1" id="bypass_points_used" value="3"
+                       oninput="validateBypassCounts()">
               </div>
             </div>
           </div>
@@ -1218,6 +1220,19 @@ function selectConfig(el) {
 }
 
 // ── Process ───────────────────────────────────────────────────────────────
+function validateBypassCounts() {
+  const omitInput = document.getElementById('bypass_omit_initial');
+  const pointsInput = document.getElementById('bypass_points_used');
+  const omit = omitInput.value === '' ? 0 : Number(omitInput.value);
+  const points = pointsInput.value === '' ? null : Number(pointsInput.value);
+  const message = points !== null && omit > points
+    ? 'Bypass Omit First must be less than or equal to Bypass Points Used.'
+    : '';
+  omitInput.max = points === null ? '' : String(points);
+  omitInput.setCustomValidity(message);
+  return message === '';
+}
+
 async function processGC() {
   hideError();
   if (!selectedFile)   { showError('Please upload a .xlsx file first.'); return; }
@@ -1225,6 +1240,11 @@ async function processGC() {
 
   const catalystId = document.getElementById('catalyst_id').value.trim();
   if (!catalystId)     { showError('Please enter a Catalyst ID.'); return; }
+  if (!validateBypassCounts()) {
+    showError('Bypass Omit First must be less than or equal to Bypass Points Used.');
+    document.getElementById('bypass_omit_initial').reportValidity();
+    return;
+  }
 
   // Build inlet flows JSON
   const inlets = {};

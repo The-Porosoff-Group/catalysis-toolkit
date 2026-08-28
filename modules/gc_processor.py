@@ -721,10 +721,23 @@ def _apply_same_file_bypass_selection(data, metadata, reaction_config, species_c
     return out
 
 
+def validate_bypass_settings(metadata):
+    omit = _metadata_int(metadata or {}, 'bypass_omit_initial', 0) or 0
+    requested = _metadata_int(metadata or {}, 'bypass_points_used')
+    if omit < 0:
+        raise ValueError('Bypass Omit First cannot be negative.')
+    if requested is not None and requested < 1:
+        raise ValueError('Bypass Points Used must be at least 1.')
+    if requested is not None and omit > requested:
+        raise ValueError(
+            'Bypass Omit First must be less than or equal to '
+            'Bypass Points Used.')
+    return omit, requested
+
+
 def _select_bypass_data(bypass_data, metadata):
     injections = list((bypass_data or {}).get('injections', []))
-    omit = max(0, _metadata_int(metadata or {}, 'bypass_omit_initial', 0) or 0)
-    requested = _metadata_int(metadata or {}, 'bypass_points_used')
+    omit, requested = validate_bypass_settings(metadata)
     selected = injections[min(omit, len(injections)):]
     if requested and requested > 0:
         selected = selected[:min(requested, len(selected))]

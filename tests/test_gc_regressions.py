@@ -19,12 +19,40 @@ from modules.gc_processor import (  # noqa: E402
     _draw_legend_label,
     _metadata_bool,
     _reaction_mask,
+    _select_bypass_data,
     load_reaction_config,
     make_plots,
+    validate_bypass_settings,
 )
 
 
 class GcRegressionTests(unittest.TestCase):
+    def test_bypass_omit_cannot_exceed_points_used(self):
+        invalid = {
+            'bypass_omit_initial': 4,
+            'bypass_points_used': 3,
+        }
+        with self.assertRaisesRegex(
+                ValueError, 'must be less than or equal'):
+            validate_bypass_settings(invalid)
+        with self.assertRaisesRegex(
+                ValueError, 'must be less than or equal'):
+            _select_bypass_data(
+                {'injections': [{'label': f'Bypass {i}'} for i in range(6)]},
+                invalid)
+
+        valid = {
+            'bypass_omit_initial': 3,
+            'bypass_points_used': 3,
+        }
+        selected = _select_bypass_data(
+            {'injections': [{'label': f'Bypass {i}'} for i in range(6)]},
+            valid)
+        self.assertEqual(selected['bypass_selected_points'], 3)
+        self.assertEqual(
+            [row['label'] for row in selected['injections']],
+            ['Bypass 3', 'Bypass 4', 'Bypass 5'])
+
     def test_plot_setting_boolean_values_are_normalized(self):
         for value in (True, 1, 'true', 'yes', 'on', 'checked'):
             with self.subTest(value=value):

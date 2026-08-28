@@ -179,6 +179,8 @@ Results appear immediately: conversion, selectivities, carbon balance, and a con
 
 Rows labeled `Blank` or `Leak Check` are preserved in the exported data but automatically excluded from reaction counts, plots, time-on-stream assignment, and steady-state summaries.
 
+`Bypass Omit First` must be less than or equal to `Bypass Points Used`; the browser and processing engine both reject an invalid combination.
+
 ### Adding a new reaction type
 
 Copy `modules/reaction_configs/custom_template.yaml` as a starting point. The app detects the new file on next launch. Required fields:

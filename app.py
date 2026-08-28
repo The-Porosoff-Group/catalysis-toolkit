@@ -306,6 +306,10 @@ def process_gc():
             'bypass_file': bypass_file.filename if bypass_path else '',
             'reaction':    reaction_config['name'],
         }
+        try:
+            gc_processor.validate_bypass_settings(metadata)
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
         inlet_flows = {}
         try:
             inlet_flows = {k: float(v)
