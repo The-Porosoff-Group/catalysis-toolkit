@@ -16,12 +16,68 @@ if ROOT not in sys.path:
 from modules.gc_processor import (  # noqa: E402
     _add_time_on_stream_column,
     _copy_source_sheet_to_workbook,
+    _draw_legend_label,
+    _metadata_bool,
     _reaction_mask,
     load_reaction_config,
+    make_plots,
 )
 
 
 class GcRegressionTests(unittest.TestCase):
+    def test_plot_setting_boolean_values_are_normalized(self):
+        for value in (True, 1, 'true', 'yes', 'on', 'checked'):
+            with self.subTest(value=value):
+                self.assertTrue(
+                    _metadata_bool({'show_carbon_balance': value},
+                                   'show_carbon_balance'))
+        for value in (False, 0, 'false', 'no', 'off', 'unchecked', ''):
+            with self.subTest(value=value):
+                self.assertFalse(
+                    _metadata_bool({'show_carbon_balance': value},
+                                   'show_carbon_balance', True))
+
+    def test_chemical_formula_digits_are_drawn_as_subscripts(self):
+        class Font:
+            def __init__(self, size):
+                self.size = size
+
+        class Draw:
+            def __init__(self):
+                self.calls = []
+
+            def textbbox(self, _position, _text, font=None):
+                return (0, 0, font.size, font.size)
+
+            def text(self, position, text, fill=None, font=None):
+                self.calls.append((position, text, font.size))
+
+        draw = Draw()
+        _draw_legend_label(
+            draw, 0, 0, 'CO2 Conversion', Font(28), Font(18))
+        oxygen = next(call for call in draw.calls if call[1] == 'O')
+        subscript = next(call for call in draw.calls if call[1] == '2')
+        self.assertGreater(subscript[0][1], oxygen[0][1])
+        self.assertEqual(subscript[2], 18)
+
+    def test_plot_renderer_does_not_change_with_timing_metadata(self):
+        standard_path = os.path.join(ROOT, 'standard.png')
+        cases = (
+            {},
+            {'run_duration_h': 12, 'injection_interval_min': 22},
+            {'plot_style': 'single_axis_stacked'},
+        )
+        with mock.patch(
+                'modules.gc_processor._draw_gc_plot',
+                return_value=standard_path) as standard_renderer:
+            for metadata in cases:
+                with self.subTest(metadata=metadata):
+                    result = make_plots(
+                        None, None, None, 0, 'CO2', None, metadata,
+                        None, None, ROOT)
+                    self.assertEqual(result, standard_path)
+        self.assertEqual(standard_renderer.call_count, len(cases))
+
     def test_co2_reaction_hydrogen_defaults_are_30_sccm(self):
         config_dir = os.path.join(ROOT, 'modules', 'reaction_configs')
         for filename in ('co2_hydrogenation.yaml', 'rwgs.yaml'):

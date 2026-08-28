@@ -175,7 +175,7 @@ Fixture roles and provenance are declared in `fixtures/fixture_manifest.json`. A
 5. **Choose** an output folder, or leave blank to save in `results/`.
 6. **Click Process GC Data.**
 
-Results appear immediately: conversion, selectivities, carbon balance, and a 3-panel plot. Click **Open Output Folder** to access the saved files.
+Results appear immediately: conversion, selectivities, carbon balance, and a consistent dual-axis plot. The plot uses time on stream when timing values are available and injection number otherwise; an experiment setting controls whether carbon balance is overlaid. Click **Open Output Folder** to access the saved files.
 
 ### Adding a new reaction type
 

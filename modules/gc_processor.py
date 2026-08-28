@@ -970,6 +970,22 @@ def _metadata_int(metadata, key, default=None):
     return int(round(val))
 
 
+def _metadata_bool(metadata, key, default=False):
+    raw = metadata.get(key, default)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float, np.integer, np.floating)):
+        return bool(raw)
+    if raw is None:
+        return bool(default)
+    value = str(raw).strip().lower()
+    if value in {'1', 'true', 'yes', 'on', 'checked'}:
+        return True
+    if value in {'0', 'false', 'no', 'off', 'unchecked', ''}:
+        return False
+    return bool(default)
+
+
 def _space_velocity_metrics(inlet_flows, metadata):
     total_flow = 0.0
     feed_mass_g_h = 0.0
@@ -1155,20 +1171,11 @@ def _draw_legend_label(draw, x, y, label, font, sub_font, fill=(0, 0, 0)):
         cursor += bbox[2] - bbox[0]
 
 
-def _draw_time_on_stream_plot(df, df_sel, total_C_out, C_in_flow,
-                              reactant_label, metadata, species_config,
-                              output_dir):
+def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
+                  reactant_label, metadata, species_config, output_dir):
     from PIL import Image, ImageDraw, ImageFont
 
-    rxn = df[
-        (~df['is_bypass']) &
-        _analysis_mask(df) &
-        pd.to_numeric(df.get('time_on_stream_h'), errors='coerce').notna()
-    ].copy()
-    if rxn.empty:
-        return _draw_stacked_selectivity_plot(
-            df, df_sel, total_C_out, C_in_flow,
-            reactant_label, metadata, species_config, output_dir)
+    rxn = _analysis_reaction_rows(df)
 
     width, height = 1250, 900
     margin = {'l': 110, 'r': 108, 't': 88, 'b': 175}
@@ -1193,6 +1200,7 @@ def _draw_time_on_stream_plot(df, df_sel, total_C_out, C_in_flow,
     small_font = load_font(14)
     legend_sub_font = load_font(11)
     axis_font = load_font(28)
+    axis_sub_font = load_font(18)
     title_font = load_font(34)
 
     def txt(x, y, text, fill=(0, 0, 0), anchor=None, font_obj=None):
@@ -1205,24 +1213,79 @@ def _draw_time_on_stream_plot(df, df_sel, total_C_out, C_in_flow,
         bbox = draw.textbbox((0, 0), str(text), font=font_obj or font)
         return bbox[2] - bbox[0]
 
-    def rotated_txt(x, y, text, angle, font_obj=None):
+    def rotated_txt(x, y, text, angle, font_obj=None,
+                    subscript_digits=False):
         font_use = font_obj or font
-        bbox = draw.textbbox((0, 0), str(text), font=font_use)
-        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        if subscript_digits:
+            tw = _legend_label_width(
+                draw, text, font_use, axis_sub_font)
+            base_box = draw.textbbox((0, 0), str(text), font=font_use)
+            sub_box = draw.textbbox((0, 0), '2', font=axis_sub_font)
+            sub_offset = max(
+                2, int(getattr(font_use, 'size', 14) * 0.35))
+            th = max(
+                base_box[3] - base_box[1],
+                sub_offset + sub_box[3] - sub_box[1])
+        else:
+            bbox = draw.textbbox((0, 0), str(text), font=font_use)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
         layer = Image.new('RGBA', (tw + 12, th + 12), (255, 255, 255, 0))
         layer_draw = ImageDraw.Draw(layer)
-        layer_draw.text((6, 6), str(text), fill=(0, 0, 0, 255), font=font_use)
+        if subscript_digits:
+            _draw_legend_label(
+                layer_draw, 6, 6, text, font_use, axis_sub_font,
+                fill=(0, 0, 0, 255))
+        else:
+            layer_draw.text(
+                (6, 6), str(text), fill=(0, 0, 0, 255), font=font_use)
         rotated = layer.rotate(angle, expand=True)
         img.paste(rotated, (int(x - rotated.width / 2), int(y - rotated.height / 2)), rotated)
 
-    x_vals = pd.to_numeric(rxn['time_on_stream_h'], errors='coerce').to_numpy(dtype=float)
-    duration = _infer_run_duration_h(metadata)
-    x_min = 0.0
-    x_max = max(float(duration or 0), float(np.nanmax(x_vals)), 1.0)
+    time_values = pd.to_numeric(
+        rxn.get('time_on_stream_h', pd.Series(index=rxn.index, dtype=float)),
+        errors='coerce')
+    has_time_values = bool(time_values.notna().any())
+    if has_time_values:
+        rxn = rxn.loc[time_values.notna()].copy()
+        x_vals = time_values.loc[rxn.index].to_numpy(dtype=float)
+        duration = _infer_run_duration_h(metadata)
+        x_label = 'Time on stream (h)'
+        x_min = 0.0
+        x_max = max(float(duration or 0), float(np.nanmax(x_vals)), 1.0)
+    else:
+        x_vals, x_label = _plot_x_values(rxn)
+        finite_x = x_vals[np.isfinite(x_vals)]
+        if finite_x.size:
+            x_min = float(np.nanmin(finite_x))
+            x_max = float(np.nanmax(finite_x))
+        else:
+            x_vals = np.arange(len(rxn), dtype=float)
+            x_min = 0.0
+            x_max = max(float(len(rxn) - 1), 1.0)
+            x_label = 'Reaction point'
+        if x_max == x_min:
+            x_min -= 0.5
+            x_max += 0.5
+        else:
+            pad = (x_max - x_min) * 0.02
+            x_min -= pad
+            x_max += pad
 
     conv_vals = pd.to_numeric(rxn.get('conversion', pd.Series(index=rxn.index, dtype=float)),
                               errors='coerce').to_numpy() * 100.0
     conv_upper = _nice_upper(np.nanmax(conv_vals) if np.isfinite(conv_vals).any() else 5.0, floor=5.0)
+    show_carbon_balance = _metadata_bool(
+        metadata, 'show_carbon_balance', False)
+    cb_vals = None
+    right_upper = 100.0
+    if show_carbon_balance and C_in_flow > 0:
+        cb_vals = (
+            pd.to_numeric(total_C_out.loc[rxn.index], errors='coerce')
+            .to_numpy(dtype=float) / C_in_flow * 100.0)
+        finite_cb = cb_vals[np.isfinite(cb_vals)]
+        if finite_cb.size and float(np.nanmax(finite_cb)) > right_upper:
+            right_upper = float(
+                np.ceil(float(np.nanmax(finite_cb)) / 5.0) * 5.0)
 
     def xp(v):
         return x0 + (float(v) - x_min) / (x_max - x_min) * plot_w
@@ -1232,8 +1295,8 @@ def _draw_time_on_stream_plot(df, df_sel, total_C_out, C_in_flow,
         return y1 - (v / conv_upper) * plot_h
 
     def y_right(v):
-        v = max(0.0, min(100.0, float(v)))
-        return y1 - (v / 100.0) * plot_h
+        v = max(0.0, min(right_upper, float(v)))
+        return y1 - (v / right_upper) * plot_h
 
     # Axes and grid.
     draw.line((x0, y1, x1, y1), fill=(0, 0, 0), width=3)
@@ -1244,28 +1307,43 @@ def _draw_time_on_stream_plot(df, df_sel, total_C_out, C_in_flow,
         y = y_left(v)
         draw.line((x0 - 9, y, x0, y), fill=(0, 0, 0), width=2)
         txt(x0 - 16, y - 9, f'{v:g}', anchor='ra', font_obj=font)
-    for v in range(0, 101, 20):
+    right_ticks = list(range(0, 101, 20))
+    if right_upper > 100.0:
+        right_ticks.append(right_upper)
+    for v in right_ticks:
         y = y_right(v)
         draw.line((x1, y, x1 + 9, y), fill=(0, 0, 0), width=2)
-        txt(x1 + 16, y - 9, str(v), font_obj=font)
+        txt(x1 + 16, y - 9, f'{v:g}', font_obj=font)
 
-    if x_max <= 14:
-        step = 2.0
-    elif x_max <= 28:
-        step = 4.0
+    if has_time_values:
+        if x_max <= 14:
+            step = 2.0
+        elif x_max <= 28:
+            step = 4.0
+        else:
+            step = max(1.0, round(x_max / 6.0))
+        x_ticks = np.arange(0, x_max + step * 0.5, step)
     else:
-        step = max(1.0, round(x_max / 6.0))
-    x_ticks = np.arange(0, x_max + step * 0.5, step)
+        tick_count = min(7, len(x_vals))
+        tick_idx = (
+            np.linspace(0, len(x_vals) - 1, tick_count).round().astype(int)
+            if tick_count else np.array([], dtype=int))
+        x_ticks = [
+            x_vals[idx] for idx in sorted(set(tick_idx))
+            if np.isfinite(x_vals[idx])]
     for v in x_ticks:
-        if v > x_max + 1e-9:
+        if v < x_min - 1e-9 or v > x_max + 1e-9:
             continue
         x = xp(v)
         draw.line((x, y1, x, y1 + 9), fill=(0, 0, 0), width=2)
         label = f'{v:.0f}' if abs(v - round(v)) < 0.05 else f'{v:.1f}'
         txt(x, y1 + 18, label, anchor='ma', font_obj=font)
 
-    txt(x0 + plot_w / 2, y1 + 76, 'Time on stream (h)', anchor='mm', font_obj=axis_font)
-    rotated_txt(x0 - 74, y0 + plot_h / 2, f'{reactant_label} Conversion (%)', 90, font_obj=axis_font)
+    txt(x0 + plot_w / 2, y1 + 76, x_label, anchor='mm', font_obj=axis_font)
+    rotated_txt(
+        x0 - 74, y0 + plot_h / 2,
+        f'{reactant_label} Conversion (%)', 90,
+        font_obj=axis_font, subscript_digits=True)
     rotated_txt(x1 + 82, y0 + plot_h / 2, 'Carbon-based selectivity (%)', -90, font_obj=axis_font)
     title = metadata.get('catalyst_id') or metadata.get('source_file') or 'GC run'
     txt(x0 + plot_w / 2, 38, title, anchor='mm', font_obj=title_font)
@@ -1365,6 +1443,16 @@ def _draw_time_on_stream_plot(df, df_sel, total_C_out, C_in_flow,
         marker(x, y, color, shape, filled, size=8)
 
     legend_items = [(conv_label, 'line', (0, 0, 0))]
+    if cb_vals is not None:
+        cb_color = (160, 30, 45)
+        cb_points = [
+            (xp(x), y_right(y))
+            for x, y in zip(x_vals, cb_vals)
+            if np.isfinite(x) and np.isfinite(y)]
+        draw_polyline(cb_points, cb_color, dashed=True)
+        for x, y in cb_points:
+            marker(x, y, cb_color, 'triangle_up', True, size=7)
+        legend_items.append(('Carbon Balance', 'dashed_triangle', cb_color))
     for group in group_order:
         if group in group_values:
             legend_items.append((group, 'box', palette[group]))
@@ -1380,6 +1468,13 @@ def _draw_time_on_stream_plot(df, df_sel, total_C_out, C_in_flow,
         if kind == 'line':
             draw.line((lx, ly + 12, lx + 48, ly + 12), fill=color, width=4)
             marker(lx + 24, ly + 12, color, 'circle_open', True, size=8)
+        elif kind == 'dashed_triangle':
+            for start in range(0, 48, 16):
+                draw.line(
+                    (lx + start, ly + 12,
+                     lx + min(start + 10, 48), ly + 12),
+                    fill=color, width=3)
+            marker(lx + 24, ly + 12, color, 'triangle_up', True, size=7)
         else:
             draw.rectangle((lx, ly, lx + 34, ly + 24), fill=color)
         _draw_legend_label(draw, lx + 58, ly - 1, label, font, legend_sub_font)
@@ -1798,21 +1893,7 @@ def _draw_co_oxidation_plot(df, df_sel, total_C_out, C_in_flow,
 
 def make_plots(df, df_sel, total_C_out, C_in_flow, reactant_label,
                ss_mask, metadata, carbon_cols, species_config, output_dir):
-    style = str(metadata.get('plot_style') or 'auto').strip().lower()
-    has_time_axis = bool(_infer_run_duration_h(metadata) or _metadata_float(metadata, 'injection_interval_min'))
-    if _reaction_type(metadata=metadata) == 'co_oxidation':
-        return _draw_co_oxidation_plot(
-            df, df_sel, total_C_out, C_in_flow, reactant_label, metadata,
-            species_config, output_dir)
-    if style in {'single_axis_stacked', 'stacked_preview'}:
-        return _draw_stacked_selectivity_plot(
-            df, df_sel, total_C_out, C_in_flow, reactant_label, metadata,
-            species_config, output_dir)
-    if has_time_axis:
-        return _draw_time_on_stream_plot(
-            df, df_sel, total_C_out, C_in_flow, reactant_label, metadata,
-            species_config, output_dir)
-    return _draw_stacked_selectivity_plot(
+    return _draw_gc_plot(
         df, df_sel, total_C_out, C_in_flow, reactant_label, metadata,
         species_config, output_dir)
 
@@ -2471,7 +2552,10 @@ def _write_gc_analysis_workbook(df, df_sel, total_C_out, C_in_flow, reactant_lab
     add_setting('blank_excluded_points', metadata.get('blank_excluded_points'), 'Rows labeled blank are preserved but automatically excluded from reaction plots and summaries.')
     add_setting('registered_reaction_injections', metadata.get('registered_reaction_injections'), 'Accepted/plotted reaction point count when specified.')
     npoints_cell = add_setting('plot_reaction_points', metadata.get('plot_reaction_points'), 'Number of rows with assigned time_on_stream_h.')
-    add_setting('plot_style', metadata.get('plot_style', 'auto'), 'GUI-selected plot rendering mode.')
+    add_setting(
+        'show_carbon_balance',
+        'yes' if _metadata_bool(metadata, 'show_carbon_balance', False) else 'no',
+        'Controls whether carbon balance is overlaid on the standard GC plot.')
     catalyst_mass_mg_cell = add_setting('catalyst_mass_mg', metadata.get('catalyst_mass_mg'), 'Optional. Fill in later to calculate GHSV/WHSV from total inlet flow.')
     add_setting('nominal_ghsv', metadata.get('ghsv'), 'Optional user-entered value kept for provenance; calculated GHSV is below.')
     add_setting('space_velocity_reference_temperature_K', metadata.get('space_velocity_reference_temperature_K', _REFERENCE_TEMPERATURE_K), 'Reference temperature for calculated WHSV gas molar volume.')
@@ -2951,7 +3035,8 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
         'injection_interval_min': _metadata_float(metadata, 'injection_interval_min'),
         'rejected_initial_injections': _metadata_int(metadata, 'rejected_initial_injections', 0),
         'rejected_final_injections': _metadata_int(metadata, 'rejected_final_injections', 0),
-        'plot_style':      metadata.get('plot_style', 'auto'),
+        'show_carbon_balance': _metadata_bool(
+            metadata, 'show_carbon_balance', False),
         'catalyst_mass_mg': metadata.get('catalyst_mass_mg'),
         'total_inlet_flow_sccm': metadata.get('total_inlet_flow_sccm'),
         'feed_mass_flow_g_h': metadata.get('feed_mass_flow_g_h'),

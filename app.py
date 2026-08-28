@@ -298,7 +298,9 @@ def process_gc():
             'same_file_bypass_rows': form.get('same_file_bypass_rows', ''),
             'c5_unknown_response_factor': form.get('c5_unknown_response_factor', ''),
             'c6_unknown_response_factor': form.get('c6_unknown_response_factor', ''),
-            'plot_style':  form.get('plot_style', 'auto'),
+            'show_carbon_balance': str(
+                form.get('show_carbon_balance', '')).strip().lower()
+                in {'1', 'true', 'yes', 'on', 'checked'},
             'notes':       form.get('notes', ''),
             'source_file': f.filename,
             'bypass_file': bypass_file.filename if bypass_path else '',
