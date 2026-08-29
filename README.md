@@ -4,7 +4,7 @@ A local web app for processing heterogeneous-catalysis data. Drag-and-drop inter
 
 Supported workflows:
 
-- **GC analysis** — molar flows, conversion, carbon selectivity, and carbon balance from Shimadzu GC output.
+- **GC analysis** — molar flows, conversion, carbon selectivity, and carbon balance from Shimadzu GC output, plus a publication-plot editor with shareable JSON presets.
 - **XRD analysis** — phase identification via Materials Project and COD lookup, staged GSAS-II refinement with per-phase controls, instrument-profile import, and reusable production presets.
 - **Modular design** — drop a new reaction config (`.yaml`) into `modules/reaction_configs/` and the GC engine picks it up; add a new data type by writing a Python module under `modules/`.
 

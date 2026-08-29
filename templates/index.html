@@ -453,6 +453,85 @@
 
   .plot-img { width: 100%; border-radius: 8px; border: 1px solid var(--border); display: block; }
   .download-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .gc-plot-editor {
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--surface2);
+    overflow: hidden;
+  }
+  .gc-plot-editor summary {
+    cursor: pointer;
+    padding: 13px 15px;
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--accent);
+    user-select: none;
+  }
+  .gc-plot-editor[open] summary { border-bottom: 1px solid var(--border); }
+  .gc-plot-editor-body { display: flex; flex-direction: column; gap: 16px; padding: 16px; }
+  .gc-plot-section h4 {
+    margin: 0 0 9px;
+    color: var(--text);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+  .gc-plot-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+    gap: 10px;
+  }
+  .gc-plot-grid.align-fields .form-group > label:first-child {
+    min-height: 29px;
+    display: flex;
+    align-items: flex-end;
+  }
+  .gc-axis-range-grid {
+    display: grid;
+    grid-template-rows: repeat(2, auto);
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+  .gc-color-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+    gap: 8px;
+  }
+  .gc-color-control {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 7px 9px;
+    color: var(--text);
+    font-size: 11px;
+  }
+  .gc-color-control input[type=color] {
+    width: 32px;
+    height: 26px;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    cursor: pointer;
+  }
+  .gc-preset-row {
+    display: grid;
+    grid-template-columns: minmax(155px, 1fr) minmax(155px, 1fr) repeat(5, auto);
+    gap: 8px;
+    align-items: end;
+  }
+  .gc-plot-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .gc-plot-status { color: var(--muted); font-size: 11px; font-family: var(--mono); }
+  @media (max-width: 980px) {
+    .gc-preset-row { grid-template-columns: 1fr 1fr; }
+    .gc-axis-range-grid {
+      grid-template-rows: none;
+      grid-auto-flow: row;
+      grid-template-columns: 1fr 1fr;
+    }
+  }
 
   /* ── Coming soon overlay ── */
   .coming-soon {
@@ -746,6 +825,98 @@
             <div>
               <img class="plot-img" id="result-plot" src="" alt="Results plot">
             </div>
+
+            <details class="gc-plot-editor" id="gc-plot-editor">
+              <summary>Customize and regenerate publication plot</summary>
+              <div class="gc-plot-editor-body">
+                <div class="gc-plot-section">
+                  <h4>Labels</h4>
+                  <div class="gc-plot-grid">
+                    <div class="form-group">
+                      <label>Figure title</label>
+                      <input type="text" id="gc_plot_title">
+                    </div>
+                    <div class="form-group">
+                      <label>X-axis label</label>
+                      <input type="text" id="gc_plot_x_label" placeholder="Automatic">
+                    </div>
+                    <div class="form-group">
+                      <label>Conversion axis</label>
+                      <input type="text" id="gc_plot_conversion_label">
+                    </div>
+                    <div class="form-group">
+                      <label>Selectivity axis</label>
+                      <input type="text" id="gc_plot_selectivity_label">
+                    </div>
+                  </div>
+                </div>
+
+                <div class="gc-plot-section">
+                  <h4>Typography and bars</h4>
+                  <div class="gc-plot-grid align-fields">
+                    <div class="form-group"><label>Axis values (px)</label><input type="number" id="gc_plot_tick_font" min="9" max="36" step="1"></div>
+                    <div class="form-group"><label>Axis captions (px)</label><input type="number" id="gc_plot_axis_font" min="14" max="48" step="1"></div>
+                    <div class="form-group"><label>Title (px)</label><input type="number" id="gc_plot_title_font" min="14" max="52" step="1"></div>
+                    <div class="form-group"><label>Legend (px)</label><input type="number" id="gc_plot_legend_font" min="9" max="30" step="1"></div>
+                    <div class="form-group"><label>Bar width (% of spacing)</label><input type="number" id="gc_plot_bar_width" min="10" max="100" step="1"></div>
+                    <div class="form-group"><label>Extra bar gap (px)</label><input type="number" id="gc_plot_bar_gap" min="0" max="20" step="1"></div>
+                    <div class="form-group"><label>PNG resolution (DPI)</label><input type="number" id="gc_plot_dpi" min="72" max="600" step="1"></div>
+                    <div class="form-group">
+                      <label>Optional overlay</label>
+                      <label class="checkbox-setting" for="gc_plot_show_carbon_balance">
+                        <input type="checkbox" id="gc_plot_show_carbon_balance">
+                        <span>Show carbon balance</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="gc-plot-section">
+                  <h4>Axis ranges</h4>
+                  <div class="gc-axis-range-grid align-fields">
+                    <div class="form-group"><label>X-axis minimum</label><input type="number" id="gc_plot_x_min" step="any" placeholder="Automatic"></div>
+                    <div class="form-group"><label>X-axis maximum</label><input type="number" id="gc_plot_x_max" step="any" placeholder="Automatic"></div>
+                    <div class="form-group"><label>Conversion Y minimum</label><input type="number" id="gc_plot_conversion_min" step="any" placeholder="Automatic (0)"></div>
+                    <div class="form-group"><label>Conversion Y maximum</label><input type="number" id="gc_plot_conversion_max" step="any" placeholder="Automatic"></div>
+                    <div class="form-group"><label>Selectivity Y minimum</label><input type="number" id="gc_plot_selectivity_min" step="any" placeholder="Automatic (0)"></div>
+                    <div class="form-group"><label>Selectivity Y maximum</label><input type="number" id="gc_plot_selectivity_max" step="any" placeholder="Automatic (100)"></div>
+                  </div>
+                  <div class="form-hint" style="margin-top:8px;">Leave a limit blank to use the automatic range. Carbon balance uses the selectivity axis.</div>
+                </div>
+
+                <div class="gc-plot-section">
+                  <h4>Series colors</h4>
+                  <div class="gc-color-grid" id="gc-plot-color-grid"></div>
+                </div>
+
+                <div class="gc-plot-section">
+                  <h4>Reusable presets</h4>
+                  <div class="gc-preset-row">
+                    <div class="form-group">
+                      <label>Saved preset</label>
+                      <select id="gc_plot_preset_select"></select>
+                    </div>
+                    <div class="form-group">
+                      <label>Preset name</label>
+                      <input type="text" id="gc_plot_preset_name" placeholder="Group publication style">
+                    </div>
+                    <button class="btn-sm" type="button" onclick="loadGcPlotPreset()">Load</button>
+                    <button class="btn-sm" type="button" onclick="saveGcPlotPreset()">Save</button>
+                    <button class="btn-sm" type="button" onclick="deleteGcPlotPreset()">Delete</button>
+                    <button class="btn-sm" type="button" onclick="exportGcPlotPreset()">Export</button>
+                    <button class="btn-sm" type="button" onclick="document.getElementById('gc_plot_preset_file').click()">Import</button>
+                  </div>
+                  <input type="file" id="gc_plot_preset_file" accept=".json,application/json" hidden onchange="importGcPlotPreset(event)">
+                  <div class="form-hint" style="margin-top:8px;">Saved presets stay in this browser. Export a JSON preset to share the same labels, sizes, colors, and spacing with the group.</div>
+                </div>
+
+                <div class="gc-plot-actions">
+                  <button class="btn-sm green" id="gc-regenerate-plot" type="button" onclick="regenerateGcPlot()">Regenerate plot</button>
+                  <button class="btn-sm" type="button" onclick="resetGcPlotSettings()">Reset defaults</button>
+                  <span class="gc-plot-status" id="gc-plot-status"></span>
+                </div>
+              </div>
+            </details>
 
             <div class="download-row" id="download-row"></div>
           </div>
@@ -1143,6 +1314,9 @@
 let selectedFile   = null;
 let selectedBypassFile = null;
 let selectedConfig = null;
+let currentGcResult = null;
+let currentGcPlotDefaults = null;
+const GC_PLOT_PRESET_KEY = 'catalysisToolkit.gcPlotPresets.v1';
 
 // ── Init: select first config ─────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -1322,6 +1496,8 @@ async function processGC() {
 }
 
 function showResults(data) {
+  currentGcResult = data;
+  currentGcPlotDefaults = JSON.parse(JSON.stringify(data.plot_settings || {}));
   const panel = document.getElementById('results-panel');
   panel.classList.add('visible');
 
@@ -1331,7 +1507,7 @@ function showResults(data) {
     : '<span class="pill yellow">Direct Ar norm.</span>';
 
   const cb = data.carbon_balance;
-  if (cb !== undefined) {
+  if (cb != null) {
     const ok = cb >= 90 && cb <= 110;
     document.getElementById('cb-pill').innerHTML =
       `<span class="pill ${ok ? 'green' : 'yellow'}">C balance: ${cb}%</span>`;
@@ -1346,7 +1522,7 @@ function showResults(data) {
     { label: 'Rxn inj.',    val: data.n_reaction,     unit: '' },
     { label: 'SS inj.',     val: data.n_ss,            unit: '' },
   ];
-  if (data.conversion !== undefined)
+  if (data.conversion != null)
     stats.push({ label: 'Conversion', val: data.conversion, unit: `± ${data.conversion_std}%` });
   if (data.calculated_ghsv_ml_g_hr != null)
     stats.push({ label: 'GHSV', val: Number(data.calculated_ghsv_ml_g_hr).toFixed(0), unit: 'mL/g/hr' });
@@ -1377,17 +1553,307 @@ function showResults(data) {
   if (data.plot_b64) {
     document.getElementById('result-plot').src = `data:image/png;base64,${data.plot_b64}`;
   }
+  initializeGcPlotEditor(data);
 
-  // Download buttons
+  renderGcDownloadButtons(data);
+
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderGcDownloadButtons(data) {
   const dlRow = document.getElementById('download-row');
+  const plotLabel = data.plot_is_custom ? 'Custom Plot PNG' : 'Plot PNG';
   dlRow.innerHTML = `
     <button class="btn-sm green" onclick="openFolder('${escPath(data.output_dir)}')">📁 Open Output Folder</button>
-    <button class="btn-sm" onclick="downloadFile('${escPath(data.plot_path)}')">Plot PNG</button>
+    <button class="btn-sm" onclick="downloadFile('${escPath(data.plot_path)}')">${plotLabel}</button>
     <button class="btn-sm" onclick="downloadFile('${escPath(data.summary_path)}')">Analysis Workbook</button>
     <button class="btn-sm" onclick="downloadFile('${escPath(data.flows_path)}')">⬇ Flow Data CSV</button>
   `;
+}
 
-  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+function initializeGcPlotEditor(data) {
+  const editor = document.getElementById('gc-plot-editor');
+  editor.style.display = data.plot_token ? '' : 'none';
+  if (!data.plot_token || !data.plot_settings) return;
+  applyGcPlotSettings(data.plot_settings);
+  refreshGcPlotPresetSelect();
+  setGcPlotStatus('Ready to regenerate without reprocessing the data.');
+}
+
+function setGcPlotStatus(message, isError=false) {
+  const el = document.getElementById('gc-plot-status');
+  el.textContent = message || '';
+  el.style.color = isError ? 'var(--danger)' : 'var(--muted)';
+}
+
+function renderGcPlotColors(settings) {
+  const grid = document.getElementById('gc-plot-color-grid');
+  grid.innerHTML = '';
+  const colors = [
+    ['Conversion', 'conversion', settings.conversion_color],
+    ['Carbon balance', 'carbon_balance', settings.carbon_balance_color],
+    ...Object.entries(settings.species_colors || {}).map(
+      ([label, color]) => [label, `species:${label}`, color]),
+  ];
+  colors.forEach(([label, key, color]) => {
+    const control = document.createElement('label');
+    control.className = 'gc-color-control';
+    const input = document.createElement('input');
+    input.type = 'color';
+    input.value = color || '#000000';
+    input.dataset.gcPlotColor = key;
+    const text = document.createElement('span');
+    text.textContent = label;
+    control.append(input, text);
+    grid.appendChild(control);
+  });
+}
+
+function applyGcPlotSettings(settings) {
+  if (!settings) return;
+  const values = {
+    gc_plot_title: settings.title,
+    gc_plot_x_label: settings.x_axis_label,
+    gc_plot_conversion_label: settings.conversion_axis_label,
+    gc_plot_selectivity_label: settings.selectivity_axis_label,
+    gc_plot_tick_font: settings.tick_font_size,
+    gc_plot_axis_font: settings.axis_font_size,
+    gc_plot_title_font: settings.title_font_size,
+    gc_plot_legend_font: settings.legend_font_size,
+    gc_plot_bar_width: settings.bar_width_percent,
+    gc_plot_bar_gap: settings.bar_gap_px,
+    gc_plot_dpi: settings.png_dpi,
+    gc_plot_x_min: settings.x_axis_min,
+    gc_plot_x_max: settings.x_axis_max,
+    gc_plot_conversion_min: settings.conversion_y_min,
+    gc_plot_conversion_max: settings.conversion_y_max,
+    gc_plot_selectivity_min: settings.selectivity_y_min,
+    gc_plot_selectivity_max: settings.selectivity_y_max,
+  };
+  Object.entries(values).forEach(([id, value]) => {
+    document.getElementById(id).value = value ?? '';
+  });
+  document.getElementById('gc_plot_show_carbon_balance').checked =
+    Boolean(settings.show_carbon_balance);
+  renderGcPlotColors(settings);
+}
+
+function optionalGcPlotNumber(id) {
+  const text = document.getElementById(id).value.trim();
+  if (text === '') return null;
+  const value = Number(text);
+  return Number.isFinite(value) ? value : null;
+}
+
+function collectGcPlotSettings() {
+  const speciesColors = {};
+  let conversionColor = '#000000';
+  let carbonBalanceColor = '#A01E2D';
+  document.querySelectorAll('[data-gc-plot-color]').forEach(input => {
+    const key = input.dataset.gcPlotColor;
+    if (key === 'conversion') conversionColor = input.value;
+    else if (key === 'carbon_balance') carbonBalanceColor = input.value;
+    else if (key.startsWith('species:')) speciesColors[key.slice(8)] = input.value;
+  });
+  return {
+    title: document.getElementById('gc_plot_title').value,
+    x_axis_label: document.getElementById('gc_plot_x_label').value,
+    conversion_axis_label: document.getElementById('gc_plot_conversion_label').value,
+    selectivity_axis_label: document.getElementById('gc_plot_selectivity_label').value,
+    tick_font_size: Number(document.getElementById('gc_plot_tick_font').value),
+    axis_font_size: Number(document.getElementById('gc_plot_axis_font').value),
+    title_font_size: Number(document.getElementById('gc_plot_title_font').value),
+    legend_font_size: Number(document.getElementById('gc_plot_legend_font').value),
+    bar_width_percent: Number(document.getElementById('gc_plot_bar_width').value),
+    bar_gap_px: Number(document.getElementById('gc_plot_bar_gap').value),
+    png_dpi: Number(document.getElementById('gc_plot_dpi').value),
+    x_axis_min: optionalGcPlotNumber('gc_plot_x_min'),
+    x_axis_max: optionalGcPlotNumber('gc_plot_x_max'),
+    conversion_y_min: optionalGcPlotNumber('gc_plot_conversion_min'),
+    conversion_y_max: optionalGcPlotNumber('gc_plot_conversion_max'),
+    selectivity_y_min: optionalGcPlotNumber('gc_plot_selectivity_min'),
+    selectivity_y_max: optionalGcPlotNumber('gc_plot_selectivity_max'),
+    show_carbon_balance: document.getElementById('gc_plot_show_carbon_balance').checked,
+    conversion_color: conversionColor,
+    carbon_balance_color: carbonBalanceColor,
+    species_colors: speciesColors,
+  };
+}
+
+function gcPlotRangeError(settings) {
+  const ranges = [
+    ['X-axis', settings.x_axis_min, settings.x_axis_max],
+    ['Conversion Y-axis', settings.conversion_y_min, settings.conversion_y_max],
+    ['Selectivity Y-axis', settings.selectivity_y_min, settings.selectivity_y_max],
+  ];
+  for (const [label, minimum, maximum] of ranges) {
+    if (minimum != null && maximum != null && maximum <= minimum) {
+      return `${label} maximum must be greater than its minimum.`;
+    }
+  }
+  return '';
+}
+
+async function regenerateGcPlot() {
+  if (!currentGcResult?.plot_token) {
+    setGcPlotStatus('Process a GC file before regenerating its plot.', true);
+    return;
+  }
+  const settings = collectGcPlotSettings();
+  const rangeError = gcPlotRangeError(settings);
+  if (rangeError) {
+    setGcPlotStatus(rangeError, true);
+    return;
+  }
+  const button = document.getElementById('gc-regenerate-plot');
+  button.disabled = true;
+  setGcPlotStatus('Rendering publication PNG...');
+  try {
+    const response = await fetch('/api/regenerate_gc_plot', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        plot_token: currentGcResult.plot_token,
+        settings,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || data.error) throw new Error(data.error || 'Plot regeneration failed.');
+    document.getElementById('result-plot').src = `data:image/png;base64,${data.plot_b64}`;
+    currentGcResult.plot_path = data.plot_path;
+    currentGcResult.plot_is_custom = true;
+    applyGcPlotSettings(data.plot_settings);
+    renderGcDownloadButtons(currentGcResult);
+    setGcPlotStatus('Plot regenerated. The PNG download now uses these settings.');
+  } catch (error) {
+    setGcPlotStatus(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function resetGcPlotSettings() {
+  if (currentGcPlotDefaults) {
+    applyGcPlotSettings(JSON.parse(JSON.stringify(currentGcPlotDefaults)));
+    setGcPlotStatus('Default plot settings restored. Click Regenerate plot to apply them.');
+  }
+}
+
+function readGcPlotPresets() {
+  try {
+    const value = JSON.parse(localStorage.getItem(GC_PLOT_PRESET_KEY) || '{}');
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function writeGcPlotPresets(presets) {
+  localStorage.setItem(GC_PLOT_PRESET_KEY, JSON.stringify(presets));
+}
+
+function refreshGcPlotPresetSelect(selectedName='') {
+  const select = document.getElementById('gc_plot_preset_select');
+  select.innerHTML = '';
+  const empty = document.createElement('option');
+  empty.value = '';
+  empty.textContent = 'Choose a preset...';
+  select.appendChild(empty);
+  Object.keys(readGcPlotPresets()).sort((a, b) => a.localeCompare(b)).forEach(name => {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = name;
+    select.appendChild(option);
+  });
+  select.value = selectedName;
+}
+
+function saveGcPlotPreset() {
+  const name = document.getElementById('gc_plot_preset_name').value.trim();
+  if (!name) {
+    setGcPlotStatus('Enter a preset name before saving.', true);
+    return;
+  }
+  try {
+    const presets = readGcPlotPresets();
+    presets[name] = collectGcPlotSettings();
+    writeGcPlotPresets(presets);
+    refreshGcPlotPresetSelect(name);
+    setGcPlotStatus(`Saved preset “${name}” in this browser.`);
+  } catch (error) {
+    setGcPlotStatus(`Could not save preset: ${error.message}`, true);
+  }
+}
+
+function loadGcPlotPreset() {
+  const name = document.getElementById('gc_plot_preset_select').value;
+  const settings = readGcPlotPresets()[name];
+  if (!settings) {
+    setGcPlotStatus('Choose a saved preset to load.', true);
+    return;
+  }
+  document.getElementById('gc_plot_preset_name').value = name;
+  applyGcPlotSettings(settings);
+  setGcPlotStatus(`Loaded preset “${name}”. Click Regenerate plot to apply it.`);
+}
+
+function deleteGcPlotPreset() {
+  const name = document.getElementById('gc_plot_preset_select').value;
+  if (!name) {
+    setGcPlotStatus('Choose a saved preset to delete.', true);
+    return;
+  }
+  if (!window.confirm(`Delete plot preset “${name}”?`)) return;
+  const presets = readGcPlotPresets();
+  delete presets[name];
+  writeGcPlotPresets(presets);
+  refreshGcPlotPresetSelect();
+  setGcPlotStatus(`Deleted preset “${name}”.`);
+}
+
+function exportGcPlotPreset() {
+  const selectedName = document.getElementById('gc_plot_preset_select').value;
+  const presets = readGcPlotPresets();
+  const name = selectedName || document.getElementById('gc_plot_preset_name').value.trim() || 'GC plot preset';
+  const settings = selectedName && presets[selectedName]
+    ? presets[selectedName] : collectGcPlotSettings();
+  const payload = {
+    format: 'catalysis-toolkit.gc-plot-preset',
+    version: 1,
+    name,
+    settings,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type: 'application/json'});
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `${name.replace(/[^A-Za-z0-9_.-]+/g, '_') || 'gc_plot_preset'}.json`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+  setGcPlotStatus(`Exported preset “${name}”.`);
+}
+
+async function importGcPlotPreset(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  try {
+    const payload = JSON.parse(await file.text());
+    const settings = payload?.settings || payload;
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+      throw new Error('The file does not contain plot settings.');
+    }
+    const name = String(payload?.name || file.name.replace(/\.json$/i, '') || 'Imported preset').trim();
+    const presets = readGcPlotPresets();
+    presets[name] = settings;
+    writeGcPlotPresets(presets);
+    document.getElementById('gc_plot_preset_name').value = name;
+    refreshGcPlotPresetSelect(name);
+    applyGcPlotSettings(settings);
+    setGcPlotStatus(`Imported preset “${name}”. Click Regenerate plot to apply it.`);
+  } catch (error) {
+    setGcPlotStatus(`Could not import preset: ${error.message}`, true);
+  } finally {
+    event.target.value = '';
+  }
 }
 
 function openFolder(path) {

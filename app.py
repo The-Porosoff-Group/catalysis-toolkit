@@ -4,7 +4,7 @@ Local web server. Run with:  python app.py
 Then open:  http://localhost:5000
 """
 
-import os, sys, re, json, base64, webbrowser, traceback
+import os, sys, re, json, base64, webbrowser, traceback, secrets
 
 # Force unbuffered/line-buffered stdout so GSAS-II refinement progress
 # appears in terminal immediately.  os.environ alone doesn't work because
@@ -16,7 +16,8 @@ try:
 except AttributeError:
     pass  # Python < 3.7
 from datetime import datetime
-from threading import Timer
+from collections import OrderedDict
+from threading import Lock, Timer
 
 # ── Dependency check ─────────────────────────────────────────────────────────
 _REQUIRED = {
@@ -180,6 +181,28 @@ from xrd.presentation import export_file_prefix
 # Initialise cache with config settings
 _cache = get_cache(cache_dir=CACHE_DIR, max_size_mb=CACHE_MAX_MB)
 
+_GC_PLOT_CACHE_MAX = 12
+_gc_plot_cache = OrderedDict()
+_gc_plot_cache_lock = Lock()
+
+
+def _store_gc_plot_context(context):
+    token = secrets.token_urlsafe(24)
+    with _gc_plot_cache_lock:
+        _gc_plot_cache[token] = context
+        _gc_plot_cache.move_to_end(token)
+        while len(_gc_plot_cache) > _GC_PLOT_CACHE_MAX:
+            _gc_plot_cache.popitem(last=False)
+    return token
+
+
+def _get_gc_plot_context(token):
+    with _gc_plot_cache_lock:
+        context = _gc_plot_cache.get(token)
+        if context is not None:
+            _gc_plot_cache.move_to_end(token)
+        return context
+
 # ── Preload pymatgen ──────────────────────────────────────────────────────────
 _pymatgen_ready = False
 if CONFIG['performance'].get('preload_pymatgen', True):
@@ -332,20 +355,72 @@ def process_gc():
         metadata['output_date'] = ts[:8]
         metadata['output_prefix'] = f'{ts}_{safe_id}'
         output_dir = os.path.join(output_base, f'{safe_id}_{ts}')
+        plot_context = {}
         result = gc_processor.run(
             filepath=upload_path, output_dir=output_dir,
             reaction_config=reaction_config, metadata=metadata,
             inlet_flows=inlet_flows, ss_start=ss_start, ss_end=ss_end,
-            bypass_filepath=bypass_path)
+            bypass_filepath=bypass_path, plot_context=plot_context)
         with open(result['plot_path'], 'rb') as img:
             plot_b64 = base64.b64encode(img.read()).decode('utf-8')
         clean = {k: v for k, v in result.items() if k != 'plot_path'}
         clean['plot_path'] = result['plot_path']
         clean['plot_b64'] = plot_b64
+        clean['plot_token'] = _store_gc_plot_context(plot_context)
+        clean['plot_settings'] = gc_processor.default_gc_plot_settings(
+            plot_context['reactant_label'], plot_context['metadata'])
         return jsonify(clean)
     except Exception as e:
         import traceback
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+@app.route('/api/regenerate_gc_plot', methods=['POST'])
+def regenerate_gc_plot():
+    try:
+        payload = request.get_json(silent=True) or {}
+        token = str(payload.get('plot_token') or '').strip()
+        context = _get_gc_plot_context(token)
+        if context is None:
+            return jsonify({
+                'error': (
+                    'This plot editing session has expired. Process the GC '
+                    'file again to regenerate its plot.'),
+            }), 410
+
+        requested_settings = payload.get('settings')
+        if not isinstance(requested_settings, dict):
+            return jsonify({'error': 'Plot settings must be a JSON object.'}), 400
+        try:
+            gc_processor.validate_gc_plot_axis_ranges(requested_settings)
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        settings = gc_processor.normalize_gc_plot_settings(
+            requested_settings, context['reactant_label'], context['metadata'])
+
+        metadata = dict(context['metadata'])
+        metadata['plot_settings'] = settings
+        base_prefix = str(metadata.get('output_prefix') or 'GC').strip()
+        if not base_prefix.endswith('_custom'):
+            base_prefix += '_custom'
+        metadata['output_prefix'] = base_prefix
+
+        plot_path = gc_processor.make_plots(
+            context['df'], context['df_sel'], context['total_C_out'],
+            context['C_in_flow'], context['reactant_label'], None,
+            metadata, None, context['species_config'], context['output_dir'])
+        with open(plot_path, 'rb') as image:
+            plot_b64 = base64.b64encode(image.read()).decode('utf-8')
+        return jsonify({
+            'plot_path': plot_path,
+            'plot_b64': plot_b64,
+            'plot_settings': settings,
+        })
+    except Exception as exc:
+        return jsonify({
+            'error': str(exc),
+            'trace': traceback.format_exc(),
+        }), 500
 
 @app.route('/api/download')
 def download_file():

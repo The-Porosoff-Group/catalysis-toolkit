@@ -58,6 +58,37 @@ _DEFAULT_SELECTIVITY_GROUP_ORDER = [
 ]
 
 
+_GC_PLOT_SERIES_COLORS = {
+    'CO': '#3282D2',
+    'CH4': '#4BAF46',
+    'C2+': '#925FB2',
+    'C2-C4 Paraffins': '#DC2626',
+    'C2-C4 Olefins': '#6958CD',
+    'C5+': '#F7CD40',
+    'Methanol': '#22B8C2',
+    'CO2': '#D8D8D8',
+    'Other C products': '#A5A5A5',
+}
+
+
+_GC_PLOT_NUMERIC_LIMITS = {
+    'tick_font_size': (9, 36),
+    'axis_font_size': (14, 48),
+    'title_font_size': (14, 52),
+    'legend_font_size': (9, 30),
+    'bar_width_percent': (10, 100),
+    'bar_gap_px': (0, 20),
+    'png_dpi': (72, 600),
+}
+
+
+_GC_PLOT_AXIS_RANGE_PAIRS = (
+    ('x_axis_min', 'x_axis_max', 'X-axis'),
+    ('conversion_y_min', 'conversion_y_max', 'Conversion Y-axis'),
+    ('selectivity_y_min', 'selectivity_y_max', 'Selectivity Y-axis'),
+)
+
+
 _REFERENCE_TEMPERATURE_K = 298.0
 _REFERENCE_PRESSURE_ATM = 1.0
 _IDEAL_GAS_R_L_ATM_MOL_K = 0.082057366080960
@@ -1173,6 +1204,147 @@ def _nice_upper(value, floor=5.0):
     return float(10 * exp)
 
 
+def _normalize_hex_color(value, default):
+    text = str(value or '').strip()
+    if re.fullmatch(r'#[0-9a-fA-F]{6}', text):
+        return text.upper()
+    if re.fullmatch(r'#[0-9a-fA-F]{3}', text):
+        return ('#' + ''.join(ch * 2 for ch in text[1:])).upper()
+    return default
+
+
+def _hex_to_rgb(value):
+    text = str(value).lstrip('#')
+    return tuple(int(text[idx:idx + 2], 16) for idx in (0, 2, 4))
+
+
+def default_gc_plot_settings(reactant_label, metadata=None):
+    """Return portable defaults for the publication-style GC plot."""
+    metadata = metadata or {}
+    title = (
+        metadata.get('catalyst_id') or metadata.get('source_file') or 'GC run')
+    return {
+        'title': str(title),
+        'x_axis_label': '',
+        'conversion_axis_label': f'{reactant_label} Conversion (%)',
+        'selectivity_axis_label': 'Carbon-based selectivity (%)',
+        'tick_font_size': 16,
+        'axis_font_size': 28,
+        'title_font_size': 34,
+        'legend_font_size': 16,
+        'bar_width_percent': 82,
+        'bar_gap_px': 0,
+        'png_dpi': 300,
+        'x_axis_min': None,
+        'x_axis_max': None,
+        'conversion_y_min': None,
+        'conversion_y_max': None,
+        'selectivity_y_min': None,
+        'selectivity_y_max': None,
+        'show_carbon_balance': _metadata_bool(
+            metadata, 'show_carbon_balance', False),
+        'conversion_color': '#000000',
+        'carbon_balance_color': '#A01E2D',
+        'species_colors': dict(_GC_PLOT_SERIES_COLORS),
+    }
+
+
+def normalize_gc_plot_settings(settings, reactant_label, metadata=None):
+    """Validate user-facing plot settings and fill any omitted defaults."""
+    defaults = default_gc_plot_settings(reactant_label, metadata)
+    if not isinstance(settings, dict):
+        return defaults
+
+    normalized = dict(defaults)
+    text_fields = {
+        'title': 160,
+        'x_axis_label': 120,
+        'conversion_axis_label': 120,
+        'selectivity_axis_label': 120,
+    }
+    for key, limit in text_fields.items():
+        if key not in settings:
+            continue
+        text = str(settings.get(key) or '').strip()[:limit]
+        if key == 'x_axis_label':
+            normalized[key] = text
+        elif text:
+            normalized[key] = text
+
+    for key, (lower, upper) in _GC_PLOT_NUMERIC_LIMITS.items():
+        if key not in settings:
+            continue
+        try:
+            value = float(settings[key])
+        except (TypeError, ValueError):
+            continue
+        if not np.isfinite(value):
+            continue
+        normalized[key] = int(round(max(lower, min(upper, value))))
+
+    for minimum_key, maximum_key, _ in _GC_PLOT_AXIS_RANGE_PAIRS:
+        for key in (minimum_key, maximum_key):
+            raw = settings.get(key)
+            if raw in (None, ''):
+                normalized[key] = None
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                normalized[key] = None
+                continue
+            normalized[key] = value if np.isfinite(value) else None
+
+        minimum = normalized[minimum_key]
+        maximum = normalized[maximum_key]
+        if minimum is not None and maximum is not None and maximum <= minimum:
+            normalized[minimum_key] = None
+            normalized[maximum_key] = None
+
+    normalized['show_carbon_balance'] = _metadata_bool(
+        settings, 'show_carbon_balance', defaults['show_carbon_balance'])
+    normalized['conversion_color'] = _normalize_hex_color(
+        settings.get('conversion_color'), defaults['conversion_color'])
+    normalized['carbon_balance_color'] = _normalize_hex_color(
+        settings.get('carbon_balance_color'),
+        defaults['carbon_balance_color'])
+
+    requested_colors = settings.get('species_colors')
+    if not isinstance(requested_colors, dict):
+        requested_colors = {}
+    normalized['species_colors'] = {
+        label: _normalize_hex_color(
+            requested_colors.get(label), default_color)
+        for label, default_color in defaults['species_colors'].items()
+    }
+    return normalized
+
+
+def validate_gc_plot_axis_ranges(settings):
+    """Raise a user-facing error when a requested axis range is invalid."""
+    if not isinstance(settings, dict):
+        return
+
+    for minimum_key, maximum_key, label in _GC_PLOT_AXIS_RANGE_PAIRS:
+        values = []
+        for key in (minimum_key, maximum_key):
+            raw = settings.get(key)
+            if raw in (None, ''):
+                values.append(None)
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                raise ValueError(f'{label} limits must be numbers.')
+            if not np.isfinite(value):
+                raise ValueError(f'{label} limits must be finite numbers.')
+            values.append(value)
+        minimum, maximum = values
+        if minimum is not None and maximum is not None and maximum <= minimum:
+            raise ValueError(
+                f'{label} maximum must be greater than its minimum.')
+
+
 def _legend_label_width(draw, label, font, sub_font):
     width = 0
     for ch in str(label):
@@ -1199,9 +1371,20 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
     from PIL import Image, ImageDraw, ImageFont
 
     rxn = _analysis_reaction_rows(df)
+    plot_settings = normalize_gc_plot_settings(
+        metadata.get('plot_settings'), reactant_label, metadata)
+    tick_font_size = plot_settings['tick_font_size']
+    axis_font_size = plot_settings['axis_font_size']
+    title_font_size = plot_settings['title_font_size']
+    legend_font_size = plot_settings['legend_font_size']
 
     width, height = 1250, 900
-    margin = {'l': 110, 'r': 108, 't': 88, 'b': 175}
+    margin = {
+        'l': max(110, int(axis_font_size * 2.5 + 36)),
+        'r': max(108, int(axis_font_size * 2.5 + 34)),
+        't': max(88, title_font_size + 50),
+        'b': max(175, axis_font_size + tick_font_size + 132),
+    }
     x0, y0 = margin['l'], margin['t']
     x1, y1 = width - margin['r'], height - margin['b']
     plot_w, plot_h = x1 - x0, y1 - y0
@@ -1219,12 +1402,12 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
                 continue
         return ImageFont.load_default()
 
-    font = load_font(16)
-    small_font = load_font(14)
-    legend_sub_font = load_font(11)
-    axis_font = load_font(28)
-    axis_sub_font = load_font(18)
-    title_font = load_font(34)
+    font = load_font(tick_font_size)
+    legend_font = load_font(legend_font_size)
+    legend_sub_font = load_font(max(7, int(round(legend_font_size * 0.68))))
+    axis_font = load_font(axis_font_size)
+    axis_sub_font = load_font(max(9, int(round(axis_font_size * 0.65))))
+    title_font = load_font(title_font_size)
 
     def txt(x, y, text, fill=(0, 0, 0), anchor=None, font_obj=None):
         kwargs = {'fill': fill, 'font': font_obj or font}
@@ -1293,59 +1476,94 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
             pad = (x_max - x_min) * 0.02
             x_min -= pad
             x_max += pad
+    x_label = plot_settings.get('x_axis_label') or x_label
+    requested_x_min = plot_settings['x_axis_min']
+    requested_x_max = plot_settings['x_axis_max']
+    if requested_x_min is not None:
+        x_min = requested_x_min
+    if requested_x_max is not None:
+        x_max = requested_x_max
+    if x_max <= x_min:
+        if requested_x_max is not None and requested_x_min is None:
+            x_min = x_max - 1.0
+        else:
+            x_max = x_min + 1.0
 
     conv_vals = pd.to_numeric(rxn.get('conversion', pd.Series(index=rxn.index, dtype=float)),
                               errors='coerce').to_numpy() * 100.0
     conv_upper = _nice_upper(np.nanmax(conv_vals) if np.isfinite(conv_vals).any() else 5.0, floor=5.0)
-    show_carbon_balance = _metadata_bool(
-        metadata, 'show_carbon_balance', False)
+    conv_lower = 0.0
+    requested_conv_min = plot_settings['conversion_y_min']
+    requested_conv_max = plot_settings['conversion_y_max']
+    if requested_conv_min is not None:
+        conv_lower = requested_conv_min
+    if requested_conv_max is not None:
+        conv_upper = requested_conv_max
+    if conv_upper <= conv_lower:
+        if requested_conv_max is not None and requested_conv_min is None:
+            conv_lower = conv_upper - 1.0
+        else:
+            conv_upper = conv_lower + 1.0
+    show_carbon_balance = plot_settings['show_carbon_balance']
     cb_vals = None
+    right_lower = 0.0
     right_upper = 100.0
     if show_carbon_balance and C_in_flow > 0:
         cb_vals = (
             pd.to_numeric(total_C_out.loc[rxn.index], errors='coerce')
             .to_numpy(dtype=float) / C_in_flow * 100.0)
         finite_cb = cb_vals[np.isfinite(cb_vals)]
-        if finite_cb.size and float(np.nanmax(finite_cb)) > right_upper:
+        if (plot_settings['selectivity_y_max'] is None and finite_cb.size
+                and float(np.nanmax(finite_cb)) > right_upper):
             right_upper = float(
                 np.ceil(float(np.nanmax(finite_cb)) / 5.0) * 5.0)
+    requested_right_min = plot_settings['selectivity_y_min']
+    requested_right_max = plot_settings['selectivity_y_max']
+    if requested_right_min is not None:
+        right_lower = requested_right_min
+    if requested_right_max is not None:
+        right_upper = requested_right_max
+    if right_upper <= right_lower:
+        if requested_right_max is not None and requested_right_min is None:
+            right_lower = right_upper - 1.0
+        else:
+            right_upper = right_lower + 1.0
 
     def xp(v):
         return x0 + (float(v) - x_min) / (x_max - x_min) * plot_w
 
     def y_left(v):
-        v = max(0.0, min(float(conv_upper), float(v)))
-        return y1 - (v / conv_upper) * plot_h
+        v = max(conv_lower, min(float(conv_upper), float(v)))
+        return y1 - ((v - conv_lower) / (conv_upper - conv_lower)) * plot_h
 
     def y_right(v):
-        v = max(0.0, min(right_upper, float(v)))
-        return y1 - (v / right_upper) * plot_h
+        v = max(right_lower, min(right_upper, float(v)))
+        return y1 - ((v - right_lower) / (right_upper - right_lower)) * plot_h
 
     # Axes and grid.
     draw.line((x0, y1, x1, y1), fill=(0, 0, 0), width=3)
     draw.line((x0, y0, x0, y1), fill=(0, 0, 0), width=3)
     draw.line((x1, y0, x1, y1), fill=(0, 0, 0), width=3)
 
-    for v in np.linspace(0, conv_upper, 6):
+    for v in np.linspace(conv_lower, conv_upper, 6):
         y = y_left(v)
         draw.line((x0 - 9, y, x0, y), fill=(0, 0, 0), width=2)
         txt(x0 - 16, y - 9, f'{v:g}', anchor='ra', font_obj=font)
-    right_ticks = list(range(0, 101, 20))
-    if right_upper > 100.0:
-        right_ticks.append(right_upper)
-    for v in right_ticks:
+    for v in np.linspace(right_lower, right_upper, 6):
         y = y_right(v)
         draw.line((x1, y, x1 + 9, y), fill=(0, 0, 0), width=2)
         txt(x1 + 16, y - 9, f'{v:g}', font_obj=font)
 
     if has_time_values:
-        if x_max <= 14:
+        x_span = x_max - x_min
+        if x_span <= 14:
             step = 2.0
-        elif x_max <= 28:
+        elif x_span <= 28:
             step = 4.0
         else:
-            step = max(1.0, round(x_max / 6.0))
-        x_ticks = np.arange(0, x_max + step * 0.5, step)
+            step = max(1.0, round(x_span / 6.0))
+        tick_start = np.ceil(x_min / step) * step
+        x_ticks = np.arange(tick_start, x_max + step * 0.5, step)
     else:
         tick_count = min(7, len(x_vals))
         tick_idx = (
@@ -1362,27 +1580,25 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
         label = f'{v:.0f}' if abs(v - round(v)) < 0.05 else f'{v:.1f}'
         txt(x, y1 + 18, label, anchor='ma', font_obj=font)
 
-    txt(x0 + plot_w / 2, y1 + 76, x_label, anchor='mm', font_obj=axis_font)
+    x_axis_y = y1 + max(76, tick_font_size + axis_font_size + 30)
+    txt(x0 + plot_w / 2, x_axis_y, x_label,
+        anchor='mm', font_obj=axis_font)
     rotated_txt(
-        x0 - 74, y0 + plot_h / 2,
-        f'{reactant_label} Conversion (%)', 90,
+        x0 - max(74, axis_font_size * 2.25), y0 + plot_h / 2,
+        plot_settings['conversion_axis_label'], 90,
         font_obj=axis_font, subscript_digits=True)
-    rotated_txt(x1 + 82, y0 + plot_h / 2, 'Carbon-based selectivity (%)', -90, font_obj=axis_font)
-    title = metadata.get('catalyst_id') or metadata.get('source_file') or 'GC run'
+    rotated_txt(
+        x1 + max(82, axis_font_size * 2.35), y0 + plot_h / 2,
+        plot_settings['selectivity_axis_label'], -90,
+        font_obj=axis_font, subscript_digits=True)
+    title = plot_settings['title']
     txt(x0 + plot_w / 2, 38, title, anchor='mm', font_obj=title_font)
 
     groups = _selectivity_groups(df_sel, species_config, metadata)
     group_order = _selectivity_group_order(metadata)
     palette = {
-        'CO': (50, 130, 210),
-        'CH4': (75, 175, 70),
-        'C2+': (146, 95, 178),
-        'C2-C4 Paraffins': (220, 38, 38),
-        'C2-C4 Olefins': (105, 88, 205),
-        'C5+': (247, 205, 64),
-        'Methanol': (34, 184, 194),
-        'CO2': (216, 216, 216),
-        'Other C products': (165, 165, 165),
+        label: _hex_to_rgb(color)
+        for label, color in plot_settings['species_colors'].items()
     }
     group_values = {}
     for group in group_order:
@@ -1397,9 +1613,15 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
     if len(finite_x) > 1:
         diffs = np.diff(np.sort(finite_x))
         spacing = float(np.median(diffs[diffs > 0])) if np.any(diffs > 0) else 1.0
-        bar_px = max(7, min(32, int(abs(xp(x_min + spacing) - xp(x_min)) * 0.82)))
+        slot_px = abs(xp(x_min + spacing) - xp(x_min))
+        bar_px = int(
+            slot_px * plot_settings['bar_width_percent'] / 100.0
+            - plot_settings['bar_gap_px'])
+        bar_px = max(3, min(64, bar_px))
     else:
-        bar_px = 20
+        bar_px = max(
+            3, int(24 * plot_settings['bar_width_percent'] / 82.0)
+            - plot_settings['bar_gap_px'])
 
     for i, xv in enumerate(x_vals):
         if not np.isfinite(xv):
@@ -1460,14 +1682,15 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
 
     conv_label = f'{reactant_label} Conversion'
     conv_points = [(xp(x), y_left(y)) for x, y in zip(x_vals, conv_vals) if np.isfinite(x) and pd.notna(y)]
-    color, shape, filled = (0, 0, 0), 'circle_open', True
+    color = _hex_to_rgb(plot_settings['conversion_color'])
+    shape, filled = 'circle_open', True
     draw_polyline(conv_points, color, dashed=False)
     for x, y in conv_points:
         marker(x, y, color, shape, filled, size=8)
 
-    legend_items = [(conv_label, 'line', (0, 0, 0))]
+    legend_items = [(conv_label, 'line', color)]
     if cb_vals is not None:
-        cb_color = (160, 30, 45)
+        cb_color = _hex_to_rgb(plot_settings['carbon_balance_color'])
         cb_points = [
             (xp(x), y_right(y))
             for x, y in zip(x_vals, cb_vals)
@@ -1479,9 +1702,9 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
     for group in group_order:
         if group in group_values:
             legend_items.append((group, 'box', palette[group]))
-    legend_y = height - 72
+    legend_y = y1 + max(105, tick_font_size + axis_font_size + 61)
     legend_x = x0 + 80
-    row_gap = 48
+    row_gap = max(44, legend_font_size + 22)
     col_gap = 255
     for i, (label, kind, color) in enumerate(legend_items):
         col = i % 4
@@ -1500,10 +1723,13 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
             marker(lx + 24, ly + 12, color, 'triangle_up', True, size=7)
         else:
             draw.rectangle((lx, ly, lx + 34, ly + 24), fill=color)
-        _draw_legend_label(draw, lx + 58, ly - 1, label, font, legend_sub_font)
+        _draw_legend_label(
+            draw, lx + 58, ly - 1, label,
+            legend_font, legend_sub_font)
 
     path = os.path.join(output_dir, f'{_output_file_prefix(metadata)}_gc_plot.png')
-    img.save(path)
+    dpi = plot_settings['png_dpi']
+    img.save(path, dpi=(dpi, dpi))
     return path
 
 
@@ -2896,7 +3122,7 @@ def save_outputs(df, df_sel, total_C_out, C_in_flow,
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
-        ss_start, ss_end, bypass_filepath=None):
+        ss_start, ss_end, bypass_filepath=None, plot_context=None):
     """
     Main processing function called by the web app.
     Returns a dict with paths to output files and result summary.
@@ -3041,6 +3267,21 @@ def run(filepath, output_dir, reaction_config, metadata, inlet_flows,
         source_filepath=filepath, raw_data=data, inlet_flows=inlet_flows,
         has_bridge=has_bridge, bypass_filepath=bypass_filepath,
         bypass_data=bypass_data)
+
+    if plot_context is not None:
+        plot_context.clear()
+        plot_context.update({
+            'df': df.copy(deep=True),
+            'df_sel': df_sel.copy(deep=True),
+            'total_C_out': total_C_out.copy(deep=True),
+            'C_in_flow': C_in_flow,
+            'reactant_label': reactant_label,
+            'metadata': dict(metadata),
+            'species_config': {
+                header: dict(cfg) for header, cfg in species_config.items()
+            },
+            'output_dir': output_dir,
+        })
 
     # Build result dict for UI
     rxn = df[_reaction_mask(df)]

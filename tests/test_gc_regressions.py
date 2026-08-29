@@ -9,6 +9,7 @@ from unittest import mock
 import numpy as np
 import pandas as pd
 from openpyxl import Workbook
+from PIL import Image
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -18,20 +19,122 @@ if ROOT not in sys.path:
 from modules.gc_processor import (  # noqa: E402
     _add_time_on_stream_column,
     _copy_source_sheet_to_workbook,
+    _draw_gc_plot,
     _draw_legend_label,
     _metadata_bool,
     _normalize_injection_species,
     _reaction_mask,
     _select_bypass_data,
     build_flow_table,
+    default_gc_plot_settings,
     load_reaction_config,
     make_plots,
+    normalize_gc_plot_settings,
     validate_bypass_settings,
+    validate_gc_plot_axis_ranges,
 )
 from modules.json_safety import json_safe_value  # noqa: E402
 
 
 class GcRegressionTests(unittest.TestCase):
+    def test_publication_plot_settings_are_normalized(self):
+        defaults = default_gc_plot_settings(
+            'CO2', {'catalyst_id': 'Zn catalyst'})
+        self.assertEqual(defaults['title'], 'Zn catalyst')
+        self.assertEqual(defaults['conversion_axis_label'], 'CO2 Conversion (%)')
+        self.assertEqual(defaults['png_dpi'], 300)
+
+        settings = normalize_gc_plot_settings({
+            'title': 'Publication figure',
+            'x_axis_label': 'Elapsed time (h)',
+            'tick_font_size': 100,
+            'axis_font_size': 8,
+            'bar_width_percent': 65,
+            'bar_gap_px': 4,
+            'x_axis_min': 2.5,
+            'x_axis_max': 8,
+            'conversion_y_min': -2,
+            'conversion_y_max': 12,
+            'selectivity_y_min': 40,
+            'selectivity_y_max': 105,
+            'show_carbon_balance': 'yes',
+            'conversion_color': '#abc',
+            'carbon_balance_color': 'not-a-color',
+            'species_colors': {'CO': '#123456', 'CH4': 'invalid'},
+        }, 'CO2', {'catalyst_id': 'Zn catalyst'})
+
+        self.assertEqual(settings['title'], 'Publication figure')
+        self.assertEqual(settings['x_axis_label'], 'Elapsed time (h)')
+        self.assertEqual(settings['tick_font_size'], 36)
+        self.assertEqual(settings['axis_font_size'], 14)
+        self.assertEqual(settings['bar_width_percent'], 65)
+        self.assertEqual(settings['bar_gap_px'], 4)
+        self.assertEqual(settings['x_axis_min'], 2.5)
+        self.assertEqual(settings['x_axis_max'], 8.0)
+        self.assertEqual(settings['conversion_y_min'], -2.0)
+        self.assertEqual(settings['conversion_y_max'], 12.0)
+        self.assertEqual(settings['selectivity_y_min'], 40.0)
+        self.assertEqual(settings['selectivity_y_max'], 105.0)
+        self.assertTrue(settings['show_carbon_balance'])
+        self.assertEqual(settings['conversion_color'], '#AABBCC')
+        self.assertEqual(settings['carbon_balance_color'], '#A01E2D')
+        self.assertEqual(settings['species_colors']['CO'], '#123456')
+        self.assertEqual(settings['species_colors']['CH4'], '#4BAF46')
+
+        with self.assertRaisesRegex(
+                ValueError, 'X-axis maximum must be greater'):
+            validate_gc_plot_axis_ranges({
+                'x_axis_min': 10,
+                'x_axis_max': 5,
+            })
+
+    def test_publication_plot_renderer_applies_custom_colors_and_dpi(self):
+        frame = pd.DataFrame([
+            {
+                'label': 'sample Rxn 1', 'inj_num': 1,
+                'is_bypass': False, 'analysis_include': True,
+                'conversion': 0.05, 'time_on_stream_h': 0.0,
+            },
+            {
+                'label': 'sample Rxn 2', 'inj_num': 2,
+                'is_bypass': False, 'analysis_include': True,
+                'conversion': 0.06, 'time_on_stream_h': 1.0,
+            },
+        ])
+        selectivity = pd.DataFrame(
+            {'S_CO': [0.8, 0.75]}, index=frame.index)
+        total_carbon = pd.Series([10.0, 10.0], index=frame.index)
+        species = {
+            'Carbon Monoxide': {'label': 'CO', 'cn': 1, 'det': 'TCD'},
+        }
+        metadata = {
+            'catalyst_id': 'Color test',
+            'output_prefix': 'custom',
+            'plot_settings': {
+                'conversion_color': '#654321',
+                'species_colors': {'CO': '#123456'},
+                'bar_width_percent': 60,
+                'bar_gap_px': 2,
+                'png_dpi': 200,
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _draw_gc_plot(
+                frame, selectivity, total_carbon, 10.0,
+                'CO2', metadata, species, tmp)
+            with Image.open(path) as image:
+                colors = {
+                    color for _, color in image.getcolors(
+                        maxcolors=image.width * image.height)
+                }
+                dpi = image.info.get('dpi')
+
+        self.assertIn((18, 52, 86), colors)
+        self.assertIn((101, 67, 33), colors)
+        self.assertIsNotNone(dpi)
+        self.assertAlmostEqual(dpi[0], 200, delta=1)
+
     def test_argon_o2_header_alias_supports_flow_calculation(self):
         config = load_reaction_config(os.path.join(
             ROOT, 'modules', 'reaction_configs', 'rwgs.yaml'))
