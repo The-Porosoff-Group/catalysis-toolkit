@@ -184,6 +184,11 @@ _cache = get_cache(cache_dir=CACHE_DIR, max_size_mb=CACHE_MAX_MB)
 _GC_PLOT_CACHE_MAX = 12
 _gc_plot_cache = OrderedDict()
 _gc_plot_cache_lock = Lock()
+_CHARACTERIZATION_CACHE_MAX = 4
+_bet_plot_cache = OrderedDict()
+_bet_plot_cache_lock = Lock()
+_tp_plot_cache = OrderedDict()
+_tp_plot_cache_lock = Lock()
 
 
 def _store_gc_plot_context(context):
@@ -201,6 +206,24 @@ def _get_gc_plot_context(token):
         context = _gc_plot_cache.get(token)
         if context is not None:
             _gc_plot_cache.move_to_end(token)
+        return context
+
+
+def _store_characterization_context(cache, lock, context):
+    token = secrets.token_urlsafe(24)
+    with lock:
+        cache[token] = context
+        cache.move_to_end(token)
+        while len(cache) > _CHARACTERIZATION_CACHE_MAX:
+            cache.popitem(last=False)
+    return token
+
+
+def _get_characterization_context(cache, lock, token):
+    with lock:
+        context = cache.get(token)
+        if context is not None:
+            cache.move_to_end(token)
         return context
 
 # ── Preload pymatgen ──────────────────────────────────────────────────────────
@@ -226,7 +249,7 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
 MODULES = [
     {'id': 'gc',  'name': 'GC Analysis',       'icon': '⚗️',  'status': 'active'},
-    {'id': 'tga', 'name': tga_processor.MODULE_INFO['name'],
+    {'id': 'tp', 'name': tga_processor.MODULE_INFO['name'],
                   'icon': tga_processor.MODULE_INFO['icon'],
                   'status': tga_processor.MODULE_INFO['status']},
     {'id': 'bet', 'name': bet_processor.MODULE_INFO['name'],
@@ -246,6 +269,7 @@ def index():
     return render_template('index.html',
                            modules=MODULES,
                            reaction_configs=reaction_configs,
+                           metal_presets=tga_processor.METAL_PRESETS,
                            mp_key_set=bool(MP_API_KEY),
                            pymatgen_ready=_pymatgen_ready)
 
@@ -258,6 +282,7 @@ def xrd_toolkit():
     return render_template('xrd_toolkit/index.html',
                            modules=MODULES,
                            reaction_configs=reaction_configs,
+                           metal_presets=tga_processor.METAL_PRESETS,
                            mp_key_set=bool(MP_API_KEY),
                            pymatgen_ready=_pymatgen_ready)
 
@@ -421,6 +446,142 @@ def regenerate_gc_plot():
             'error': str(exc),
             'trace': traceback.format_exc(),
         }), 500
+
+
+# ── Routes — BET / Isotherm ───────────────────────────────────────────────────
+
+@app.route('/api/process_bet', methods=['POST'])
+def process_bet():
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No BET file uploaded.'}), 400
+        upload = request.files['file']
+        extension = os.path.splitext(upload.filename or '')[1].lower()
+        if extension not in {'.xls', '.xlsx', '.csv', '.tsv', '.txt'}:
+            return jsonify({'error': 'BET accepts .xls, .xlsx, .csv, .tsv, or .txt files.'}), 400
+        form = request.form
+        sample_id = str(form.get('sample_id') or '').strip()
+        output_sample_id = sample_id or os.path.splitext(upload.filename or 'BET Sample')[0]
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        safe_id = re.sub(r'[^\w\-]', '_', output_sample_id).strip('_') or 'BET_Sample'
+        safe_name = re.sub(r'[^\w\-.]', '_', upload.filename or f'bet{extension}')
+        upload_path = os.path.join(UPLOAD_DIR, f'{timestamp}_{safe_name}')
+        upload.save(upload_path)
+        output_base = str(form.get('output_dir') or '').strip()
+        if not output_base or not os.path.isdir(output_base):
+            output_base = os.path.join(BASE_DIR, 'results')
+        output_dir = os.path.join(output_base, f'{safe_id}_BET_{timestamp}')
+        metadata = {
+            'sample_id': sample_id,
+            'sample_mass_g': form.get('sample_mass_g'),
+            'source_file': upload.filename,
+            'output_prefix': f'{timestamp}_{safe_id}',
+        }
+        params = {
+            'p_min': form.get('p_min'),
+            'p_max': form.get('p_max'),
+            'cross_section_nm2': form.get('cross_section_nm2') or 0.162,
+            'molar_volume_cm3_mol': form.get('molar_volume_cm3_mol') or 22414.0,
+            'liquid_molar_volume_cm3_mol': form.get('liquid_molar_volume_cm3_mol') or 34.65,
+        }
+        context = {}
+        result = bet_processor.run(upload_path, output_dir, metadata, params,
+                                   plot_context=context)
+        with open(result['plot_path'], 'rb') as image:
+            result['plot_b64'] = base64.b64encode(image.read()).decode('utf-8')
+        result['plot_token'] = _store_characterization_context(
+            _bet_plot_cache, _bet_plot_cache_lock, context)
+        return jsonify(result)
+    except Exception as exc:
+        return jsonify({'error': str(exc), 'trace': traceback.format_exc()}), 500
+
+
+@app.route('/api/regenerate_bet_plot', methods=['POST'])
+def regenerate_bet_plot():
+    try:
+        payload = request.get_json(silent=True) or {}
+        token = str(payload.get('plot_token') or '').strip()
+        context = _get_characterization_context(
+            _bet_plot_cache, _bet_plot_cache_lock, token)
+        if context is None:
+            return jsonify({'error': 'This BET plotting session has expired. Process the file again.'}), 410
+        result = bet_processor.regenerate_plot(context, payload.get('settings') or {})
+        with open(result['plot_path'], 'rb') as image:
+            result['plot_b64'] = base64.b64encode(image.read()).decode('utf-8')
+        return jsonify(result)
+    except Exception as exc:
+        return jsonify({'error': str(exc), 'trace': traceback.format_exc()}), 500
+
+
+# ── Routes — Temperature-programmed / Chemisorption ────────────────────
+
+@app.route('/api/process_tp', methods=['POST'])
+def process_temperature_programmed():
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No AutoChem file uploaded.'}), 400
+        upload = request.files['file']
+        if os.path.splitext(upload.filename or '')[1].lower() != '.txt':
+            return jsonify({'error': 'Please upload an AutoChem .TXT export.'}), 400
+        form = request.form
+        sample_id = str(form.get('sample_id') or '').strip()
+        output_sample_id = sample_id or os.path.splitext(upload.filename or 'Sample')[0]
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        safe_id = re.sub(r'[^\w\-]', '_', output_sample_id).strip('_') or 'Sample'
+        safe_name = re.sub(r'[^\w\-.]', '_', upload.filename or 'autochem.txt')
+        upload_path = os.path.join(UPLOAD_DIR, f'{timestamp}_{safe_name}')
+        upload.save(upload_path)
+        output_base = str(form.get('output_dir') or '').strip()
+        if not output_base or not os.path.isdir(output_base):
+            output_base = os.path.join(BASE_DIR, 'results')
+        output_dir = os.path.join(output_base, f'{safe_id}_TP_{timestamp}')
+        metadata = {
+            'sample_id': sample_id,
+            'source_file': upload.filename,
+            'output_prefix': f'{timestamp}_{safe_id}',
+        }
+        keys = (
+            'sample_mass_g', 'loop_volume_ml', 'active_gas', 'active_gas_percent',
+            'loop_pressure_atm', 'loop_temperature_c', 'saturated_peak_count',
+            'expected_injection_count', 'ramp_rate_c_min', 'ramp_start_temperature_c',
+            'manual_response_factor_umol_per_area', 'baseline_method',
+            'smoothing_window', 'prominence_percent', 'minimum_peak_distance_c',
+            'maximum_tpd_peaks',
+            'minimum_pulse_distance_min', 'signal_direction', 'chemisorption_direction',
+            'temperature_min_c', 'temperature_max_c', 'metal',
+            'metal_loading_wt_percent', 'atomic_weight_g_mol', 'density_g_cm3',
+            'metal_cross_section_nm2', 'stoichiometry_metal_per_gas',
+        )
+        params = {key: form.get(key) for key in keys}
+        context = {}
+        result = tga_processor.run(upload_path, output_dir, metadata, params,
+                                   plot_context=context)
+        for experiment in result['experiments']:
+            with open(experiment['plot_path'], 'rb') as image:
+                experiment['plot_b64'] = base64.b64encode(image.read()).decode('utf-8')
+        result['plot_token'] = _store_characterization_context(
+            _tp_plot_cache, _tp_plot_cache_lock, context)
+        return jsonify(result)
+    except Exception as exc:
+        return jsonify({'error': str(exc), 'trace': traceback.format_exc()}), 500
+
+
+@app.route('/api/regenerate_tp_plot', methods=['POST'])
+def regenerate_temperature_programmed_plot():
+    try:
+        payload = request.get_json(silent=True) or {}
+        token = str(payload.get('plot_token') or '').strip()
+        context = _get_characterization_context(
+            _tp_plot_cache, _tp_plot_cache_lock, token)
+        if context is None:
+            return jsonify({'error': 'This plotting session has expired. Process the file again.'}), 410
+        result = tga_processor.regenerate_plot(
+            context, str(payload.get('experiment_key') or ''), payload.get('settings') or {})
+        with open(result['plot_path'], 'rb') as image:
+            result['plot_b64'] = base64.b64encode(image.read()).decode('utf-8')
+        return jsonify(result)
+    except Exception as exc:
+        return jsonify({'error': str(exc), 'trace': traceback.format_exc()}), 500
 
 @app.route('/api/download')
 def download_file():

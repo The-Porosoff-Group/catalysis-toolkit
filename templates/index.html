@@ -255,7 +255,7 @@
 .pill.yellow { background: rgba(227,179,65,0.15); color: var(--warn); }
 .pill.red    { background: rgba(248,81,73,0.15);  color: var(--danger); }
 
-  .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(185px, 1fr)); gap: 12px; }
   .stat-box {
     background: var(--surface2);
     border: 1px solid var(--border);
@@ -263,7 +263,10 @@
     padding: 14px 16px;
   }
   .stat-box .stat-label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
-  .stat-box .stat-val { font-size: 22px; font-weight: 800; font-family: var(--mono); color: var(--text); }
+  .stat-box .stat-val {
+    font-size: clamp(16px, 1.45vw, 22px); font-weight: 800; font-family: var(--mono);
+    color: var(--text); line-height: 1.18; overflow-wrap: anywhere;
+  }
   .stat-box .stat-unit { font-size: 12px; color: var(--muted); }
 
   .sel-grid { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -561,6 +564,34 @@
   }
   .error-box.visible { display: block; }
 
+  /* ── Characterization modules ── */
+  .char-hint { color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 6px; }
+  .char-tabs { display:flex; gap:8px; flex-wrap:wrap; margin:2px 0 14px; }
+  .char-tab { background:var(--surface2); color:var(--muted); border:1px solid var(--border);
+    border-radius:18px; padding:7px 13px; cursor:pointer; font-family:var(--mono); font-size:11px; }
+  .char-tab:hover { border-color:var(--accent); color:var(--text); }
+  .char-tab.active { color:#fff; border-color:var(--accent); background:rgba(88,166,255,.18); }
+  .char-warning { display:none; border:1px solid rgba(227,179,65,.45); background:rgba(227,179,65,.09);
+    color:#f0c75e; border-radius:7px; padding:11px 13px; font-size:12px; line-height:1.55; white-space:pre-line; }
+  .char-warning.visible { display:block; }
+  .char-table-wrap { max-height:310px; overflow:auto; border:1px solid var(--border); border-radius:7px; }
+  .char-table { width:100%; border-collapse:collapse; font-family:var(--mono); font-size:11px; }
+  .char-table th { position:sticky; top:0; z-index:1; background:var(--surface2); color:var(--muted);
+    text-align:left; padding:9px 10px; border-bottom:1px solid var(--border); }
+  .char-table td { padding:8px 10px; border-bottom:1px solid rgba(45,51,59,.65); }
+  .char-table tr:last-child td { border-bottom:0; }
+  .char-plot-editor { border:1px solid var(--border); border-radius:8px; background:var(--surface2); }
+  .char-plot-editor summary { cursor:pointer; padding:13px 15px; color:var(--accent); font-weight:600; }
+  .char-editor-body { padding:0 15px 15px; display:flex; flex-direction:column; gap:14px; }
+  .char-editor-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+  .char-checks { display:flex; flex-wrap:wrap; gap:16px; color:var(--muted); font-size:12px; }
+  .char-checks label { display:flex; align-items:center; gap:7px; }
+  .char-checks input { width:auto; }
+  .char-color { display:flex; align-items:center; gap:8px; }
+  .char-color input[type="color"] { width:38px; min-width:38px; height:32px; padding:2px; }
+  .char-status { color:var(--muted); font-size:11px; }
+  .section-caption { font-size:12px; font-weight:700; color:var(--text); margin-bottom:8px; }
+
   /* ── Scrollbar ── */
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
@@ -570,6 +601,7 @@
   // Injected by server at page load
   window.mpKeySet = {{ mp_key_set | tojson }};
   window.pymatgenReady = {{ pymatgen_ready | tojson }};
+  window.metalPresets = {{ metal_presets | tojson }};
 </script>
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 </head>
@@ -923,6 +955,227 @@
         </div>
       </div>
     </div><!-- /gc module -->
+
+    <!-- ── Temperature-programmed / Chemisorption Module ── -->
+    <div class="module-panel" id="module-tp">
+      <div class="card">
+        <div class="card-header"><div class="step">1</div><h2>Upload AutoChem Report</h2></div>
+        <div class="card-body">
+          <div class="dropzone" id="tp-dropzone" ondragover="tpDragOver(event)" ondragleave="tpDragLeave()" ondrop="tpDrop(event)">
+            <input type="file" id="tpFileInput" accept=".txt,.TXT" onchange="tpFileSelect(event)">
+            <div id="tp-dropzone-content">
+              <div class="dropzone-icon">📂</div>
+              <div class="dropzone-text">Drag &amp; drop an AutoChem <span>.TXT</span> report</div>
+              <div class="dropzone-sub">All TPD, TPO, TPR, and pulse-chemisorption experiments in the file are detected</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div class="step">2</div><h2>Sample &amp; Quantitation</h2></div>
+        <div class="card-body" style="display:flex;flex-direction:column;gap:20px;">
+          <div class="form-grid">
+            <div class="form-group"><label>Sample ID</label><input id="tp_sample_id" type="text" placeholder="Parsed name or your preferred ID"></div>
+            <div class="form-group"><label>Sample Mass (g)</label><input id="tp_sample_mass_g" type="number" min="0" step="0.0001" placeholder="Parsed from report"></div>
+            <div class="form-group"><label>Active Loop Volume (mL)</label><input id="tp_loop_volume_ml" type="number" min="0" step="0.00001" value="0.51548"></div>
+            <div class="form-group"><label>Active Gas</label><select id="tp_active_gas"><option value="auto">Auto detect</option><option>CO</option><option>CO2</option><option>H2</option><option>O2</option><option>NH3</option><option>N2O</option></select></div>
+            <div class="form-group"><label>Active Gas Concentration (%)</label><input id="tp_active_gas_percent" type="number" min="0.0001" max="100" step="0.01" value="10"></div>
+            <div class="form-group"><label>Loop Pressure (atm)</label><input id="tp_loop_pressure_atm" type="number" min="0" step="0.001" value="1"></div>
+            <div class="form-group"><label>Loop Temperature (°C)</label><input id="tp_loop_temperature_c" type="number" step="0.1" placeholder="Parsed; otherwise 25"></div>
+            <div class="form-group"><label>Saturated Peaks Used</label><input id="tp_saturated_peak_count" type="number" min="1" step="1" value="3"></div>
+            <div class="form-group"><label>Expected Injections</label><input id="tp_expected_injection_count" type="number" min="1" step="1" placeholder="Parsed from pulse table"></div>
+            <div class="form-group"><label>Manual Response Factor</label><input id="tp_manual_response_factor_umol_per_area" type="number" min="0" step="any" placeholder="Optional µmol/(signal·min)"></div>
+            <div class="form-group"><label>Chemisorption Direction</label><select id="tp_chemisorption_direction"><option value="auto">Auto detect</option><option value="normal">Normal</option><option value="inverse">Inverse</option></select></div>
+          </div>
+          <div class="char-hint">Pulse dose is calculated with the ideal-gas law. Saturated pulse peaks provide the detector response factor; a manual value is used only when supplied.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div class="step">3</div><h2>Peak Analysis &amp; Metal Preset</h2></div>
+        <div class="card-body" style="display:flex;flex-direction:column;gap:20px;">
+          <div>
+            <div class="section-caption">Signal processing</div>
+            <div class="form-grid">
+              <div class="form-group"><label>Baseline</label><select id="tp_baseline_method"><option value="auto">Automatic local baseline</option><option value="linear">Linear endpoints</option><option value="none">No correction</option></select></div>
+              <div class="form-group"><label>Smoothing Window (points)</label><input id="tp_smoothing_window" type="number" min="5" step="2" value="301"></div>
+              <div class="form-group"><label>Peak Prominence (%)</label><input id="tp_prominence_percent" type="number" min="0.01" step="0.1" value="8"></div>
+              <div class="form-group"><label>Program Peak Distance (°C)</label><input id="tp_minimum_peak_distance_c" type="number" min="0" step="0.1" value="25"></div>
+              <div class="form-group"><label>Maximum TPD Peaks</label><input id="tp_maximum_tpd_peaks" type="number" min="1" max="6" step="1" value="6"></div>
+              <div class="form-group"><label>Pulse Peak Distance (min)</label><input id="tp_minimum_pulse_distance_min" type="number" min="0" step="0.01" value="0.5"></div>
+              <div class="form-group"><label>Signal Direction</label><select id="tp_signal_direction"><option value="auto">Auto detect</option><option value="positive">Positive peaks</option><option value="negative">Negative peaks</option></select></div>
+              <div class="form-group"><label>Temperature Minimum (°C)</label><input id="tp_temperature_min_c" type="number" step="any" placeholder="Automatic"></div>
+              <div class="form-group"><label>Temperature Maximum (°C)</label><input id="tp_temperature_max_c" type="number" step="any" placeholder="Automatic"></div>
+              <div class="form-group"><label>Ramp Rate (°C/min)</label><input id="tp_ramp_rate_c_min" type="number" step="any" placeholder="Parsed; fallback only"></div>
+              <div class="form-group"><label>Ramp Start Temperature (°C)</label><input id="tp_ramp_start_temperature_c" type="number" step="any" placeholder="Fallback only"></div>
+            </div>
+          </div>
+          <div>
+            <div class="section-caption">Chemisorption-derived metal metrics</div>
+            <div class="form-grid">
+              <div class="form-group"><label>Metal Preset</label><select id="tp_metal" onchange="applyMetalPreset()"><option value="">Select / custom</option>{% for symbol, preset in metal_presets.items() %}<option value="{{ symbol }}">{{ symbol }} · {{ preset.name }}</option>{% endfor %}</select></div>
+              <div class="form-group"><label>Metal Loading (wt%)</label><input id="tp_metal_loading_wt_percent" type="number" min="0" max="100" step="0.001" placeholder="Required for dispersion"></div>
+              <div class="form-group"><label>Atomic Weight (g/mol)</label><input id="tp_atomic_weight_g_mol" type="number" min="0" step="any" placeholder="From preset"></div>
+              <div class="form-group"><label>Density (g/cm³)</label><input id="tp_density_g_cm3" type="number" min="0" step="any" placeholder="From preset"></div>
+              <div class="form-group"><label>Atomic Cross-section (nm²)</label><input id="tp_metal_cross_section_nm2" type="number" min="0" step="any" placeholder="From preset"></div>
+              <div class="form-group"><label>Metal Atoms / Gas Molecule</label><input id="tp_stoichiometry_metal_per_gas" type="number" min="0" step="any" value="1"></div>
+              <div class="form-group full"><label>Output Folder</label><input id="tp_output_dir" type="text" placeholder="Leave blank for toolkit results/"></div>
+            </div>
+            <div class="char-hint">Preset values are editable estimates. Verify gas-specific adsorption stoichiometry before publication.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div class="step">4</div><h2>Process Data</h2></div>
+        <div class="card-body" style="display:flex;flex-direction:column;gap:16px;">
+          <button class="btn-process" id="tp-btn-process" onclick="processTP()"><span>🌡️</span> TPD/TPO/TPR/Chemisorption Data</button>
+          <div class="progress-wrap" id="tp-progress"><div class="spinner"></div><div class="progress-text" id="tp-progress-text">Reading AutoChem report...</div></div>
+          <div class="error-box" id="tp-error"></div>
+          <div class="results-panel" id="tp-results">
+            <div class="results-header"><h3>Results</h3><div id="tp-calibration-pill"></div></div>
+            <div class="char-tabs" id="tp-experiment-tabs"></div>
+            <div class="stats-grid" id="tp-stats"></div>
+            <div class="char-warning" id="tp-warning"></div>
+            <div class="char-table-wrap"><table class="char-table"><thead><tr id="tp-peaks-head"></tr></thead><tbody id="tp-peaks-body"></tbody></table></div>
+            <img class="plot-img" id="tp-result-plot" src="" alt="Temperature-programmed results plot">
+            <details class="char-plot-editor" id="tp-plot-editor">
+              <summary>Customize and regenerate this experiment plot</summary>
+              <div class="char-editor-body">
+                <div class="char-editor-grid">
+                  <div class="form-group" style="grid-column:span 2"><label>Figure Title</label><input id="tp_plot_title" type="text"></div>
+                  <div class="form-group"><label>Horizontal Axis</label><select id="tp_plot_x_basis" onchange="updateTpAxisLabel()"><option value="temperature">Temperature</option><option value="time">Time</option></select></div>
+                  <div class="form-group"><label>X-axis Label</label><input id="tp_plot_x_label" type="text"></div>
+                  <div class="form-group"><label>Y-axis Label</label><input id="tp_plot_y_label" type="text"></div>
+                  <div class="form-group"><label>Tick Font</label><input id="tp_plot_tick_font" type="number" min="8" max="30"></div>
+                  <div class="form-group"><label>Axis Font</label><input id="tp_plot_axis_font" type="number" min="9" max="36"></div>
+                  <div class="form-group"><label>Title Font</label><input id="tp_plot_title_font" type="number" min="10" max="42"></div>
+                  <div class="form-group"><label>Legend Font</label><input id="tp_plot_legend_font" type="number" min="8" max="28"></div>
+                  <div class="form-group"><label>Line Width</label><input id="tp_plot_line_width" type="number" min="0.5" max="6" step="0.1"></div>
+                  <div class="form-group"><label>Maximum Peak Labels</label><input id="tp_plot_max_peak_labels" type="number" min="0" max="50" step="1"></div>
+                  <div class="form-group"><label>PNG DPI</label><input id="tp_plot_dpi" type="number" min="72" max="600"></div>
+                  <div class="form-group"><label>Width (in)</label><input id="tp_plot_width" type="number" min="5" max="18" step="0.1"></div>
+                  <div class="form-group"><label>Height (in)</label><input id="tp_plot_height" type="number" min="3" max="12" step="0.1"></div>
+                  <div class="form-group"><label>X Minimum</label><input id="tp_plot_x_min" type="number" step="any" placeholder="Automatic"></div>
+                  <div class="form-group"><label>X Maximum</label><input id="tp_plot_x_max" type="number" step="any" placeholder="Automatic"></div>
+                  <div class="form-group"><label>Y Minimum</label><input id="tp_plot_y_min" type="number" step="any" placeholder="Automatic"></div>
+                  <div class="form-group"><label>Y Maximum</label><input id="tp_plot_y_max" type="number" step="any" placeholder="Automatic"></div>
+                  <label class="char-color">Signal <input id="tp_plot_signal_color" type="color"></label>
+                  <label class="char-color">Baseline <input id="tp_plot_baseline_color" type="color"></label>
+                  <label class="char-color">Peaks <input id="tp_plot_peak_color" type="color"></label>
+                  <label class="char-color">Area <input id="tp_plot_integration_color" type="color"></label>
+                </div>
+                <div class="char-checks">
+                  <label><input id="tp_plot_show_baseline" type="checkbox"> Baseline</label>
+                  <label><input id="tp_plot_show_peak_markers" type="checkbox"> Peak markers</label>
+                  <label><input id="tp_plot_show_peak_labels" type="checkbox"> Peak labels</label>
+                  <label><input id="tp_plot_show_y_tick_labels" type="checkbox"> Y-axis numerical labels</label>
+                  <label><input id="tp_plot_show_integration" type="checkbox"> Integrated area</label>
+                  <label><input id="tp_plot_show_grid" type="checkbox"> Grid</label>
+                </div>
+                <div><button class="btn-sm green" id="tp-regenerate" onclick="regenerateTPPlot()">Regenerate Plot</button> <span class="char-status" id="tp-plot-status"></span></div>
+              </div>
+            </details>
+            <div class="download-row" id="tp-downloads"></div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /tp module -->
+
+    <!-- ── BET / Isotherm Module ── -->
+    <div class="module-panel" id="module-bet">
+      <div class="card">
+        <div class="card-header"><div class="step">1</div><h2>Upload BET / Isotherm File</h2></div>
+        <div class="card-body">
+          <div class="dropzone" id="bet-dropzone" ondragover="betDragOver(event)" ondragleave="betDragLeave()" ondrop="betDrop(event)">
+            <input type="file" id="betFileInput" accept=".xls,.xlsx,.csv,.tsv,.txt" onchange="betFileSelect(event)">
+            <div id="bet-dropzone-content">
+              <div class="dropzone-icon">📂</div>
+              <div class="dropzone-text">Drag &amp; drop a BET <span>.XLS, .XLSX, or text</span> export</div>
+              <div class="dropzone-sub">Micromeritics ASAP legacy exports are supported directly</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="step">2</div><h2>BET Fit Settings</h2></div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="form-group"><label>Sample ID</label><input id="bet_sample_id" type="text" placeholder="Parsed name or your preferred ID"></div>
+            <div class="form-group"><label>Sample Mass (g)</label><input id="bet_sample_mass_g" type="number" min="0" step="0.0001" placeholder="Parsed from file"></div>
+            <div class="form-group"><label>p/p₀ Minimum</label><input id="bet_p_min" type="number" min="0" max="1" step="any" placeholder="Automatic recommendation"></div>
+            <div class="form-group"><label>p/p₀ Maximum</label><input id="bet_p_max" type="number" min="0" max="1" step="any" placeholder="Automatic recommendation"></div>
+            <div class="form-group"><label>Molecular Cross-section (nm²)</label><input id="bet_cross_section_nm2" type="number" min="0" step="any" value="0.162"></div>
+            <div class="form-group"><label>STP Molar Volume (cm³/mol)</label><input id="bet_molar_volume_cm3_mol" type="number" min="0" step="any" value="22414"></div>
+            <div class="form-group"><label>Liquid Molar Volume (cm³/mol)</label><input id="bet_liquid_molar_volume_cm3_mol" type="number" min="0" step="any" value="34.65"></div>
+            <div class="form-group full"><label>Output Folder</label><input id="bet_output_dir" type="text" placeholder="Leave blank for toolkit results/"></div>
+          </div>
+          <div class="char-hint">Leave the pressure window blank to use the recommended physically consistent range. The toolkit checks C, monolayer-pressure placement, Rouquerol monotonicity, Qm agreement, and R². Liquid molar volume defaults to 34.65 cm³/mol for N₂ and is used for the calculated total pore volume.</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="step">3</div><h2>Process Data</h2></div>
+        <div class="card-body" style="display:flex;flex-direction:column;gap:16px;">
+          <button class="btn-process" id="bet-btn-process" onclick="processBET()"><span>📐</span> Process BET Data</button>
+          <div class="progress-wrap" id="bet-progress"><div class="spinner"></div><div class="progress-text" id="bet-progress-text">Reading isotherm...</div></div>
+          <div class="error-box" id="bet-error"></div>
+          <div class="results-panel" id="bet-results">
+            <div class="results-header"><h3>Results</h3><div id="bet-status-pill"></div></div>
+            <div class="stats-grid" id="bet-stats"></div>
+            <div class="char-warning" id="bet-warning"></div>
+            <details class="char-plot-editor" id="bet-reported-metrics">
+              <summary>Instrument-reported surface and pore parameters</summary>
+              <div class="char-editor-body">
+                <div class="char-hint">The calculated BET area above uses the currently recommended or user-selected p/p₀ window. Reported values preserve the instrument file's original method and fit window for comparison.</div>
+                <div class="char-table-wrap"><table class="char-table"><thead><tr><th>Reported parameter</th><th>Value</th></tr></thead><tbody id="bet-source-metrics-body"></tbody></table></div>
+              </div>
+            </details>
+            <img class="plot-img" id="bet-result-plot" src="" alt="BET results plot">
+            <details class="char-plot-editor" id="bet-plot-editor">
+              <summary>Customize and regenerate BET plots</summary>
+              <div class="char-editor-body">
+                <div class="char-editor-grid">
+                  <div class="form-group" style="grid-column:span 2"><label>Figure Title</label><input id="bet_plot_title" type="text"></div>
+                  <div class="form-group"><label>Isotherm X Label</label><input id="bet_plot_iso_x_label" type="text"></div>
+                  <div class="form-group"><label>Isotherm Y Label</label><input id="bet_plot_iso_y_label" type="text"></div>
+                  <div class="form-group"><label>BET X Label</label><input id="bet_plot_bet_x_label" type="text"></div>
+                  <div class="form-group"><label>BET Y Label</label><input id="bet_plot_bet_y_label" type="text"></div>
+                  <div class="form-group"><label>Tick Font</label><input id="bet_plot_tick_font" type="number"></div>
+                  <div class="form-group"><label>Axis Font</label><input id="bet_plot_axis_font" type="number"></div>
+                  <div class="form-group"><label>Title Font</label><input id="bet_plot_title_font" type="number"></div>
+                  <div class="form-group"><label>Legend Font</label><input id="bet_plot_legend_font" type="number"></div>
+                  <div class="form-group"><label>Line Width</label><input id="bet_plot_line_width" type="number" step="0.1"></div>
+                  <div class="form-group"><label>Marker Size</label><input id="bet_plot_marker_size" type="number" step="0.1"></div>
+                  <div class="form-group"><label>PNG DPI</label><input id="bet_plot_dpi" type="number"></div>
+                  <div class="form-group"><label>Width (in)</label><input id="bet_plot_width" type="number" step="0.1"></div>
+                  <div class="form-group"><label>Height (in)</label><input id="bet_plot_height" type="number" step="0.1"></div>
+                  <div class="form-group"><label>X Minimum</label><input id="bet_plot_x_min" type="number" step="any"></div>
+                  <div class="form-group"><label>X Maximum</label><input id="bet_plot_x_max" type="number" step="any"></div>
+                  <div class="form-group"><label>Isotherm Y Minimum</label><input id="bet_plot_iso_y_min" type="number" step="any" placeholder="Automatic"></div>
+                  <div class="form-group"><label>Isotherm Y Maximum</label><input id="bet_plot_iso_y_max" type="number" step="any" placeholder="Automatic"></div>
+                  <div class="form-group"><label>BET Y Minimum</label><input id="bet_plot_bet_y_min" type="number" step="any" placeholder="Automatic"></div>
+                  <div class="form-group"><label>BET Y Maximum</label><input id="bet_plot_bet_y_max" type="number" step="any" placeholder="Automatic"></div>
+                  <label class="char-color">Adsorption <input id="bet_plot_adsorption_color" type="color"></label>
+                  <label class="char-color">Desorption <input id="bet_plot_desorption_color" type="color"></label>
+                  <label class="char-color">Fit <input id="bet_plot_fit_color" type="color"></label>
+                  <label class="char-color">Window <input id="bet_plot_window_color" type="color"></label>
+                </div>
+                <div class="char-checks">
+                  <label><input id="bet_plot_show_isotherm" type="checkbox"> Isotherm plot</label>
+                  <label><input id="bet_plot_show_bet_plot" type="checkbox"> BET plot</label>
+                  <label><input id="bet_plot_show_desorption" type="checkbox"> Desorption branch</label>
+                  <label><input id="bet_plot_show_fit_window" type="checkbox"> Fit-window markers</label>
+                  <label><input id="bet_plot_show_grid" type="checkbox"> Grid</label>
+                </div>
+                <div><button class="btn-sm green" id="bet-regenerate" onclick="regenerateBETPlot()">Regenerate Plot</button> <span class="char-status" id="bet-plot-status"></span></div>
+              </div>
+            </details>
+            <div class="download-row" id="bet-downloads"></div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /bet module -->
 
     <!-- ── Coming-soon modules ── -->
     {% for m in modules %}
@@ -1316,6 +1569,11 @@ let selectedBypassFile = null;
 let selectedConfig = null;
 let currentGcResult = null;
 let currentGcPlotDefaults = null;
+let tpSelectedFile = null;
+let betSelectedFile = null;
+let currentTpResult = null;
+let currentTpExperimentKey = null;
+let currentBetResult = null;
 const GC_PLOT_PRESET_KEY = 'catalysisToolkit.gcPlotPresets.v1';
 
 // ── Init: select first config ─────────────────────────────────────────────
@@ -1867,6 +2125,364 @@ function escHtml(v) {
   return String(v ?? '').replace(/[&<>"']/g, ch => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[ch]));
+}
+
+// ── Shared characterization helpers ───────────────────────────────────────────────────
+function charNumber(id) {
+  const text = document.getElementById(id).value.trim();
+  if (text === '') return null;
+  const value = Number(text);
+  return Number.isFinite(value) ? value : null;
+}
+function charFormat(value, digits=4) {
+  if (value == null || !Number.isFinite(Number(value))) return '—';
+  const number = Number(value);
+  if (number !== 0 && (Math.abs(number) < 0.001 || Math.abs(number) >= 10000))
+    return number.toExponential(3);
+  return number.toLocaleString(undefined, {maximumFractionDigits:digits});
+}
+function charSig(value, digits=4) {
+  if (value == null || !Number.isFinite(Number(value))) return '—';
+  return Number(value).toLocaleString(undefined, {maximumSignificantDigits:digits});
+}
+function charSetFile(prefix, file, allowed) {
+  const extension = '.' + file.name.split('.').pop().toLowerCase();
+  if (!allowed.includes(extension)) {
+    const error = document.getElementById(`${prefix}-error`);
+    error.textContent = `Unsupported file type: ${extension}`;
+    error.classList.add('visible');
+    return false;
+  }
+  document.getElementById(`${prefix}-error`).classList.remove('visible');
+  const dropzone = document.getElementById(`${prefix}-dropzone`);
+  dropzone.classList.add('has-file');
+  document.getElementById(`${prefix}-dropzone-content`).innerHTML = `
+    <div class="dropzone-icon">✅</div><div class="file-name">${escHtml(file.name)}</div>
+    <div class="dropzone-sub">${(file.size/1024/1024).toFixed(file.size > 1048576 ? 1 : 2)} MB · click to change</div>`;
+  return true;
+}
+function charStats(target, stats) {
+  const element = document.getElementById(target);
+  element.innerHTML = stats.map(item => `<div class="stat-box">
+    <div class="stat-label">${escHtml(item.label)}</div>
+    <div class="stat-val">${escHtml(item.value)}<span class="stat-unit"> ${escHtml(item.unit || '')}</span></div>
+  </div>`).join('');
+}
+
+// ── Temperature-programmed / Chemisorption UI ──────────────────────────────
+function tpDragOver(event) { event.preventDefault(); document.getElementById('tp-dropzone').classList.add('dragover'); }
+function tpDragLeave() { document.getElementById('tp-dropzone').classList.remove('dragover'); }
+function tpDrop(event) {
+  event.preventDefault(); tpDragLeave();
+  const file = event.dataTransfer.files[0];
+  if (file && charSetFile('tp', file, ['.txt'])) tpSelectedFile = file;
+}
+function tpFileSelect(event) {
+  const file = event.target.files[0];
+  if (file && charSetFile('tp', file, ['.txt'])) tpSelectedFile = file;
+}
+function applyMetalPreset() {
+  const preset = window.metalPresets?.[document.getElementById('tp_metal').value];
+  if (!preset) return;
+  document.getElementById('tp_atomic_weight_g_mol').value = preset.atomic_weight_g_mol;
+  document.getElementById('tp_density_g_cm3').value = preset.density_g_cm3;
+  document.getElementById('tp_metal_cross_section_nm2').value = preset.cross_section_nm2;
+  document.getElementById('tp_stoichiometry_metal_per_gas').value = preset.stoichiometry_metal_per_gas;
+}
+async function processTP() {
+  const error = document.getElementById('tp-error');
+  error.classList.remove('visible');
+  if (!tpSelectedFile) { error.textContent = 'Please upload an AutoChem .TXT report first.'; error.classList.add('visible'); return; }
+  const data = new FormData();
+  data.append('file', tpSelectedFile);
+  const fields = [
+    'sample_id','sample_mass_g','loop_volume_ml','active_gas','active_gas_percent',
+    'loop_pressure_atm','loop_temperature_c','saturated_peak_count',
+    'expected_injection_count','ramp_rate_c_min','ramp_start_temperature_c',
+    'manual_response_factor_umol_per_area','chemisorption_direction','baseline_method',
+    'smoothing_window','prominence_percent','minimum_peak_distance_c','maximum_tpd_peaks',
+    'minimum_pulse_distance_min','signal_direction','temperature_min_c','temperature_max_c',
+    'metal','metal_loading_wt_percent','atomic_weight_g_mol','density_g_cm3',
+    'metal_cross_section_nm2','stoichiometry_metal_per_gas','output_dir'];
+  fields.forEach(field => data.append(field, document.getElementById(`tp_${field}`).value));
+  const button = document.getElementById('tp-btn-process');
+  button.disabled = true;
+  document.getElementById('tp-progress').classList.add('visible');
+  document.getElementById('tp-results').classList.remove('visible');
+  try {
+    const response = await fetch('/api/process_tp', {method:'POST', body:data});
+    const result = await response.json();
+    if (!response.ok || result.error) throw new Error(result.error || 'Processing failed.');
+    currentTpResult = result;
+    currentTpExperimentKey = result.experiments?.[0]?.key || null;
+    if (!document.getElementById('tp_sample_mass_g').value && result.sample_mass_g != null)
+      document.getElementById('tp_sample_mass_g').value = result.sample_mass_g;
+    if (!document.getElementById('tp_sample_id').value) document.getElementById('tp_sample_id').value = result.sample_id || '';
+    if (!document.getElementById('tp_ramp_rate_c_min').value) {
+      const programmed = result.experiments?.find(item => item.type !== 'Chemisorption' && item.ramp_rate_c_min != null);
+      if (programmed) document.getElementById('tp_ramp_rate_c_min').value = charSig(programmed.ramp_rate_c_min, 5);
+    }
+    renderTpExperiment(currentTpExperimentKey);
+    document.getElementById('tp-results').classList.add('visible');
+    document.getElementById('tp-results').scrollIntoView({behavior:'smooth', block:'start'});
+  } catch (failure) {
+    error.textContent = failure.message; error.classList.add('visible');
+  } finally {
+    button.disabled = false; document.getElementById('tp-progress').classList.remove('visible');
+  }
+}
+function renderTpExperiment(key) {
+  if (!currentTpResult) return;
+  const experiment = currentTpResult.experiments.find(item => item.key === key) || currentTpResult.experiments[0];
+  if (!experiment) return;
+  currentTpExperimentKey = experiment.key;
+  document.getElementById('tp-experiment-tabs').innerHTML = currentTpResult.experiments.map(item =>
+    `<button class="char-tab ${item.key === experiment.key ? 'active' : ''}" onclick="renderTpExperiment('${item.key}')">${escHtml(item.display_name || item.name)}</button>`).join('');
+  const m = experiment.metrics || {};
+  const totalLabel = experiment.type === 'Chemisorption' ? 'Total uptake' : 'Total amount';
+  const totalValue = experiment.type === 'Chemisorption' ? m.total_uptake_umol_g : m.total_amount_umol_g;
+  const stats = [
+    {label:'Experiment', value:experiment.type, unit:experiment.gas || ''},
+    {label:experiment.type === 'Chemisorption' ? 'Injections' : 'Peaks', value:experiment.type === 'Chemisorption' ? m.expected_injection_count : m.peak_count, unit:''},
+    {label:'Integrated area', value:charSig(m.total_area_signal_min, 4), unit:'signal·min'},
+    {label:totalLabel, value:charSig(totalValue, 4), unit:'µmol/g'},
+    {label:'Response factor', value:charSig(m.response_factor_umol_per_signal_min, 4), unit:'µmol/(signal·min)'},
+  ];
+  if (experiment.type === 'Chemisorption') {
+    stats.push({label:'Detected responses', value:m.detected_pulse_count, unit:''});
+    stats.push({label:'Fully adsorbed', value:m.fully_adsorbed_pulse_count, unit:'pulses'});
+    if (m.reported_total_uptake_umol_g != null)
+      stats.push({label:'Uptake (reported)', value:charSig(m.reported_total_uptake_umol_g,4), unit:'µmol/g'});
+    stats.push({label:'Dispersion', value:charSig(m.dispersion_percent, 4), unit:'%'});
+    stats.push({label:'Metal surface area', value:charSig(m.metal_surface_area_m2_g_sample, 4), unit:'m²/g sample'});
+    stats.push({label:'Particle diameter', value:charSig(m.particle_diameter_nm, 4), unit:'nm'});
+  }
+  charStats('tp-stats', stats);
+  const calibrated = m.response_factor_umol_per_signal_min != null;
+  document.getElementById('tp-calibration-pill').innerHTML = calibrated
+    ? `<span class="pill green">Calibrated · ${escHtml(m.response_factor_source || '')}</span>`
+    : '<span class="pill yellow">Area only · response factor unavailable</span>';
+  const messages = [];
+  if (!calibrated) messages.push('Molar quantity is blank because no matching saturated-pulse or manual response factor is available.');
+  if (experiment.type === 'TPD' && m.peak_candidate_count > m.peak_count)
+    messages.push(`${m.peak_count} most prominent TPD peaks retained from ${m.peak_candidate_count} candidates. Lower Maximum TPD Peaks to show fewer.`);
+  if (experiment.type === 'Chemisorption' && m.total_uptake_umol_g != null && m.dispersion_percent == null)
+    messages.push('Enter metal loading and select a metal preset to calculate dispersion and particle-size metrics.');
+  if (experiment.type === 'Chemisorption' && m.fully_adsorbed_pulse_count > 0)
+    messages.push(`${m.fully_adsorbed_pulse_count} injection${m.fully_adsorbed_pulse_count === 1 ? '' : 's'} classified as fully adsorbed because the expected injection produced no detector response or the instrument-reported uptake equaled the full dose.`);
+  const warning = document.getElementById('tp-warning');
+  warning.textContent = messages.join('\n'); warning.classList.toggle('visible', messages.length > 0);
+  const isChem = experiment.type === 'Chemisorption';
+  document.getElementById('tp-peaks-head').innerHTML = isChem
+    ? '<th>Injection</th><th>Time</th><th>Area</th><th>Calculated uptake</th><th>Reported uptake</th><th>Status</th>'
+    : '<th>Peak</th><th>Temperature</th><th>Time</th><th>Area</th><th>Amount</th><th>Reference</th>';
+  document.getElementById('tp-peaks-body').innerHTML = (experiment.peaks || []).map(peak => {
+    const amount = experiment.type === 'Chemisorption'
+      ? (peak.cumulative_uptake_umol_g == null ? '—' : `${charSig(peak.cumulative_uptake_umol_g,4)} µmol/g cumulative`)
+      : (peak.amount_umol_g == null ? '—' : `${charSig(peak.amount_umol_g,4)} µmol/g`);
+    if (isChem) {
+      const status = peak.fully_adsorbed ? 'Fully adsorbed' : (peak.saturated_reference ? 'Saturated reference' : '');
+      return `<tr><td>${peak.number}</td><td>${charFormat(peak.time_min,2)} min</td><td>${charSig(peak.area_signal_min,4)}</td>
+        <td>${amount}</td><td>${peak.reported_uptake_umol_g == null ? '—' : charSig(peak.reported_uptake_umol_g,4)+' µmol/g'}</td><td>${status}</td></tr>`;
+    }
+    return `<tr><td>${peak.number}</td><td>${peak.temperature_c == null ? '—' : charFormat(peak.temperature_c,1)+' °C'}</td>
+      <td>${charFormat(peak.time_min,2)} min</td><td>${charSig(peak.area_signal_min,4)}</td>
+      <td>${amount}</td><td>${peak.saturated_reference ? 'Saturated' : ''}</td></tr>`;
+  }).join('') || '<tr><td colspan="6">No peaks passed the current prominence and spacing settings.</td></tr>';
+  document.getElementById('tp-result-plot').src = `data:image/png;base64,${experiment.plot_b64}`;
+  applyTpPlotSettings(experiment.plot_settings || {});
+  document.getElementById('tp-downloads').innerHTML = `
+    <button class="btn-sm green" onclick="openFolder('${escPath(currentTpResult.output_dir)}')">📁 Open Output Folder</button>
+    <button class="btn-sm" onclick="downloadFile('${escPath(experiment.plot_path)}')">⬇ Current Plot PNG</button>
+    <button class="btn-sm" onclick="downloadFile('${escPath(currentTpResult.summary_path)}')">⬇ Analysis Workbook</button>`;
+}
+function applyTpPlotSettings(settings) {
+  const values = {
+    tp_plot_x_basis:settings.x_axis_basis,
+    tp_plot_title:settings.title, tp_plot_x_label:settings.x_axis_label, tp_plot_y_label:settings.y_axis_label,
+    tp_plot_tick_font:settings.tick_font_size, tp_plot_axis_font:settings.axis_font_size,
+    tp_plot_title_font:settings.title_font_size, tp_plot_legend_font:settings.legend_font_size,
+    tp_plot_line_width:settings.line_width, tp_plot_max_peak_labels:settings.max_peak_labels,
+    tp_plot_dpi:settings.png_dpi,
+    tp_plot_width:settings.figure_width, tp_plot_height:settings.figure_height,
+    tp_plot_x_min:settings.x_axis_min, tp_plot_x_max:settings.x_axis_max,
+    tp_plot_y_min:settings.y_axis_min, tp_plot_y_max:settings.y_axis_max,
+    tp_plot_signal_color:settings.signal_color, tp_plot_baseline_color:settings.baseline_color,
+    tp_plot_peak_color:settings.peak_color, tp_plot_integration_color:settings.integration_color};
+  Object.entries(values).forEach(([id,value]) => document.getElementById(id).value = value ?? '');
+  ['baseline','peak_markers','peak_labels','y_tick_labels','integration','grid'].forEach(name =>
+    document.getElementById(`tp_plot_show_${name}`).checked = Boolean(settings[`show_${name}`]));
+}
+function updateTpAxisLabel() {
+  const basis = document.getElementById('tp_plot_x_basis').value;
+  const label = document.getElementById('tp_plot_x_label');
+  if (!label.value || label.value === 'Temperature (°C)' || label.value === 'Time (min)')
+    label.value = basis === 'time' ? 'Time (min)' : 'Temperature (°C)';
+}
+function collectTpPlotSettings() {
+  return {
+    x_axis_basis:document.getElementById('tp_plot_x_basis').value,
+    title:document.getElementById('tp_plot_title').value,
+    x_axis_label:document.getElementById('tp_plot_x_label').value,
+    y_axis_label:document.getElementById('tp_plot_y_label').value,
+    tick_font_size:charNumber('tp_plot_tick_font'), axis_font_size:charNumber('tp_plot_axis_font'),
+    title_font_size:charNumber('tp_plot_title_font'), legend_font_size:charNumber('tp_plot_legend_font'),
+    line_width:charNumber('tp_plot_line_width'), max_peak_labels:charNumber('tp_plot_max_peak_labels'),
+    png_dpi:charNumber('tp_plot_dpi'),
+    figure_width:charNumber('tp_plot_width'), figure_height:charNumber('tp_plot_height'),
+    x_axis_min:charNumber('tp_plot_x_min'), x_axis_max:charNumber('tp_plot_x_max'),
+    y_axis_min:charNumber('tp_plot_y_min'), y_axis_max:charNumber('tp_plot_y_max'),
+    signal_color:document.getElementById('tp_plot_signal_color').value,
+    baseline_color:document.getElementById('tp_plot_baseline_color').value,
+    peak_color:document.getElementById('tp_plot_peak_color').value,
+    integration_color:document.getElementById('tp_plot_integration_color').value,
+    show_baseline:document.getElementById('tp_plot_show_baseline').checked,
+    show_peak_markers:document.getElementById('tp_plot_show_peak_markers').checked,
+    show_peak_labels:document.getElementById('tp_plot_show_peak_labels').checked,
+    show_y_tick_labels:document.getElementById('tp_plot_show_y_tick_labels').checked,
+    show_integration:document.getElementById('tp_plot_show_integration').checked,
+    show_grid:document.getElementById('tp_plot_show_grid').checked,
+  };
+}
+async function regenerateTPPlot() {
+  const status = document.getElementById('tp-plot-status');
+  if (!currentTpResult?.plot_token || !currentTpExperimentKey) return;
+  const button = document.getElementById('tp-regenerate'); button.disabled = true;
+  status.textContent = 'Rendering and updating workbook...';
+  try {
+    const response = await fetch('/api/regenerate_tp_plot', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({plot_token:currentTpResult.plot_token, experiment_key:currentTpExperimentKey, settings:collectTpPlotSettings()})});
+    const result = await response.json(); if (!response.ok || result.error) throw new Error(result.error || 'Plot regeneration failed.');
+    const experiment = currentTpResult.experiments.find(item => item.key === currentTpExperimentKey);
+    experiment.plot_b64 = result.plot_b64; experiment.plot_path = result.plot_path; experiment.plot_settings = result.plot_settings;
+    currentTpResult.summary_path = result.summary_path;
+    renderTpExperiment(currentTpExperimentKey); status.textContent = 'Plot and embedded workbook image updated.';
+  } catch (failure) { status.textContent = failure.message; status.style.color = 'var(--danger)'; }
+  finally { button.disabled = false; }
+}
+
+// ── BET UI ──────────────────────────────────────────────────────────────────
+function betDragOver(event) { event.preventDefault(); document.getElementById('bet-dropzone').classList.add('dragover'); }
+function betDragLeave() { document.getElementById('bet-dropzone').classList.remove('dragover'); }
+function betDrop(event) {
+  event.preventDefault(); betDragLeave(); const file = event.dataTransfer.files[0];
+  if (file && charSetFile('bet', file, ['.xls','.xlsx','.csv','.tsv','.txt'])) betSelectedFile = file;
+}
+function betFileSelect(event) {
+  const file = event.target.files[0];
+  if (file && charSetFile('bet', file, ['.xls','.xlsx','.csv','.tsv','.txt'])) betSelectedFile = file;
+}
+async function processBET() {
+  const error = document.getElementById('bet-error'); error.classList.remove('visible');
+  if (!betSelectedFile) { error.textContent = 'Please upload a BET file first.'; error.classList.add('visible'); return; }
+  const data = new FormData(); data.append('file', betSelectedFile);
+  ['sample_id','sample_mass_g','p_min','p_max','cross_section_nm2','molar_volume_cm3_mol','liquid_molar_volume_cm3_mol','output_dir']
+    .forEach(field => data.append(field, document.getElementById(`bet_${field}`).value));
+  const button = document.getElementById('bet-btn-process'); button.disabled = true;
+  document.getElementById('bet-progress').classList.add('visible');
+  document.getElementById('bet-results').classList.remove('visible');
+  try {
+    const response = await fetch('/api/process_bet', {method:'POST', body:data});
+    const result = await response.json(); if (!response.ok || result.error) throw new Error(result.error || 'BET processing failed.');
+    currentBetResult = result;
+    if (!document.getElementById('bet_sample_id').value) document.getElementById('bet_sample_id').value = result.sample_id || '';
+    if (!document.getElementById('bet_sample_mass_g').value && result.sample_mass_g != null) document.getElementById('bet_sample_mass_g').value = result.sample_mass_g;
+    charStats('bet-stats', [
+      {label:'BET surface area', value:charSig(result.surface_area_m2_g,5), unit:'m²/g'},
+      {label:'BET surface area (reported)', value:charSig(result.source_surface_area_m2_g,5), unit:'m²/g'},
+      {label:'BET constant C', value:charSig(result.c_constant,5), unit:''},
+      {label:'Monolayer capacity', value:charSig(result.monolayer_capacity_cm3_g_stp,5), unit:'cm³ STP/g'},
+      {label:'Total pore volume', value:charSig(result.total_pore_volume_cm3_g,5), unit:'cm³/g'},
+      {label:'Average pore diameter', value:charSig(result.average_pore_diameter_nm,5), unit:'nm (4V/A)'},
+      {label:'R²', value:charSig(result.r_squared,7), unit:''},
+      {label:result.window_source === 'User-selected' ? 'User-selected fit window' : 'Recommended fit window',
+       value:`${charFormat(result.used_p_min,4)} – ${charFormat(result.used_p_max,4)}`,
+       unit:`${result.n_points} points`},
+    ]);
+    const sourceRows = Object.entries(result.source_metrics || {});
+    document.getElementById('bet-source-metrics-body').innerHTML = sourceRows.map(([label,value]) =>
+      `<tr><td>${escHtml(label)} (reported)</td><td>${escHtml(value)}</td></tr>`).join('') || '<tr><td colspan="2">No additional source-report parameters were found.</td></tr>';
+    const warning = document.getElementById('bet-warning');
+    warning.textContent = (result.flags || []).join('\n'); warning.classList.toggle('visible', (result.flags || []).length > 0);
+    document.getElementById('bet-status-pill').innerHTML = (result.flags || []).length
+      ? '<span class="pill yellow">Review consistency flags</span>' : '<span class="pill green">Consistency checks passed</span>';
+    document.getElementById('bet-result-plot').src = `data:image/png;base64,${result.plot_b64}`;
+    applyBetPlotSettings(result.plot_settings || {});
+    renderBetDownloads();
+    document.getElementById('bet-results').classList.add('visible');
+    document.getElementById('bet-results').scrollIntoView({behavior:'smooth', block:'start'});
+  } catch (failure) { error.textContent = failure.message; error.classList.add('visible'); }
+  finally { button.disabled = false; document.getElementById('bet-progress').classList.remove('visible'); }
+}
+function renderBetDownloads() {
+  document.getElementById('bet-downloads').innerHTML = `
+    <button class="btn-sm green" onclick="openFolder('${escPath(currentBetResult.output_dir)}')">📁 Open Output Folder</button>
+    <button class="btn-sm" onclick="downloadFile('${escPath(currentBetResult.plot_path)}')">⬇ Plot PNG</button>
+    <button class="btn-sm" onclick="downloadFile('${escPath(currentBetResult.summary_path)}')">⬇ Analysis Workbook</button>`;
+}
+function applyBetPlotSettings(settings) {
+  const values = {
+    bet_plot_title:settings.title, bet_plot_iso_x_label:settings.isotherm_x_label,
+    bet_plot_iso_y_label:settings.isotherm_y_label, bet_plot_bet_x_label:settings.bet_x_label,
+    bet_plot_bet_y_label:settings.bet_y_label, bet_plot_tick_font:settings.tick_font_size,
+    bet_plot_axis_font:settings.axis_font_size, bet_plot_title_font:settings.title_font_size,
+    bet_plot_legend_font:settings.legend_font_size, bet_plot_line_width:settings.line_width,
+    bet_plot_marker_size:settings.marker_size, bet_plot_dpi:settings.png_dpi,
+    bet_plot_width:settings.figure_width, bet_plot_height:settings.figure_height,
+    bet_plot_x_min:settings.x_axis_min, bet_plot_x_max:settings.x_axis_max,
+    bet_plot_iso_y_min:settings.isotherm_y_min, bet_plot_iso_y_max:settings.isotherm_y_max,
+    bet_plot_bet_y_min:settings.bet_y_min, bet_plot_bet_y_max:settings.bet_y_max,
+    bet_plot_adsorption_color:settings.adsorption_color, bet_plot_desorption_color:settings.desorption_color,
+    bet_plot_fit_color:settings.fit_color, bet_plot_window_color:settings.window_color};
+  Object.entries(values).forEach(([id,value]) => document.getElementById(id).value = value ?? '');
+  document.getElementById('bet_plot_show_desorption').checked = Boolean(settings.show_desorption);
+  document.getElementById('bet_plot_show_isotherm').checked = Boolean(settings.show_isotherm);
+  document.getElementById('bet_plot_show_bet_plot').checked = Boolean(settings.show_bet_plot);
+  document.getElementById('bet_plot_show_fit_window').checked = Boolean(settings.show_fit_window);
+  document.getElementById('bet_plot_show_grid').checked = Boolean(settings.show_grid);
+}
+function collectBetPlotSettings() {
+  return {
+    title:document.getElementById('bet_plot_title').value,
+    isotherm_x_label:document.getElementById('bet_plot_iso_x_label').value,
+    isotherm_y_label:document.getElementById('bet_plot_iso_y_label').value,
+    bet_x_label:document.getElementById('bet_plot_bet_x_label').value,
+    bet_y_label:document.getElementById('bet_plot_bet_y_label').value,
+    tick_font_size:charNumber('bet_plot_tick_font'), axis_font_size:charNumber('bet_plot_axis_font'),
+    title_font_size:charNumber('bet_plot_title_font'), legend_font_size:charNumber('bet_plot_legend_font'),
+    line_width:charNumber('bet_plot_line_width'), marker_size:charNumber('bet_plot_marker_size'),
+    png_dpi:charNumber('bet_plot_dpi'), figure_width:charNumber('bet_plot_width'),
+    figure_height:charNumber('bet_plot_height'), x_axis_min:charNumber('bet_plot_x_min'),
+    x_axis_max:charNumber('bet_plot_x_max'), isotherm_y_min:charNumber('bet_plot_iso_y_min'),
+    isotherm_y_max:charNumber('bet_plot_iso_y_max'), bet_y_min:charNumber('bet_plot_bet_y_min'),
+    bet_y_max:charNumber('bet_plot_bet_y_max'),
+    adsorption_color:document.getElementById('bet_plot_adsorption_color').value,
+    desorption_color:document.getElementById('bet_plot_desorption_color').value,
+    fit_color:document.getElementById('bet_plot_fit_color').value,
+    window_color:document.getElementById('bet_plot_window_color').value,
+    show_isotherm:document.getElementById('bet_plot_show_isotherm').checked,
+    show_bet_plot:document.getElementById('bet_plot_show_bet_plot').checked,
+    show_desorption:document.getElementById('bet_plot_show_desorption').checked,
+    show_fit_window:document.getElementById('bet_plot_show_fit_window').checked,
+    show_grid:document.getElementById('bet_plot_show_grid').checked,
+  };
+}
+async function regenerateBETPlot() {
+  if (!currentBetResult?.plot_token) return;
+  const status = document.getElementById('bet-plot-status');
+  const button = document.getElementById('bet-regenerate'); button.disabled = true;
+  status.textContent = 'Rendering and updating workbook...';
+  try {
+    const response = await fetch('/api/regenerate_bet_plot', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({plot_token:currentBetResult.plot_token, settings:collectBetPlotSettings()})});
+    const result = await response.json(); if (!response.ok || result.error) throw new Error(result.error || 'Plot regeneration failed.');
+    currentBetResult.plot_path = result.plot_path; currentBetResult.summary_path = result.summary_path;
+    currentBetResult.plot_settings = result.plot_settings;
+    document.getElementById('bet-result-plot').src = `data:image/png;base64,${result.plot_b64}`;
+    applyBetPlotSettings(result.plot_settings); renderBetDownloads();
+    status.textContent = 'Plot and embedded workbook image updated.';
+  } catch (failure) { status.textContent = failure.message; status.style.color = 'var(--danger)'; }
+  finally { button.disabled = false; }
 }
 
 function openXrdFittingGuide() {

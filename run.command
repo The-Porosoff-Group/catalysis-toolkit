@@ -104,7 +104,7 @@ find_python() {
 
 core_dependencies_ready() {
     "$PYTHON_BIN" -c \
-        "import flask, yaml, numpy, pandas, openpyxl, matplotlib, PIL, requests, pymatgen, scipy" \
+        "import flask, yaml, numpy, pandas, openpyxl, xlrd, matplotlib, PIL, requests, pymatgen, scipy" \
         >/dev/null 2>&1
 }
 
@@ -238,7 +238,7 @@ if ! core_dependencies_ready; then
 
     if [ "$USE_CONDA" -eq 1 ]; then
         conda install --prefix "$CONDA_ENV" --channel conda-forge --yes \
-            numpy scipy matplotlib pandas pymatgen pillow openpyxl \
+            numpy scipy matplotlib pandas pymatgen pillow openpyxl xlrd \
             || die "Conda could not install the scientific dependencies."
     fi
 
