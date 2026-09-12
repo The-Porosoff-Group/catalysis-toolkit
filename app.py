@@ -1228,6 +1228,7 @@ def process_xrd():
         tt_max     = float(form.get('tt_max', 90.0))
         sample_id  = form.get('sample_id', 'Sample')
         figure_title = form.get('figure_title', '').strip()
+        show_figure_title = form.get('show_figure_title', 'true').lower() == 'true'
         notes      = form.get('notes', '')
         wl_label   = form.get('wavelength_label', f'λ={wavelength:.5f} Å')
 
@@ -1389,6 +1390,7 @@ def process_xrd():
             cal_metadata = {
                 'sample_id': sample_id,
                 'figure_title': figure_title,
+                'show_figure_title': show_figure_title,
                 'wavelength_label': wl_label,
                 'method': 'GSAS-II Calibration',
                 'analysis_date': analysis_date,
@@ -1457,6 +1459,7 @@ def process_xrd():
             metadata   = {
                 'sample_id': sample_id,
                 'figure_title': figure_title,
+                'show_figure_title': show_figure_title,
                 'notes': notes,
                 'analysis_date': analysis_date,
                 'source_file': f.filename,

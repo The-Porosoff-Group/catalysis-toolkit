@@ -767,6 +767,12 @@
               <div class="form-group full">
                 <label>Figure Title <span style="color:var(--muted);font-weight:400;">— optional</span></label>
                 <input type="text" id="xrd-figure-title" maxlength="80" placeholder="Leave blank to use the Sample ID">
+                <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;text-transform:none;letter-spacing:normal;">
+                  <input type="checkbox" id="xrd-show-figure-title" checked style="width:auto;"
+                         onchange="document.getElementById('xrd-figure-title').disabled = !this.checked;">
+                  Show figure title
+                </label>
+                <span style="font-size:11px;color:var(--muted);">Uncheck for no title on figures exported with the next fit.</span>
               </div>
               <div class="form-group">
                 <label>2θ Min (°)</label>
@@ -3055,6 +3061,7 @@ async function runXRD(method) {
         document.getElementById('xrd-source').selectedIndex].text);
     fd.append('sample_id',   document.getElementById('xrd-sample-id').value || xrdFile.name);
     fd.append('figure_title', document.getElementById('xrd-figure-title').value.trim());
+    fd.append('show_figure_title', document.getElementById('xrd-show-figure-title').checked);
     fd.append('tt_min',      document.getElementById('xrd-tt-min').value);
     fd.append('tt_max',      document.getElementById('xrd-tt-max').value);
     fd.append('n_bg_coeffs', document.getElementById('xrd-bg-coeffs').value || 'auto');
@@ -3671,14 +3678,15 @@ function renderXrdPublicationPlot(data) {
 
     const sample = document.getElementById('xrd-sample-id')?.value || xrdFile?.name || 'Sample';
     const figureTitle = document.getElementById('xrd-figure-title')?.value.trim() || sample;
+    const showFigureTitle = document.getElementById('xrd-show-figure-title')?.checked ?? true;
     const stats = data.statistics || {};
     const statsTitle = `Rwp ${stats.Rwp ?? '—'} % · Rp ${stats.Rp ?? '—'} % · χ² ${stats.chi2 ?? '—'} · GoF ${stats.GoF ?? '—'}`;
     const layout = {
       paper_bgcolor:palette.paper, plot_bgcolor:palette.plot,
       font:{color:palette.text,size:12,family:'Arial, sans-serif'},
-      margin:{l:110,r:22,t:70,b:58},
-      title:{text:`<b>${escHtml(figureTitle)}</b><br><span style="font-size:11px">${statsTitle}</span>`,
-             x:0.5,xanchor:'center',font:{size:17}},
+      margin:{l:110,r:22,t:showFigureTitle ? 70 : 20,b:58},
+      title:showFigureTitle ? {text:`<b>${escHtml(figureTitle)}</b><br><span style="font-size:11px">${statsTitle}</span>`,
+             x:0.5,xanchor:'center',font:{size:17}} : undefined,
       xaxis:{gridcolor:palette.grid,zeroline:false,tickfont:{size:12}},
       yaxis:{title:{text:'Intensity (arbitrary units)',font:{size:14}},
              gridcolor:palette.grid,zeroline:false,domain:[mainBottom,1],tickfont:{size:12}},
@@ -3893,6 +3901,8 @@ function resetXRD() {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
+  document.getElementById('xrd-show-figure-title').checked = true;
+  document.getElementById('xrd-figure-title').disabled = false;
   document.getElementById('xrd-candidates-wrap').style.display = 'none';
   document.getElementById('xrd-selected-wrap').style.display = 'none';
   document.getElementById('xrd-candidate-list').innerHTML = '';

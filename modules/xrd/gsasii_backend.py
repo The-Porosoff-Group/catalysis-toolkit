@@ -1786,12 +1786,13 @@ def _extract_profile_params(phase_obj):
     Returns dict with crystallite size and microstrain.
 
     GSAS-II Size data structure (isotropic):
-      Size = ['isotropic', [size_value, refine_flag], ...]
+      Size = ['isotropic', [size_value, axial_value, LGmix],
+              [refine_size, refine_axial, refine_LGmix], ...]
     where size_value is in MICRONS (µm), NOT Angstroms.
     Convert: size_A = size_um * 10000
 
     Mustrain data structure (isotropic):
-      Mustrain = ['isotropic', [strain_value, refine_flag], ...]
+      Mustrain uses the same separate value and refinement-flag lists.
     where strain_value is in units of 10^-6 (micro-strain).
     """
     try:
@@ -1801,7 +1802,10 @@ def _extract_profile_params(phase_obj):
         strain_data = hapData.get('Mustrain', [])
 
         cryst_size_A = None
-        if size_data and len(size_data) > 1:
+        # A positive Size alone is not evidence of refinement: GSAS-II
+        # initializes it to 1 micron even when its refinement flag is off.
+        if (len(size_data) > 2 and size_data[0] == 'isotropic'
+                and size_data[2][0]):
             size_val = float(size_data[1][0]) if size_data[1][0] > 0 else None
             if size_val is not None and size_val > 0:
                 # GSAS-II stores Size in µm; convert to Å (×10000)
@@ -4613,11 +4617,10 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             microstrain_source = (
                 'gsas_hap_mustrain'
                 if microstrain is not None else None)
-            # In verification_mode, Stage 4b (size refinement) was skipped,
-            # so HAP Size is at GSAS-II's default (~1 µm).  Discard that
-            # value and let the Y-based fallback below estimate size from
-            # the refined Y parameter.
-            if verification_mode and not _size_was_requested:
+            # Size can be disabled in any workflow, not only verification
+            # mode. Never report an unrequested HAP value as a fitted size;
+            # allow the Y / phase-pattern estimates below to run instead.
+            if not _size_was_requested:
                 cryst_A = None
                 cryst_source = None
 
