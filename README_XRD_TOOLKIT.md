@@ -50,6 +50,11 @@ The first launch creates a local Python environment and installs dependencies. G
 - Fit warnings and baseline comparison
 - Outputs for phase fraction, uncertainty notes, FWHM reference peak, crystallite size, preferred-orientation value, and cell-change percentages
 
+Figure exports use Arial for text, subscripts, and crystallographic overbars.
+Install Arial on the computer generating the figures; the font is not bundled.
+If unavailable, exports warn and use Liberation Sans, then DejaVu Sans. Existing
+PNGs keep their original typography until regenerated.
+
 ## Recommended Workflow
 
 1. Upload the measured XRD pattern.

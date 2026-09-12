@@ -236,13 +236,44 @@ def _source_metrics(sheets):
     return cleaned
 
 
+def _sample_mass_from_file(sheets):
+    """Read the mass and its unit, returning grams."""
+    for sheet in sheets:
+        for (row, column), label in sheet['cells'].items():
+            match = re.fullmatch(r'sample\s+mass\s*(?:\((mg|g|kg)\))?\s*:?',
+                                 _cell_text(label), re.IGNORECASE)
+            if not match:
+                continue
+            value = sheet['cells'].get((row, column + 1))
+            mass = _to_float(value)
+            if mass is None:
+                continue
+            unit = re.search(r'(?<![A-Za-z])(mg|kg|g)\b', str(value), re.IGNORECASE)
+            unit = unit.group(1).lower() if unit else (match.group(1) or 'g').lower()
+            return mass * {'g': 1.0, 'mg': 0.001, 'kg': 1000.0}[unit]
+    return None
+
+
+def _quantity_basis(label):
+    text = _cell_text(label).lower().replace('³', '3').replace('⁻¹', '-1')
+    if not re.search(r'cm\s*\^?\s*3|\bml\b', text):
+        raise ValueError('BET quantity units must be cm³/g STP or cm³ STP. '
+                         'Include the units in the quantity-column header.')
+    denominator = re.search(r'/\s*([a-z]+)', text)
+    inverse_unit = re.search(r'\b(mg|kg)\s*\^?\s*-\s*1\b', text)
+    if (denominator and denominator.group(1) != 'g') or inverse_unit:
+        raise ValueError('Unsupported BET quantity normalization; use cm³/g STP or cm³ STP.')
+    per_mass = bool(re.search(r'/\s*g\b|\bg\s*\^?\s*-\s*1\b', text))
+    return 'per_mass' if per_mass else 'absolute'
+
+
 def _extract_isotherm(sheets):
     for sheet in sheets:
         cells = sheet['cells']
         candidates = []
         for (row, column), value in cells.items():
             label = _cell_text(value).lower()
-            if 'relative pressure' in label or label in {'p/p0', 'p/p°'}:
+            if 'relative pressure' in label or label in {'p/p0', 'p/p°', 'p/p₀'}:
                 candidates.append((row, column))
         for header_row, pressure_col in sorted(candidates):
             quantity_col = absolute_col = elapsed_col = None
@@ -256,6 +287,8 @@ def _extract_isotherm(sheets):
                     elapsed_col = column
             if quantity_col is None:
                 continue
+            quantity_header = _cell_text(cells.get((header_row, quantity_col)))
+            basis = _quantity_basis(quantity_header)
             points = []
             blank_run = 0
             max_row = max((row for row, _ in cells), default=header_row)
@@ -273,7 +306,8 @@ def _extract_isotherm(sheets):
                 points.append({
                     'relative_pressure': pressure,
                     'absolute_pressure_mmhg': _to_float(cells.get((row, absolute_col))) if absolute_col is not None else None,
-                    'quantity_cm3_g_stp': quantity,
+                    'source_quantity': quantity,
+                    'quantity_cm3_g_stp': quantity if basis == 'per_mass' else None,
                     'elapsed_time': _cell_text(cells.get((row, elapsed_col))) if elapsed_col is not None else '',
                     'source_sheet': sheet['name'],
                     'source_row': row + 1,
@@ -282,19 +316,64 @@ def _extract_isotherm(sheets):
                 turning = int(np.nanargmax([point['relative_pressure'] for point in points]))
                 for index, point in enumerate(points):
                     point['branch'] = 'Adsorption' if index <= turning else 'Desorption'
-                return points
+                return points, basis, quantity_header
     raise ValueError('Could not find an isotherm table with relative pressure and quantity adsorbed columns.')
 
 
 def parse_bet_file(filepath):
     sheets = _load_sheets(filepath)
+    points, basis, quantity_header = _extract_isotherm(sheets)
     return {
         'sample_id': _cell_text(_find_label_value(sheets, r'^sample\s*:?$')),
-        'sample_mass_g': _to_float(_find_label_value(sheets, r'^sample\s+mass\s*:?$')),
+        'sample_mass_g': _sample_mass_from_file(sheets),
         'adsorptive': _cell_text(_find_label_value(sheets, r'analysis\s+adsorptive')) or 'N2',
-        'points': _extract_isotherm(sheets),
+        'points': points, 'quantity_basis': basis, 'quantity_header': quantity_header,
         'source_metrics': _source_metrics(sheets),
         'source_file': os.path.basename(filepath),
+    }
+
+
+def _positive_setting(value, label, default=None):
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return default
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f'{label} must be a positive finite number.') from None
+    if isinstance(value, bool) or not math.isfinite(number) or number <= 0:
+        raise ValueError(f'{label} must be a positive finite number.')
+    return number
+
+
+def _normalize_isotherm(parsed, sample_mass_g=None):
+    """Renormalize from the original uptake exactly once, without editing it."""
+    source_mass = _positive_setting(parsed.get('sample_mass_g'), 'File sample mass')
+    mass = _positive_setting(sample_mass_g, 'Sample mass', default=source_mass)
+    basis = parsed.get('quantity_basis', 'per_mass')
+    if basis == 'absolute':
+        if mass is None:
+            raise ValueError('This file contains absolute gas volumes (cm³ STP). '
+                             'Enter the sample mass to calculate m²/g.')
+        factor = 1.0 / mass
+        note = f'Absolute gas volumes divided by the calculation mass ({mass:g} g).'
+    elif basis == 'per_mass':
+        if mass is not None and source_mass is None:
+            raise ValueError('This file already contains volumes per gram, but its original '
+                             'sample mass is missing. A mass correction needs that original '
+                             'mass in the file. Leave Sample Mass blank to use the existing normalization.')
+        factor = source_mass / mass if mass is not None else 1.0
+        note = (f'File mass: {source_mass:g} g. Calculation mass: {mass:g} g.'
+                if source_mass is not None else
+                'Using the file’s volumes per gram; the original sample mass was not provided.')
+    else:
+        raise ValueError('Unknown BET quantity units; use cm³/g STP or cm³ STP.')
+    normalized = []
+    for point in parsed['points']:
+        original = point.get('source_quantity', point.get('quantity_cm3_g_stp'))
+        normalized.append({**point, 'quantity_cm3_g_stp': float(original) * factor})
+    return normalized, {
+        'source_mass_g': source_mass, 'sample_mass_g': mass,
+        'quantity_basis': basis, 'quantity_scale_factor': factor, 'note': note,
     }
 
 
@@ -382,10 +461,19 @@ def recommend_bet_window(pressure, quantity, cross_section_nm2=0.162,
 
 
 def analyze_bet(parsed, p_min=None, p_max=None, cross_section_nm2=0.162,
-                molar_volume_cm3_mol=22414.0, liquid_molar_volume_cm3_mol=34.65):
-    if liquid_molar_volume_cm3_mol <= 0:
-        raise ValueError('Adsorbate liquid molar volume must be greater than zero.')
-    adsorption = [point for point in parsed['points'] if point['branch'] == 'Adsorption']
+                molar_volume_cm3_mol=22414.0, liquid_molar_volume_cm3_mol=34.65,
+                sample_mass_g=None):
+    try:
+        p_min = None if p_min is None or str(p_min).strip() == '' else float(p_min)
+        p_max = None if p_max is None or str(p_max).strip() == '' else float(p_max)
+    except (TypeError, ValueError):
+        raise ValueError('BET pressure limits must be numbers between 0 and 1.') from None
+    cross_section_nm2 = _positive_setting(cross_section_nm2, 'Molecular cross-section', 0.162)
+    molar_volume_cm3_mol = _positive_setting(molar_volume_cm3_mol, 'STP molar volume', 22414.0)
+    liquid_molar_volume_cm3_mol = _positive_setting(
+        liquid_molar_volume_cm3_mol, 'Adsorbate liquid molar volume', 34.65)
+    normalized_points, normalization = _normalize_isotherm(parsed, sample_mass_g)
+    adsorption = [point for point in normalized_points if point['branch'] == 'Adsorption']
     pressure = np.asarray([point['relative_pressure'] for point in adsorption], dtype=float)
     quantity = np.asarray([point['quantity_cm3_g_stp'] for point in adsorption], dtype=float)
     recommended_min, recommended_max, _, recommendation_physical = recommend_bet_window(
@@ -393,7 +481,8 @@ def analyze_bet(parsed, p_min=None, p_max=None, cross_section_nm2=0.162,
     automatic = p_min is None or p_max is None
     used_min = recommended_min if p_min is None else float(p_min)
     used_max = recommended_max if p_max is None else float(p_max)
-    if used_min < 0 or used_max <= used_min or used_max >= 1:
+    if (not math.isfinite(used_min) or not math.isfinite(used_max)
+            or used_min < 0 or used_max <= used_min or used_max >= 1):
         raise ValueError('The BET p/p0 window must satisfy 0 <= minimum < maximum < 1.')
     included = (pressure >= used_min) & (pressure <= used_max) & (quantity > 0)
     if int(np.sum(included)) < 5:
@@ -431,6 +520,7 @@ def analyze_bet(parsed, p_min=None, p_max=None, cross_section_nm2=0.162,
         'window_source': 'Automatic consistency recommendation' if automatic else 'User-selected',
         'n_points': int(np.sum(included)), 'flags': flags,
         'included_mask': included, 'adsorption_pressure': pressure,
+        'normalized_points': normalized_points, 'mass_normalization': normalization,
         'adsorption_quantity': quantity, 'cross_section_nm2': float(cross_section_nm2),
         'molar_volume_cm3_mol': float(molar_volume_cm3_mol),
         'liquid_molar_volume_cm3_mol': float(liquid_molar_volume_cm3_mol),
@@ -516,8 +606,9 @@ def make_plot(parsed, analysis, output_dir, metadata, settings=None):
     from modules.characterization_plot import render_bet_plot
 
     settings = normalize_plot_settings(settings, metadata.get('sample_id'))
-    adsorption = [point for point in parsed['points'] if point['branch'] == 'Adsorption']
-    desorption = [point for point in parsed['points'] if point['branch'] == 'Desorption']
+    points = analysis['normalized_points']
+    adsorption = [point for point in points if point['branch'] == 'Adsorption']
+    desorption = [point for point in points if point['branch'] == 'Desorption']
     ax = np.asarray([point['relative_pressure'] for point in adsorption], dtype=float)
     aq = np.asarray([point['quantity_cm3_g_stp'] for point in adsorption], dtype=float)
     os.makedirs(output_dir, exist_ok=True)
@@ -567,11 +658,12 @@ def write_workbook(parsed, analysis, plot_path, output_dir, metadata, plot_setti
     for values in (
         ('Sample ID', metadata.get('sample_id') or parsed.get('sample_id')),
         ('Source file', parsed.get('source_file')), ('Adsorptive', parsed.get('adsorptive')),
-        ('Sample mass (g)', metadata.get('sample_mass_g') or parsed.get('sample_mass_g')),
+        ('Sample mass used (g)', analysis['mass_normalization']['sample_mass_g']),
+        ('Original file mass (g)', analysis['mass_normalization']['source_mass_g']),
         ('Processed', datetime.now().isoformat(timespec='seconds')), ()):
         summary.append(values)
     summary.append(('Calculated metric', 'Value'))
-    _style_header(summary[8])
+    _style_header(summary[summary.max_row])
     metric_rows = [
         ('BET surface area (m²/g)', analysis['surface_area_m2_g']),
         ('BET constant C', analysis['c_constant']),
@@ -618,9 +710,14 @@ def write_workbook(parsed, analysis, plot_path, output_dir, metadata, plot_setti
     _style_header(settings_sheet[1])
     settings_rows = [
         ('sample_id', metadata.get('sample_id'), 'User-entered sample identifier'),
-        ('sample_mass_g', metadata.get('sample_mass_g') or parsed.get('sample_mass_g'), 'Parsed unless overridden'),
-        ('bet_p_min', analysis['used_p_min'], 'Editable fit-window lower bound'),
-        ('bet_p_max', analysis['used_p_max'], 'Editable fit-window upper bound'),
+        ('sample_mass_g', analysis['mass_normalization']['sample_mass_g'], 'Mass used in the calculation'),
+        ('source_mass_g', analysis['mass_normalization']['source_mass_g'], 'Original file mass'),
+        ('quantity_scale_factor', analysis['mass_normalization']['quantity_scale_factor'],
+         'Multiplier from original uptake to the cm³ STP/g used in this analysis'),
+        ('source_quantity_header', parsed.get('quantity_header', 'Quantity adsorbed (cm³/g STP)'),
+         'Original quantity-column header'),
+        ('bet_p_min', analysis['used_p_min'], 'Applied lower bound; recalculate in the toolkit to change the fit'),
+        ('bet_p_max', analysis['used_p_max'], 'Applied upper bound; recalculate in the toolkit to change the fit'),
         ('cross_section_nm2', analysis['cross_section_nm2'], 'Adsorbate molecular cross-sectional area'),
         ('molar_volume_cm3_mol', analysis['molar_volume_cm3_mol'], 'STP molar volume used for surface area'),
         ('liquid_molar_volume_cm3_mol', analysis['liquid_molar_volume_cm3_mol'],
@@ -639,12 +736,15 @@ def write_workbook(parsed, analysis, plot_path, output_dir, metadata, plot_setti
 
     isotherm = workbook.create_sheet('Isotherm')
     isotherm.append(('Point', 'Branch', 'Relative pressure (p/p₀)', 'Absolute pressure (mmHg)',
-                     'Quantity adsorbed (cm³ STP/g)', 'Elapsed time', 'Source sheet', 'Source row'))
+                     parsed.get('quantity_header', 'Original quantity adsorbed (cm³ STP/g)'),
+                     'Elapsed time', 'Source sheet', 'Source row', 'Quantity used (cm³ STP/g)'))
     _style_header(isotherm[1])
     for index, point in enumerate(parsed['points'], start=1):
         isotherm.append((index, point['branch'], point['relative_pressure'],
-                         point.get('absolute_pressure_mmhg'), point['quantity_cm3_g_stp'],
-                         point.get('elapsed_time'), point.get('source_sheet'), point.get('source_row')))
+                         point.get('absolute_pressure_mmhg'),
+                         point.get('source_quantity', point.get('quantity_cm3_g_stp')),
+                         point.get('elapsed_time'), point.get('source_sheet'), point.get('source_row'),
+                         analysis['normalized_points'][index - 1]['quantity_cm3_g_stp']))
     isotherm.freeze_panes = 'A2'
     isotherm.auto_filter.ref = isotherm.dimensions
     _autosize(isotherm)
@@ -683,7 +783,11 @@ def write_workbook(parsed, analysis, plot_path, output_dir, metadata, plot_setti
     notes.append(('Automatic window', 'Contiguous adsorption points are scored using positive C, monolayer-pressure inclusion, Rouquerol monotonicity, Qm agreement, and linearity.'))
     notes.append(('Calculated pore metrics', 'Total pore volume uses the highest-pressure adsorption uptake and the condensed adsorbate molar volume. Average pore diameter is 4V/A.'))
     notes.append(('Reported pore metrics', 'BJH, t-plot, Langmuir, micropore, and related source-report values are preserved on Source Metrics; they are labeled as reported rather than newly refitted.'))
-    notes.append(('Raw-data integrity', 'Instrument measurements are preserved on Isotherm; analysis columns are kept separately on BET Fit.'))
+    notes.append(('Mass normalization', analysis['mass_normalization']['note']))
+    notes.append(('Mass correction', 'For cm³/g input, uptake is multiplied by file mass / calculation mass. '
+                  'For absolute cm³ input, uptake is divided by calculation mass. Original instrument-report values stay fixed.'))
+    notes.append(('Raw-data integrity', 'Isotherm preserves original uptake and separately lists the normalized quantity used. BET Fit uses that normalized quantity.'))
+    notes.append(('Recalculation', 'Settings record the applied values. To change the mass or fit window, use Recalculate BET in the toolkit; editing this workbook does not refit the BET area.'))
     _autosize(notes, max_width=95)
     workbook.save(path)
     return path
@@ -694,15 +798,13 @@ def run(filepath, output_dir, metadata, params, plot_context=None):
     sample_id = str(metadata.get('sample_id') or parsed.get('sample_id') or 'BET Sample').strip()
     metadata = dict(metadata)
     metadata['sample_id'] = sample_id
-    metadata['sample_mass_g'] = (_optional_number(metadata.get('sample_mass_g'))
-                                 or parsed.get('sample_mass_g'))
     analysis = analyze_bet(
-        parsed, p_min=_optional_number(params.get('p_min')),
-        p_max=_optional_number(params.get('p_max')),
-        cross_section_nm2=_optional_number(params.get('cross_section_nm2')) or 0.162,
-        molar_volume_cm3_mol=_optional_number(params.get('molar_volume_cm3_mol')) or 22414.0,
-        liquid_molar_volume_cm3_mol=(
-            _optional_number(params.get('liquid_molar_volume_cm3_mol')) or 34.65))
+        parsed, p_min=params.get('p_min'), p_max=params.get('p_max'),
+        sample_mass_g=metadata.get('sample_mass_g'),
+        cross_section_nm2=params.get('cross_section_nm2'),
+        molar_volume_cm3_mol=params.get('molar_volume_cm3_mol'),
+        liquid_molar_volume_cm3_mol=params.get('liquid_molar_volume_cm3_mol'))
+    metadata['sample_mass_g'] = analysis['mass_normalization']['sample_mass_g']
     plot_path, settings = make_plot(parsed, analysis, output_dir, metadata, params.get('plot_settings'))
     workbook_path = write_workbook(parsed, analysis, plot_path, output_dir, metadata, settings)
     if plot_context is not None:
@@ -711,6 +813,7 @@ def run(filepath, output_dir, metadata, params, plot_context=None):
                              'plot_settings': settings})
     return {
         'sample_id': sample_id, 'sample_mass_g': metadata.get('sample_mass_g'),
+        'mass_normalization': analysis['mass_normalization'],
         'adsorptive': parsed.get('adsorptive'),
         'surface_area_m2_g': round(analysis['surface_area_m2_g'], 6),
         'source_surface_area_m2_g': _to_float(parsed['source_metrics'].get('BET surface area')),

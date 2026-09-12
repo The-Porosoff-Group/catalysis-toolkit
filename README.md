@@ -6,9 +6,26 @@ Supported workflows:
 
 - **GC analysis** — molar flows, conversion, carbon selectivity, and carbon balance from Shimadzu GC output, plus a publication-plot editor with shareable JSON presets.
 - **XRD analysis** — phase identification via Materials Project and COD lookup, staged GSAS-II refinement with per-phase controls, instrument-profile import, and reusable production presets.
+- **BET / isotherm analysis** — adsorption-window selection, BET consistency checks, and calculated surface area and pore metrics with plot and workbook exports.
 - **Modular design** — drop a new reaction config (`.yaml`) into `modules/reaction_configs/` and the GC engine picks it up; add a new data type by writing a Python module under `modules/`.
 
-Coming later: TGA / TPR / TPO, BET / isotherm, broader XRD presets.
+Coming later: TGA and broader XRD presets.
+
+Figure exports use Arial for text and scientific notation, including chemical
+subscripts, unit superscripts, and XRD overbars. Arial must be installed on the
+computer generating the figures; its font files are not bundled. If unavailable,
+exports warn and use Liberation Sans, then DejaVu Sans as a fallback. Existing
+saved PNGs retain their original font until regenerated.
+
+For BET, change the pressure bounds or sample mass under **BET Fit Settings**,
+then click **Recalculate BET**. The main result is the calculated area; the
+original instrument-report values are retained separately and stay fixed.
+Plot axis limits only change the figure. For uptake already expressed in cm³/g,
+mass correction multiplies uptake by the original file mass divided by the new
+mass; blank mass retains the file's normalization. Absolute cm³ uptake requires
+a sample mass and is divided by that mass. The workbook preserves original
+uptake alongside corrected uptake and records the applied settings; editing
+workbook settings does not recalculate the analysis.
 
 ---
 

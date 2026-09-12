@@ -10,6 +10,10 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from modules.plot_style import (
+    load_plot_font, ScientificDraw, scientific_text_image,
+)
+
 
 def _safe_file_token(value, default='GC'):
     text = str(value or '').strip()
@@ -1225,13 +1229,14 @@ def default_gc_plot_settings(reactant_label, metadata=None):
         metadata.get('catalyst_id') or metadata.get('source_file') or 'GC run')
     return {
         'title': str(title),
+        'show_title': True,
         'x_axis_label': '',
         'conversion_axis_label': f'{reactant_label} Conversion (%)',
         'selectivity_axis_label': 'Carbon-based selectivity (%)',
-        'tick_font_size': 16,
+        'tick_font_size': 24,
         'axis_font_size': 28,
         'title_font_size': 34,
-        'legend_font_size': 16,
+        'legend_font_size': 24,
         'bar_width_percent': 82,
         'bar_gap_px': 0,
         'png_dpi': 300,
@@ -1266,7 +1271,7 @@ def normalize_gc_plot_settings(settings, reactant_label, metadata=None):
         if key not in settings:
             continue
         text = str(settings.get(key) or '').strip()[:limit]
-        if key == 'x_axis_label':
+        if key in {'title', 'x_axis_label'}:
             normalized[key] = text
         elif text:
             normalized[key] = text
@@ -1301,6 +1306,8 @@ def normalize_gc_plot_settings(settings, reactant_label, metadata=None):
             normalized[minimum_key] = None
             normalized[maximum_key] = None
 
+    normalized['show_title'] = _metadata_bool(
+        settings, 'show_title', defaults['show_title'])
     normalized['show_carbon_balance'] = _metadata_bool(
         settings, 'show_carbon_balance', defaults['show_carbon_balance'])
     normalized['conversion_color'] = _normalize_hex_color(
@@ -1346,29 +1353,62 @@ def validate_gc_plot_axis_ranges(settings):
 
 
 def _legend_label_width(draw, label, font, sub_font):
-    width = 0
-    for ch in str(label):
-        use_font = sub_font if ch.isdigit() else font
-        bbox = draw.textbbox((0, 0), ch, font=use_font)
-        width += bbox[2] - bbox[0]
-    return width
+    bbox = draw.textbbox((0, 0), label, font=font)
+    return bbox[2] - bbox[0]
 
 
 def _draw_legend_label(draw, x, y, label, font, sub_font, fill=(0, 0, 0)):
-    cursor = int(x)
-    sub_offset = max(2, int(getattr(font, 'size', 14) * 0.35))
-    for ch in str(label):
-        is_sub = ch.isdigit()
-        use_font = sub_font if is_sub else font
-        y_pos = int(y) + (sub_offset if is_sub else 0)
-        draw.text((cursor, y_pos), ch, fill=fill, font=use_font)
-        bbox = draw.textbbox((0, 0), ch, font=use_font)
-        cursor += bbox[2] - bbox[0]
+    draw.text((x, y), label, fill=fill, font=font)
+
+
+def _clip_gc_segment(start, end, bounds):
+    """Clip a line to the axes without clamping its measured endpoint values."""
+    left, top, right, bottom = bounds
+    x, y = start
+    dx, dy = end[0] - x, end[1] - y
+    first, last = 0.0, 1.0
+    for direction, distance in ((-dx, x - left), (dx, right - x),
+                                (-dy, y - top), (dy, bottom - y)):
+        if direction == 0:
+            if distance < 0:
+                return None
+            continue
+        fraction = distance / direction
+        if direction < 0:
+            first = max(first, fraction)
+        else:
+            last = min(last, fraction)
+        if first > last:
+            return None
+    return ((x + first * dx, y + first * dy),
+            (x + last * dx, y + last * dy))
+
+
+def _gc_bar_geometry(x_values, lower, upper, plot_width, settings):
+    """Select point centers, then pad the display range for complete end bars."""
+    visible = np.isfinite(x_values) & (x_values >= lower) & (x_values <= upper)
+    positions = np.unique(x_values[visible])
+    spacing = float(np.min(np.diff(positions))) if len(positions) > 1 else None
+    fraction = settings['bar_width_percent'] / 100.0
+    gap = settings['bar_gap_px']
+
+    def bar_width(scale):
+        requested = (spacing * scale * fraction if spacing is not None
+                     else 24 * settings['bar_width_percent'] / 82.0)
+        return max(1.0, min(64.0, requested - gap))
+
+    span = upper - lower
+    # Include a small inset for the axis stroke and the conversion markers.
+    inset = max(10.0, bar_width(plot_width / span) / 2 + 3.0)
+    padding = span * inset / (plot_width - 2 * inset)
+    display_lower, display_upper = lower - padding, upper + padding
+    width = bar_width(plot_width / (display_upper - display_lower))
+    return display_lower, display_upper, width, visible
 
 
 def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
                   reactant_label, metadata, species_config, output_dir):
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image
 
     rxn = _analysis_reaction_rows(df)
     plot_settings = normalize_gc_plot_settings(
@@ -1390,23 +1430,13 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
     plot_w, plot_h = x1 - x0, y1 - y0
 
     img = Image.new('RGB', (width, height), (255, 255, 255))
-    draw = ImageDraw.Draw(img)
-
-    def load_font(size, bold=False):
-        names = ['arialbd.ttf', 'arial.ttf'] if bold else ['arial.ttf', 'segoeui.ttf']
-        windir = os.environ.get('WINDIR', r'C:\Windows')
-        for name in names:
-            try:
-                return ImageFont.truetype(os.path.join(windir, 'Fonts', name), size=size)
-            except OSError:
-                continue
-        return ImageFont.load_default()
+    draw = ScientificDraw(img)
+    load_font = load_plot_font
 
     font = load_font(tick_font_size)
     legend_font = load_font(legend_font_size)
     legend_sub_font = load_font(max(7, int(round(legend_font_size * 0.68))))
     axis_font = load_font(axis_font_size)
-    axis_sub_font = load_font(max(9, int(round(axis_font_size * 0.65))))
     title_font = load_font(title_font_size)
 
     def txt(x, y, text, fill=(0, 0, 0), anchor=None, font_obj=None):
@@ -1419,31 +1449,9 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
         bbox = draw.textbbox((0, 0), str(text), font=font_obj or font)
         return bbox[2] - bbox[0]
 
-    def rotated_txt(x, y, text, angle, font_obj=None,
-                    subscript_digits=False):
+    def rotated_txt(x, y, text, angle, font_obj=None):
         font_use = font_obj or font
-        if subscript_digits:
-            tw = _legend_label_width(
-                draw, text, font_use, axis_sub_font)
-            base_box = draw.textbbox((0, 0), str(text), font=font_use)
-            sub_box = draw.textbbox((0, 0), '2', font=axis_sub_font)
-            sub_offset = max(
-                2, int(getattr(font_use, 'size', 14) * 0.35))
-            th = max(
-                base_box[3] - base_box[1],
-                sub_offset + sub_box[3] - sub_box[1])
-        else:
-            bbox = draw.textbbox((0, 0), str(text), font=font_use)
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        layer = Image.new('RGBA', (tw + 12, th + 12), (255, 255, 255, 0))
-        layer_draw = ImageDraw.Draw(layer)
-        if subscript_digits:
-            _draw_legend_label(
-                layer_draw, 6, 6, text, font_use, axis_sub_font,
-                fill=(0, 0, 0, 255))
-        else:
-            layer_draw.text(
-                (6, 6), str(text), fill=(0, 0, 0, 255), font=font_use)
+        layer = scientific_text_image(text, font_use)
         rotated = layer.rotate(angle, expand=True)
         img.paste(rotated, (int(x - rotated.width / 2), int(y - rotated.height / 2)), rotated)
 
@@ -1488,6 +1496,9 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
             x_min = x_max - 1.0
         else:
             x_max = x_min + 1.0
+    selected_x_min, selected_x_max = x_min, x_max
+    x_min, x_max, bar_px, visible_x = _gc_bar_geometry(
+        x_vals, x_min, x_max, plot_w, plot_settings)
 
     conv_vals = pd.to_numeric(rxn.get('conversion', pd.Series(index=rxn.index, dtype=float)),
                               errors='coerce').to_numpy() * 100.0
@@ -1529,16 +1540,53 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
         else:
             right_upper = right_lower + 1.0
 
+    groups = _selectivity_groups(df_sel, species_config, metadata)
+    group_order = _selectivity_group_order(metadata)
+    palette = {
+        label: _hex_to_rgb(color)
+        for label, color in plot_settings['species_colors'].items()
+    }
+    group_values = {}
+    for group in group_order:
+        cols = groups.get(group, [])
+        if not cols:
+            continue
+        vals = df_sel.loc[rxn.index, cols].fillna(0).sum(axis=1).to_numpy() * 100.0
+        if np.isfinite(vals).any() and np.nanmax(vals) > 0.02:
+            group_values[group] = vals
+
+    # Reserve the actual legend height before drawing the axes. Keep the
+    # canvas size and selected font sizes, including when a third row is needed.
+    legend_labels = [f'{reactant_label} Conversion']
+    if cb_vals is not None:
+        legend_labels.append('Carbon Balance')
+    legend_labels.extend(group_values)
+    legend_boxes = [draw.textbbox((0, 0), label, font=legend_font)
+                    for label in legend_labels]
+    item_width = 58 + max(box[2] - box[0] for box in legend_boxes)
+    col_gap = max(255, item_width + 24)
+    legend_x = x0 + 80
+    legend_columns = 4
+    while (legend_columns > 1 and
+           legend_x + (legend_columns - 1) * col_gap + item_width > width - 20):
+        legend_columns -= 1
+    legend_rows = (len(legend_labels) + legend_columns - 1) // legend_columns
+    row_gap = max(44, legend_font_size + 22)
+    legend_offset = max(105, tick_font_size + axis_font_size + 61)
+    legend_bottom = max(24, max(box[3] for box in legend_boxes))
+    margin['b'] = max(margin['b'], legend_offset + (legend_rows - 1) * row_gap
+                      + legend_bottom + 16)
+    y1 = height - margin['b']
+    plot_h = y1 - y0
+
     def xp(v):
         return x0 + (float(v) - x_min) / (x_max - x_min) * plot_w
 
     def y_left(v):
-        v = max(conv_lower, min(float(conv_upper), float(v)))
-        return y1 - ((v - conv_lower) / (conv_upper - conv_lower)) * plot_h
+        return y1 - ((float(v) - conv_lower) / (conv_upper - conv_lower)) * plot_h
 
     def y_right(v):
-        v = max(right_lower, min(right_upper, float(v)))
-        return y1 - ((v - right_lower) / (right_upper - right_lower)) * plot_h
+        return y1 - ((float(v) - right_lower) / (right_upper - right_lower)) * plot_h
 
     # Axes and grid.
     draw.line((x0, y1, x1, y1), fill=(0, 0, 0), width=3)
@@ -1555,25 +1603,25 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
         txt(x1 + 16, y - 9, f'{v:g}', font_obj=font)
 
     if has_time_values:
-        x_span = x_max - x_min
+        x_span = selected_x_max - selected_x_min
         if x_span <= 14:
             step = 2.0
         elif x_span <= 28:
             step = 4.0
         else:
             step = max(1.0, round(x_span / 6.0))
-        tick_start = np.ceil(x_min / step) * step
-        x_ticks = np.arange(tick_start, x_max + step * 0.5, step)
+        tick_start = np.ceil(selected_x_min / step) * step
+        x_ticks = np.arange(tick_start, selected_x_max + step * 0.5, step)
     else:
-        tick_count = min(7, len(x_vals))
+        visible_values = x_vals[visible_x]
+        tick_count = min(7, len(visible_values))
         tick_idx = (
-            np.linspace(0, len(x_vals) - 1, tick_count).round().astype(int)
+            np.linspace(0, len(visible_values) - 1, tick_count).round().astype(int)
             if tick_count else np.array([], dtype=int))
         x_ticks = [
-            x_vals[idx] for idx in sorted(set(tick_idx))
-            if np.isfinite(x_vals[idx])]
+            visible_values[idx] for idx in sorted(set(tick_idx))]
     for v in x_ticks:
-        if v < x_min - 1e-9 or v > x_max + 1e-9:
+        if v < selected_x_min - 1e-9 or v > selected_x_max + 1e-9:
             continue
         x = xp(v)
         draw.line((x, y1, x, y1 + 9), fill=(0, 0, 0), width=2)
@@ -1586,47 +1634,27 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
     rotated_txt(
         x0 - max(74, axis_font_size * 2.25), y0 + plot_h / 2,
         plot_settings['conversion_axis_label'], 90,
-        font_obj=axis_font, subscript_digits=True)
+        font_obj=axis_font)
     rotated_txt(
         x1 + max(82, axis_font_size * 2.35), y0 + plot_h / 2,
         plot_settings['selectivity_axis_label'], -90,
-        font_obj=axis_font, subscript_digits=True)
-    title = plot_settings['title']
-    txt(x0 + plot_w / 2, 38, title, anchor='mm', font_obj=title_font)
+        font_obj=axis_font)
+    if plot_settings['show_title'] and plot_settings['title']:
+        txt(x0 + plot_w / 2, 38, plot_settings['title'], anchor='mm', font_obj=title_font)
 
-    groups = _selectivity_groups(df_sel, species_config, metadata)
-    group_order = _selectivity_group_order(metadata)
-    palette = {
-        label: _hex_to_rgb(color)
-        for label, color in plot_settings['species_colors'].items()
-    }
-    group_values = {}
-    for group in group_order:
-        cols = groups.get(group, [])
-        if not cols:
-            continue
-        vals = df_sel.loc[rxn.index, cols].fillna(0).sum(axis=1).to_numpy() * 100.0
-        if np.isfinite(vals).any() and np.nanmax(vals) > 0.02:
-            group_values[group] = vals
-
-    finite_x = x_vals[np.isfinite(x_vals)]
-    if len(finite_x) > 1:
-        diffs = np.diff(np.sort(finite_x))
-        spacing = float(np.median(diffs[diffs > 0])) if np.any(diffs > 0) else 1.0
-        slot_px = abs(xp(x_min + spacing) - xp(x_min))
-        bar_px = int(
-            slot_px * plot_settings['bar_width_percent'] / 100.0
-            - plot_settings['bar_gap_px'])
-        bar_px = max(3, min(64, bar_px))
-    else:
-        bar_px = max(
-            3, int(24 * plot_settings['bar_width_percent'] / 82.0)
-            - plot_settings['bar_gap_px'])
+    # Render data separately, then composite only the axes interior. Text and
+    # legends retain their full canvas; markers and line strokes cannot leak out.
+    frame_draw = draw
+    data_layer = Image.new('RGBA', img.size, (0, 0, 0, 0))
+    draw = ScientificDraw(data_layer)
+    clip_box = (x0 + 2, y0, x1 - 1, y1 - 1)
+    line_bounds = (clip_box[0], clip_box[1], clip_box[2] - 1, clip_box[3] - 1)
 
     for i, xv in enumerate(x_vals):
-        if not np.isfinite(xv):
+        if not visible_x[i]:
             continue
         x = xp(xv)
+        bar_left, bar_right = x - bar_px / 2, x + bar_px / 2
         base = 0.0
         for group in group_order:
             vals = group_values.get(group)
@@ -1635,11 +1663,14 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
             val = max(0.0, float(vals[i]))
             if val <= 0:
                 continue
-            y_top = y_right(base + val)
-            y_bot = y_right(base)
-            draw.rectangle((x - bar_px / 2, y_top, x + bar_px / 2, y_bot),
-                           fill=palette[group], outline=(255, 255, 255))
+            segment_lower, segment_upper = max(base, right_lower), min(base + val, right_upper)
             base += val
+            if segment_upper <= segment_lower:
+                continue
+            y_top = y_right(segment_upper)
+            y_bot = y_right(segment_lower)
+            draw.rectangle((bar_left, y_top, bar_right, y_bot),
+                           fill=palette[group], outline=(255, 255, 255))
 
     def marker(x, y, color, shape, filled=True, size=7):
         x, y = float(x), float(y)
@@ -1664,12 +1695,16 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
             draw.line((x - size, y + size, x + size, y - size), fill=color, width=3)
 
     def draw_polyline(points, color, dashed=False, width_line=3):
-        if len(points) < 2:
-            return
-        if not dashed:
-            draw.line(points, fill=color, width=width_line)
-            return
         for p0, p1 in zip(points[:-1], points[1:]):
+            if p0 is None or p1 is None:
+                continue
+            segment = _clip_gc_segment(p0, p1, line_bounds)
+            if segment is None:
+                continue
+            p0, p1 = segment
+            if not dashed:
+                draw.line((p0, p1), fill=color, width=width_line)
+                continue
             dx, dy = p1[0] - p0[0], p1[1] - p0[1]
             dist = max((dx * dx + dy * dy) ** 0.5, 1.0)
             pos = 0.0
@@ -1681,34 +1716,36 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
                 pos += 16.0
 
     conv_label = f'{reactant_label} Conversion'
-    conv_points = [(xp(x), y_left(y)) for x, y in zip(x_vals, conv_vals) if np.isfinite(x) and pd.notna(y)]
+    conv_points = [(xp(x), y_left(y)) if included and np.isfinite(y) else None
+                   for x, y, included in zip(x_vals, conv_vals, visible_x)]
     color = _hex_to_rgb(plot_settings['conversion_color'])
     shape, filled = 'circle_open', True
     draw_polyline(conv_points, color, dashed=False)
-    for x, y in conv_points:
-        marker(x, y, color, shape, filled, size=8)
+    for point in conv_points:
+        if point is not None and y0 <= point[1] <= y1:
+            marker(*point, color, shape, filled, size=8)
 
     legend_items = [(conv_label, 'line', color)]
     if cb_vals is not None:
         cb_color = _hex_to_rgb(plot_settings['carbon_balance_color'])
         cb_points = [
-            (xp(x), y_right(y))
-            for x, y in zip(x_vals, cb_vals)
-            if np.isfinite(x) and np.isfinite(y)]
+            (xp(x), y_right(y)) if included and np.isfinite(y) else None
+            for x, y, included in zip(x_vals, cb_vals, visible_x)]
         draw_polyline(cb_points, cb_color, dashed=True)
-        for x, y in cb_points:
-            marker(x, y, cb_color, 'triangle_up', True, size=7)
+        for point in cb_points:
+            if point is not None and y0 <= point[1] <= y1:
+                marker(*point, cb_color, 'triangle_up', True, size=7)
         legend_items.append(('Carbon Balance', 'dashed_triangle', cb_color))
+    clipped_data = data_layer.crop(clip_box)
+    img.paste(clipped_data, clip_box[:2], clipped_data)
+    draw = frame_draw
     for group in group_order:
         if group in group_values:
             legend_items.append((group, 'box', palette[group]))
-    legend_y = y1 + max(105, tick_font_size + axis_font_size + 61)
-    legend_x = x0 + 80
-    row_gap = max(44, legend_font_size + 22)
-    col_gap = 255
+    legend_y = y1 + legend_offset
     for i, (label, kind, color) in enumerate(legend_items):
-        col = i % 4
-        row = i // 4
+        col = i % legend_columns
+        row = i // legend_columns
         lx = legend_x + col * col_gap
         ly = legend_y + row * row_gap
         if kind == 'line':
@@ -1736,7 +1773,7 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
 def _draw_stacked_selectivity_plot(df, df_sel, total_C_out, C_in_flow,
                                    reactant_label, metadata, species_config,
                                    output_dir):
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image
 
     rxn = _analysis_reaction_rows(df)
     width, height = 1250, 900
@@ -1746,19 +1783,8 @@ def _draw_stacked_selectivity_plot(df, df_sel, total_C_out, C_in_flow,
     plot_w, plot_h = x1 - x0, y1 - y0
 
     img = Image.new('RGB', (width, height), (255, 255, 255))
-    draw = ImageDraw.Draw(img)
-    def load_font(size, bold=False):
-        names = ['arialbd.ttf', 'arial.ttf'] if bold else ['arial.ttf', 'segoeui.ttf']
-        paths = []
-        windir = os.environ.get('WINDIR', r'C:\Windows')
-        for name in names:
-            paths.append(os.path.join(windir, 'Fonts', name))
-        for path in paths:
-            try:
-                return ImageFont.truetype(path, size=size)
-            except OSError:
-                continue
-        return ImageFont.load_default()
+    draw = ScientificDraw(img)
+    load_font = load_plot_font
 
     font = load_font(16)
     small_font = load_font(14)
@@ -1951,7 +1977,7 @@ def _draw_stacked_selectivity_plot(df, df_sel, total_C_out, C_in_flow,
 def _draw_co_oxidation_plot(df, df_sel, total_C_out, C_in_flow,
                             reactant_label, metadata, species_config,
                             output_dir):
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image
 
     rxn = _analysis_reaction_rows(df)
     if rxn.empty:
@@ -1966,17 +1992,8 @@ def _draw_co_oxidation_plot(df, df_sel, total_C_out, C_in_flow,
     plot_w, plot_h = x1 - x0, y1 - y0
 
     img = Image.new('RGB', (width, height), (255, 255, 255))
-    draw = ImageDraw.Draw(img)
-
-    def load_font(size, bold=False):
-        names = ['arialbd.ttf', 'arial.ttf'] if bold else ['arial.ttf', 'segoeui.ttf']
-        windir = os.environ.get('WINDIR', r'C:\Windows')
-        for name in names:
-            try:
-                return ImageFont.truetype(os.path.join(windir, 'Fonts', name), size=size)
-            except OSError:
-                continue
-        return ImageFont.load_default()
+    draw = ScientificDraw(img)
+    load_font = load_plot_font
 
     font = load_font(16)
     small_font = load_font(13)
@@ -1992,11 +2009,7 @@ def _draw_co_oxidation_plot(df, df_sel, total_C_out, C_in_flow,
 
     def rotated_txt(x, y, text, angle, font_obj=None):
         font_use = font_obj or font
-        bbox = draw.textbbox((0, 0), str(text), font=font_use)
-        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        layer = Image.new('RGBA', (tw + 12, th + 12), (255, 255, 255, 0))
-        layer_draw = ImageDraw.Draw(layer)
-        layer_draw.text((6, 6), str(text), fill=(0, 0, 0, 255), font=font_use)
+        layer = scientific_text_image(text, font_use)
         rotated = layer.rotate(angle, expand=True)
         img.paste(rotated, (int(x - rotated.width / 2), int(y - rotated.height / 2)), rotated)
 
