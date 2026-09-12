@@ -1361,6 +1361,51 @@ def _draw_legend_label(draw, x, y, label, font, sub_font, fill=(0, 0, 0)):
     draw.text((x, y), label, fill=fill, font=font)
 
 
+def _clip_gc_segment(start, end, bounds):
+    """Clip a line to the axes without clamping its measured endpoint values."""
+    left, top, right, bottom = bounds
+    x, y = start
+    dx, dy = end[0] - x, end[1] - y
+    first, last = 0.0, 1.0
+    for direction, distance in ((-dx, x - left), (dx, right - x),
+                                (-dy, y - top), (dy, bottom - y)):
+        if direction == 0:
+            if distance < 0:
+                return None
+            continue
+        fraction = distance / direction
+        if direction < 0:
+            first = max(first, fraction)
+        else:
+            last = min(last, fraction)
+        if first > last:
+            return None
+    return ((x + first * dx, y + first * dy),
+            (x + last * dx, y + last * dy))
+
+
+def _gc_bar_geometry(x_values, lower, upper, plot_width, settings):
+    """Select point centers, then pad the display range for complete end bars."""
+    visible = np.isfinite(x_values) & (x_values >= lower) & (x_values <= upper)
+    positions = np.unique(x_values[visible])
+    spacing = float(np.min(np.diff(positions))) if len(positions) > 1 else None
+    fraction = settings['bar_width_percent'] / 100.0
+    gap = settings['bar_gap_px']
+
+    def bar_width(scale):
+        requested = (spacing * scale * fraction if spacing is not None
+                     else 24 * settings['bar_width_percent'] / 82.0)
+        return max(1.0, min(64.0, requested - gap))
+
+    span = upper - lower
+    # Include a small inset for the axis stroke and the conversion markers.
+    inset = max(10.0, bar_width(plot_width / span) / 2 + 3.0)
+    padding = span * inset / (plot_width - 2 * inset)
+    display_lower, display_upper = lower - padding, upper + padding
+    width = bar_width(plot_width / (display_upper - display_lower))
+    return display_lower, display_upper, width, visible
+
+
 def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
                   reactant_label, metadata, species_config, output_dir):
     from PIL import Image
@@ -1451,6 +1496,9 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
             x_min = x_max - 1.0
         else:
             x_max = x_min + 1.0
+    selected_x_min, selected_x_max = x_min, x_max
+    x_min, x_max, bar_px, visible_x = _gc_bar_geometry(
+        x_vals, x_min, x_max, plot_w, plot_settings)
 
     conv_vals = pd.to_numeric(rxn.get('conversion', pd.Series(index=rxn.index, dtype=float)),
                               errors='coerce').to_numpy() * 100.0
@@ -1535,12 +1583,10 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
         return x0 + (float(v) - x_min) / (x_max - x_min) * plot_w
 
     def y_left(v):
-        v = max(conv_lower, min(float(conv_upper), float(v)))
-        return y1 - ((v - conv_lower) / (conv_upper - conv_lower)) * plot_h
+        return y1 - ((float(v) - conv_lower) / (conv_upper - conv_lower)) * plot_h
 
     def y_right(v):
-        v = max(right_lower, min(right_upper, float(v)))
-        return y1 - ((v - right_lower) / (right_upper - right_lower)) * plot_h
+        return y1 - ((float(v) - right_lower) / (right_upper - right_lower)) * plot_h
 
     # Axes and grid.
     draw.line((x0, y1, x1, y1), fill=(0, 0, 0), width=3)
@@ -1557,25 +1603,25 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
         txt(x1 + 16, y - 9, f'{v:g}', font_obj=font)
 
     if has_time_values:
-        x_span = x_max - x_min
+        x_span = selected_x_max - selected_x_min
         if x_span <= 14:
             step = 2.0
         elif x_span <= 28:
             step = 4.0
         else:
             step = max(1.0, round(x_span / 6.0))
-        tick_start = np.ceil(x_min / step) * step
-        x_ticks = np.arange(tick_start, x_max + step * 0.5, step)
+        tick_start = np.ceil(selected_x_min / step) * step
+        x_ticks = np.arange(tick_start, selected_x_max + step * 0.5, step)
     else:
-        tick_count = min(7, len(x_vals))
+        visible_values = x_vals[visible_x]
+        tick_count = min(7, len(visible_values))
         tick_idx = (
-            np.linspace(0, len(x_vals) - 1, tick_count).round().astype(int)
+            np.linspace(0, len(visible_values) - 1, tick_count).round().astype(int)
             if tick_count else np.array([], dtype=int))
         x_ticks = [
-            x_vals[idx] for idx in sorted(set(tick_idx))
-            if np.isfinite(x_vals[idx])]
+            visible_values[idx] for idx in sorted(set(tick_idx))]
     for v in x_ticks:
-        if v < x_min - 1e-9 or v > x_max + 1e-9:
+        if v < selected_x_min - 1e-9 or v > selected_x_max + 1e-9:
             continue
         x = xp(v)
         draw.line((x, y1, x, y1 + 9), fill=(0, 0, 0), width=2)
@@ -1596,28 +1642,19 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
     if plot_settings['show_title'] and plot_settings['title']:
         txt(x0 + plot_w / 2, 38, plot_settings['title'], anchor='mm', font_obj=title_font)
 
-    finite_x = x_vals[np.isfinite(x_vals)]
-    if len(finite_x) > 1:
-        diffs = np.diff(np.sort(finite_x))
-        spacing = float(np.median(diffs[diffs > 0])) if np.any(diffs > 0) else 1.0
-        slot_px = abs(xp(x_min + spacing) - xp(x_min))
-        bar_px = int(
-            slot_px * plot_settings['bar_width_percent'] / 100.0
-            - plot_settings['bar_gap_px'])
-        bar_px = max(3, min(64, bar_px))
-    else:
-        bar_px = max(
-            3, int(24 * plot_settings['bar_width_percent'] / 82.0)
-            - plot_settings['bar_gap_px'])
+    # Render data separately, then composite only the axes interior. Text and
+    # legends retain their full canvas; markers and line strokes cannot leak out.
+    frame_draw = draw
+    data_layer = Image.new('RGBA', img.size, (0, 0, 0, 0))
+    draw = ScientificDraw(data_layer)
+    clip_box = (x0 + 2, y0, x1 - 1, y1 - 1)
+    line_bounds = (clip_box[0], clip_box[1], clip_box[2] - 1, clip_box[3] - 1)
 
     for i, xv in enumerate(x_vals):
-        if not np.isfinite(xv):
+        if not visible_x[i]:
             continue
         x = xp(xv)
-        bar_left = max(x0 + 2, x - bar_px / 2)
-        bar_right = min(x1 - 2, x + bar_px / 2)
-        if bar_right <= bar_left:
-            continue
+        bar_left, bar_right = x - bar_px / 2, x + bar_px / 2
         base = 0.0
         for group in group_order:
             vals = group_values.get(group)
@@ -1626,11 +1663,14 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
             val = max(0.0, float(vals[i]))
             if val <= 0:
                 continue
-            y_top = y_right(base + val)
-            y_bot = y_right(base)
+            segment_lower, segment_upper = max(base, right_lower), min(base + val, right_upper)
+            base += val
+            if segment_upper <= segment_lower:
+                continue
+            y_top = y_right(segment_upper)
+            y_bot = y_right(segment_lower)
             draw.rectangle((bar_left, y_top, bar_right, y_bot),
                            fill=palette[group], outline=(255, 255, 255))
-            base += val
 
     def marker(x, y, color, shape, filled=True, size=7):
         x, y = float(x), float(y)
@@ -1655,12 +1695,16 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
             draw.line((x - size, y + size, x + size, y - size), fill=color, width=3)
 
     def draw_polyline(points, color, dashed=False, width_line=3):
-        if len(points) < 2:
-            return
-        if not dashed:
-            draw.line(points, fill=color, width=width_line)
-            return
         for p0, p1 in zip(points[:-1], points[1:]):
+            if p0 is None or p1 is None:
+                continue
+            segment = _clip_gc_segment(p0, p1, line_bounds)
+            if segment is None:
+                continue
+            p0, p1 = segment
+            if not dashed:
+                draw.line((p0, p1), fill=color, width=width_line)
+                continue
             dx, dy = p1[0] - p0[0], p1[1] - p0[1]
             dist = max((dx * dx + dy * dy) ** 0.5, 1.0)
             pos = 0.0
@@ -1672,24 +1716,29 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
                 pos += 16.0
 
     conv_label = f'{reactant_label} Conversion'
-    conv_points = [(xp(x), y_left(y)) for x, y in zip(x_vals, conv_vals) if np.isfinite(x) and pd.notna(y)]
+    conv_points = [(xp(x), y_left(y)) if included and np.isfinite(y) else None
+                   for x, y, included in zip(x_vals, conv_vals, visible_x)]
     color = _hex_to_rgb(plot_settings['conversion_color'])
     shape, filled = 'circle_open', True
     draw_polyline(conv_points, color, dashed=False)
-    for x, y in conv_points:
-        marker(x, y, color, shape, filled, size=8)
+    for point in conv_points:
+        if point is not None and y0 <= point[1] <= y1:
+            marker(*point, color, shape, filled, size=8)
 
     legend_items = [(conv_label, 'line', color)]
     if cb_vals is not None:
         cb_color = _hex_to_rgb(plot_settings['carbon_balance_color'])
         cb_points = [
-            (xp(x), y_right(y))
-            for x, y in zip(x_vals, cb_vals)
-            if np.isfinite(x) and np.isfinite(y)]
+            (xp(x), y_right(y)) if included and np.isfinite(y) else None
+            for x, y, included in zip(x_vals, cb_vals, visible_x)]
         draw_polyline(cb_points, cb_color, dashed=True)
-        for x, y in cb_points:
-            marker(x, y, cb_color, 'triangle_up', True, size=7)
+        for point in cb_points:
+            if point is not None and y0 <= point[1] <= y1:
+                marker(*point, cb_color, 'triangle_up', True, size=7)
         legend_items.append(('Carbon Balance', 'dashed_triangle', cb_color))
+    clipped_data = data_layer.crop(clip_box)
+    img.paste(clipped_data, clip_box[:2], clipped_data)
+    draw = frame_draw
     for group in group_order:
         if group in group_values:
             legend_items.append((group, 'box', palette[group]))

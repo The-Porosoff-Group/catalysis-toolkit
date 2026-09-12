@@ -19,8 +19,10 @@ if ROOT not in sys.path:
 from modules.gc_processor import (  # noqa: E402
     _add_time_on_stream_column,
     _copy_source_sheet_to_workbook,
+    _clip_gc_segment,
     _draw_gc_plot,
     _draw_legend_label,
+    _gc_bar_geometry,
     _metadata_bool,
     _normalize_injection_species,
     _reaction_mask,
@@ -135,6 +137,77 @@ class GcRegressionTests(unittest.TestCase):
         self.assertIn((101, 67, 33), colors)
         self.assertIsNotNone(dpi)
         self.assertAlmostEqual(dpi[0], 200, delta=1)
+
+    def test_endpoint_bars_have_full_equal_width_at_automatic_and_manual_limits(self):
+        frame = pd.DataFrame({
+            'label': [f'Sample Rxn {i + 1}' for i in range(13)], 'inj_num': range(1, 14),
+            'is_bypass': False, 'analysis_include': True,
+            'conversion': np.nan, 'time_on_stream_h': np.arange(13, dtype=float),
+        })
+        selectivity = pd.DataFrame({'S_CO': np.ones(13)})
+        original_frame, original_selectivity = frame.copy(), selectivity.copy()
+        species = {'CO': {'label': 'CO', 'cn': 1, 'det': 'TCD'}}
+        with tempfile.TemporaryDirectory() as directory:
+            for limits in (None, (0, 12), (4, 8), (2.2, 9.8), (5.9, 6.1)):
+                with self.subTest(limits=limits):
+                    settings = {'species_colors': {'CO': '#123456'}}
+                    if limits:
+                        settings.update(x_axis_min=limits[0], x_axis_max=limits[1])
+                    output = _draw_gc_plot(frame, selectivity, pd.Series(np.ones(13)), 1,
+                        'CO2', {'plot_settings': settings}, species, directory)
+                    with Image.open(output) as image:
+                        row = np.all(np.asarray(image)[200] == (18, 52, 86), axis=1)
+                    edges = np.diff(np.r_[False, row, False].astype(int))
+                    starts, ends = np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
+                    lower, upper = limits or (0, 12)
+                    expected = int(((frame.time_on_stream_h >= lower) & (frame.time_on_stream_h <= upper)).sum())
+                    self.assertEqual(len(starts), expected)
+                    widths = ends - starts
+                    self.assertLessEqual(int(np.ptp(widths)), 1)
+                    self.assertGreater(starts[0], 112)
+                    self.assertLess(ends[-1], 1140)
+        pd.testing.assert_frame_equal(frame, original_frame)
+        pd.testing.assert_frame_equal(selectivity, original_selectivity)
+
+    def test_custom_axis_limits_clip_data_without_pinning_outliers_to_edges(self):
+        frame = pd.DataFrame({
+            'label': [f'Sample Rxn {i + 1}' for i in range(13)], 'inj_num': range(1, 14),
+            'is_bypass': False, 'analysis_include': True,
+            'conversion': [.2, .3, .4, .5, .2, .8, .9, .25, .3, .4, .6, .1, .4],
+            'time_on_stream_h': np.arange(13, dtype=float),
+        })
+        settings = {'x_axis_min': 4, 'x_axis_max': 8,
+                    'conversion_y_min': 10, 'conversion_y_max': 50,
+                    'selectivity_y_min': 20, 'selectivity_y_max': 90,
+                    'show_carbon_balance': True, 'conversion_color': '#C5128B',
+                    'carbon_balance_color': '#ED760A', 'species_colors': {'CO': '#123456'}}
+        carbon = pd.Series([1.2, .5, .6, .8, .4, 1.2, 1.3, .6, .7, .2, .3, 1.4, 1.5])
+        with tempfile.TemporaryDirectory() as directory:
+            output = _draw_gc_plot(frame, pd.DataFrame({'S_CO': np.ones(13)}), carbon, 1,
+                'CO2', {'plot_settings': settings}, {'CO': {'label': 'CO', 'cn': 1}}, directory)
+            with Image.open(output) as image:
+                pixels = np.asarray(image)
+            # Axis bounds at these unchanged font/layout settings; exclude legends.
+            for color in ((197, 18, 139), (237, 118, 10), (18, 52, 86)):
+                ys, xs = np.where(np.all(pixels[:728] == color, axis=2))
+                self.assertGreater(len(xs), 0)
+                self.assertGreaterEqual(xs.min(), 112)
+                self.assertLessEqual(xs.max(), 1140)
+                self.assertGreaterEqual(ys.min(), 88)
+                self.assertLessEqual(ys.max(), 714)
+            # The consecutive >50% measurements at 5 and 6 h must not produce
+            # a false flat segment along the upper conversion boundary.
+            lower, upper, _, _ = _gc_bar_geometry(frame.time_on_stream_h.to_numpy(), 4, 8,
+                1032, normalize_gc_plot_settings(settings, 'CO2'))
+            middle = round(110 + (5.5 - lower) / (upper - lower) * 1032)
+            self.assertFalse(np.any(np.all(pixels[88:96, middle-10:middle+10] == (197, 18, 139), axis=2)))
+
+    def test_line_clipping_preserves_intersections_and_rejects_external_segments(self):
+        self.assertEqual(_clip_gc_segment((-10, -10), (20, 20), (0, 0, 10, 10)),
+                         ((0, 0), (10, 10)))
+        self.assertEqual(_clip_gc_segment((-10, 5), (20, 5), (0, 0, 10, 10)),
+                         ((0, 5), (10, 5)))
+        self.assertIsNone(_clip_gc_segment((-10, -5), (20, -5), (0, 0, 10, 10)))
 
     def test_argon_o2_header_alias_supports_flow_calculation(self):
         config = load_reaction_config(os.path.join(
