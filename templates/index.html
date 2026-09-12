@@ -1773,6 +1773,7 @@ async function processGC() {
       return;
     }
 
+    checkGcPlotRenderer(data.plot_settings);
     hideProgress();
     showResults(data);
   } catch(e) {
@@ -1897,6 +1898,12 @@ function renderGcPlotColors(settings) {
   });
 }
 
+function checkGcPlotRenderer(settings) {
+  if (typeof settings?.show_title !== 'boolean') {
+    throw new Error('The running toolkit server is older than this page. Close the toolkit server, reopen it, refresh this page, and process the GC file again to use the title control and current font defaults.');
+  }
+}
+
 function applyGcPlotSettings(settings) {
   if (!settings) return;
   const values = {
@@ -2016,6 +2023,10 @@ async function regenerateGcPlot() {
     });
     const data = await response.json();
     if (!response.ok || data.error) throw new Error(data.error || 'Plot regeneration failed.');
+    checkGcPlotRenderer(data.plot_settings);
+    if (data.plot_settings.show_title !== settings.show_title) {
+      throw new Error('The server did not apply the title setting. Restart the toolkit and process the GC file again.');
+    }
     document.getElementById('result-plot').src = `data:image/png;base64,${data.plot_b64}`;
     currentGcResult.plot_path = data.plot_path;
     currentGcResult.plot_is_custom = true;
