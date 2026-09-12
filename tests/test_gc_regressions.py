@@ -34,6 +34,7 @@ from modules.gc_processor import (  # noqa: E402
     validate_gc_plot_axis_ranges,
 )
 from modules.json_safety import json_safe_value  # noqa: E402
+from modules.plot_style import ScientificDraw, load_plot_font  # noqa: E402
 
 
 class GcRegressionTests(unittest.TestCase):
@@ -220,27 +221,16 @@ class GcRegressionTests(unittest.TestCase):
                                    'show_carbon_balance', True))
 
     def test_chemical_formula_digits_are_drawn_as_subscripts(self):
-        class Font:
-            def __init__(self, size):
-                self.size = size
-
-        class Draw:
-            def __init__(self):
-                self.calls = []
-
-            def textbbox(self, _position, _text, font=None):
-                return (0, 0, font.size, font.size)
-
-            def text(self, position, text, fill=None, font=None):
-                self.calls.append((position, text, font.size))
-
-        draw = Draw()
-        _draw_legend_label(
-            draw, 0, 0, 'CO2 Conversion', Font(28), Font(18))
-        oxygen = next(call for call in draw.calls if call[1] == 'O')
-        subscript = next(call for call in draw.calls if call[1] == '2')
-        self.assertGreater(subscript[0][1], oxygen[0][1])
-        self.assertEqual(subscript[2], 18)
+        draw = ScientificDraw(Image.new('RGB', (500, 100), 'white'))
+        with mock.patch.object(draw.draw, 'text', wraps=draw.draw.text) as paint:
+            _draw_legend_label(draw, 0, 0, 'CO2 Conversion, run 12',
+                               load_plot_font(28), load_plot_font(20))
+        oxygen = next(call for call in paint.call_args_list if call.args[1] == 'CO')
+        subscript = next(call for call in paint.call_args_list if call.args[1] == '2')
+        run_number = next(call for call in paint.call_args_list if '12' in call.args[1])
+        self.assertGreater(subscript.args[0][1], oxygen.args[0][1])
+        self.assertLess(subscript.kwargs['font'].size, oxygen.kwargs['font'].size)
+        self.assertEqual(run_number.kwargs['font'].size, oxygen.kwargs['font'].size)
 
     def test_plot_renderer_does_not_change_with_timing_metadata(self):
         standard_path = os.path.join(ROOT, 'standard.png')
@@ -259,6 +249,39 @@ class GcRegressionTests(unittest.TestCase):
                         None, None, ROOT)
                     self.assertEqual(result, standard_path)
         self.assertEqual(standard_renderer.call_count, len(cases))
+
+    def test_large_multirow_legend_stays_inside_export_without_changing_data(self):
+        frame = pd.DataFrame({
+            'label': ['Sample Rxn 1', 'Sample Rxn 2'], 'inj_num': [1, 2],
+            'is_bypass': False, 'analysis_include': True,
+            'conversion': [0.2, 0.21], 'time_on_stream_h': [0, 1],
+        })
+        labels = ['CO', 'CH4', 'C2H6', 'C2H4', 'MeOH', 'CO2', 'HCHO']
+        selectivity = pd.DataFrame({f'S_{label}': [0.1, 0.1] for label in labels})
+        species = {label: {'label': label, 'cn': 1, 'det': 'FID'} for label in labels}
+        original_frame, original_selectivity = frame.copy(), selectivity.copy()
+        bounds = []
+
+        class CheckedDraw(ScientificDraw):
+            def text(self, xy, text, fill=None, font=None, anchor=None, **kwargs):
+                bounds.append(self.textbbox(xy, text, font=font, anchor=anchor))
+                return super().text(xy, text, fill=fill, font=font, anchor=anchor, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+                'modules.gc_processor.ScientificDraw', CheckedDraw):
+            path = _draw_gc_plot(frame, selectivity, pd.Series([10, 10]), 10, 'CO2', {
+                'catalyst_id': 'Sample 12 at 400 °C', 'plot_settings': {
+                    'show_carbon_balance': True, 'legend_font_size': 30,
+                    'axis_font_size': 36, 'tick_font_size': 24,
+                }}, species, directory)
+            with Image.open(path) as image:
+                self.assertEqual(image.size, (1250, 900))
+            for left, top, right, bottom in bounds:
+                self.assertGreaterEqual(min(left, top), 0)
+                self.assertLessEqual(right, 1250)
+                self.assertLessEqual(bottom, 900)
+        pd.testing.assert_frame_equal(frame, original_frame)
+        pd.testing.assert_frame_equal(selectivity, original_selectivity)
 
     def test_co2_reaction_hydrogen_defaults_are_30_sccm(self):
         config_dir = os.path.join(ROOT, 'modules', 'reaction_configs')

@@ -492,6 +492,8 @@ def process_bet():
         result['plot_token'] = _store_characterization_context(
             _bet_plot_cache, _bet_plot_cache_lock, context)
         return jsonify(result)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     except Exception as exc:
         return jsonify({'error': str(exc), 'trace': traceback.format_exc()}), 500
 
@@ -509,6 +511,8 @@ def regenerate_bet_plot():
         with open(result['plot_path'], 'rb') as image:
             result['plot_b64'] = base64.b64encode(image.read()).decode('utf-8')
         return jsonify(result)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     except Exception as exc:
         return jsonify({'error': str(exc), 'trace': traceback.format_exc()}), 500
 

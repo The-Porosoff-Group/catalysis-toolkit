@@ -6,20 +6,11 @@ import math
 import os
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
-
-def _font(size, bold=False):
-    candidates = (
-        'DejaVuSans-Bold.ttf' if bold else 'DejaVuSans.ttf',
-        'arialbd.ttf' if bold else 'arial.ttf',
-    )
-    for candidate in candidates:
-        try:
-            return ImageFont.truetype(candidate, max(8, int(size)))
-        except OSError:
-            continue
-    return ImageFont.load_default()
+from modules.plot_style import (
+    load_plot_font as _font, ScientificDraw, scientific_text_image,
+)
 
 
 def _hex_rgb(value, default=(50, 130, 210)):
@@ -95,13 +86,11 @@ def _draw_axes(draw, rect, xlim, ylim, x_label, y_label, fonts, show_grid=False,
     draw.line((left, bottom, right, bottom), fill=axis_color, width=2)
     draw.line((left, top, left, bottom), fill=axis_color, width=2)
     box = draw.textbbox((0, 0), x_label, font=axis_font)
-    draw.text(((left + right - (box[2] - box[0])) / 2, bottom + 34),
+    tick_bottom = tick_font.getbbox('0123456789.-e')[3]
+    label_top = bottom + 9 + tick_bottom + max(6, axis_font.size * 0.2)
+    draw.text(((left + right - (box[2] - box[0])) / 2, label_top),
               x_label, font=axis_font, fill=axis_color)
-    label_box = axis_font.getbbox(y_label)
-    label_image = Image.new('RGBA', (label_box[2] - label_box[0] + 10,
-                                     label_box[3] - label_box[1] + 10), (255, 255, 255, 0))
-    label_draw = ImageDraw.Draw(label_image)
-    label_draw.text((5, 5), y_label, font=axis_font, fill=axis_color)
+    label_image = scientific_text_image(y_label, axis_font, axis_color, padding=5)
     rotated = label_image.rotate(90, expand=True)
     return rotated, y_tick_width
 
@@ -161,7 +150,7 @@ def render_program_plot(path, x, corrected, peaks, settings):
     width = max(700, int(settings['figure_width'] * dpi))
     height = max(420, int(settings['figure_height'] * dpi))
     image = Image.new('RGB', (width, height), 'white')
-    draw = ImageDraw.Draw(image)
+    draw = ScientificDraw(image)
     tick_font = _font(settings['tick_font_size'] * scale)
     axis_font = _font(settings['axis_font_size'] * scale)
     title_font = _font(settings['title_font_size'] * scale, bold=True)
@@ -198,7 +187,7 @@ def render_program_plot(path, x, corrected, peaks, settings):
         overlay = Image.new('RGBA', image.size, (255, 255, 255, 0))
         ImageDraw.Draw(overlay).polygon(polygon, fill=integration_color + (68,))
         image = Image.alpha_composite(image.convert('RGBA'), overlay).convert('RGB')
-        draw = ImageDraw.Draw(image)
+        draw = ScientificDraw(image)
     if len(points) >= 2:
         draw.line(points, fill=signal_color, width=max(2, int(settings['line_width'] * scale)), joint='curve')
     if settings['show_baseline']:
@@ -256,7 +245,7 @@ def render_bet_plot(path, adsorption_x, adsorption_q, desorption_x, desorption_q
     width = max(950, int(settings['figure_width'] * dpi))
     height = max(430, int(settings['figure_height'] * dpi))
     image = Image.new('RGB', (width, height), 'white')
-    draw = ImageDraw.Draw(image)
+    draw = ScientificDraw(image)
     tick_font = _font(settings['tick_font_size'] * scale)
     axis_font = _font(settings['axis_font_size'] * scale)
     title_font = _font(settings['title_font_size'] * scale, bold=True)

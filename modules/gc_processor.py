@@ -10,6 +10,10 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from modules.plot_style import (
+    load_plot_font, ScientificDraw, scientific_text_image,
+)
+
 
 def _safe_file_token(value, default='GC'):
     text = str(value or '').strip()
@@ -1225,13 +1229,14 @@ def default_gc_plot_settings(reactant_label, metadata=None):
         metadata.get('catalyst_id') or metadata.get('source_file') or 'GC run')
     return {
         'title': str(title),
+        'show_title': True,
         'x_axis_label': '',
         'conversion_axis_label': f'{reactant_label} Conversion (%)',
         'selectivity_axis_label': 'Carbon-based selectivity (%)',
-        'tick_font_size': 16,
+        'tick_font_size': 24,
         'axis_font_size': 28,
         'title_font_size': 34,
-        'legend_font_size': 16,
+        'legend_font_size': 24,
         'bar_width_percent': 82,
         'bar_gap_px': 0,
         'png_dpi': 300,
@@ -1266,7 +1271,7 @@ def normalize_gc_plot_settings(settings, reactant_label, metadata=None):
         if key not in settings:
             continue
         text = str(settings.get(key) or '').strip()[:limit]
-        if key == 'x_axis_label':
+        if key in {'title', 'x_axis_label'}:
             normalized[key] = text
         elif text:
             normalized[key] = text
@@ -1301,6 +1306,8 @@ def normalize_gc_plot_settings(settings, reactant_label, metadata=None):
             normalized[minimum_key] = None
             normalized[maximum_key] = None
 
+    normalized['show_title'] = _metadata_bool(
+        settings, 'show_title', defaults['show_title'])
     normalized['show_carbon_balance'] = _metadata_bool(
         settings, 'show_carbon_balance', defaults['show_carbon_balance'])
     normalized['conversion_color'] = _normalize_hex_color(
@@ -1346,29 +1353,17 @@ def validate_gc_plot_axis_ranges(settings):
 
 
 def _legend_label_width(draw, label, font, sub_font):
-    width = 0
-    for ch in str(label):
-        use_font = sub_font if ch.isdigit() else font
-        bbox = draw.textbbox((0, 0), ch, font=use_font)
-        width += bbox[2] - bbox[0]
-    return width
+    bbox = draw.textbbox((0, 0), label, font=font)
+    return bbox[2] - bbox[0]
 
 
 def _draw_legend_label(draw, x, y, label, font, sub_font, fill=(0, 0, 0)):
-    cursor = int(x)
-    sub_offset = max(2, int(getattr(font, 'size', 14) * 0.35))
-    for ch in str(label):
-        is_sub = ch.isdigit()
-        use_font = sub_font if is_sub else font
-        y_pos = int(y) + (sub_offset if is_sub else 0)
-        draw.text((cursor, y_pos), ch, fill=fill, font=use_font)
-        bbox = draw.textbbox((0, 0), ch, font=use_font)
-        cursor += bbox[2] - bbox[0]
+    draw.text((x, y), label, fill=fill, font=font)
 
 
 def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
                   reactant_label, metadata, species_config, output_dir):
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image
 
     rxn = _analysis_reaction_rows(df)
     plot_settings = normalize_gc_plot_settings(
@@ -1390,23 +1385,13 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
     plot_w, plot_h = x1 - x0, y1 - y0
 
     img = Image.new('RGB', (width, height), (255, 255, 255))
-    draw = ImageDraw.Draw(img)
-
-    def load_font(size, bold=False):
-        names = ['arialbd.ttf', 'arial.ttf'] if bold else ['arial.ttf', 'segoeui.ttf']
-        windir = os.environ.get('WINDIR', r'C:\Windows')
-        for name in names:
-            try:
-                return ImageFont.truetype(os.path.join(windir, 'Fonts', name), size=size)
-            except OSError:
-                continue
-        return ImageFont.load_default()
+    draw = ScientificDraw(img)
+    load_font = load_plot_font
 
     font = load_font(tick_font_size)
     legend_font = load_font(legend_font_size)
     legend_sub_font = load_font(max(7, int(round(legend_font_size * 0.68))))
     axis_font = load_font(axis_font_size)
-    axis_sub_font = load_font(max(9, int(round(axis_font_size * 0.65))))
     title_font = load_font(title_font_size)
 
     def txt(x, y, text, fill=(0, 0, 0), anchor=None, font_obj=None):
@@ -1419,31 +1404,9 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
         bbox = draw.textbbox((0, 0), str(text), font=font_obj or font)
         return bbox[2] - bbox[0]
 
-    def rotated_txt(x, y, text, angle, font_obj=None,
-                    subscript_digits=False):
+    def rotated_txt(x, y, text, angle, font_obj=None):
         font_use = font_obj or font
-        if subscript_digits:
-            tw = _legend_label_width(
-                draw, text, font_use, axis_sub_font)
-            base_box = draw.textbbox((0, 0), str(text), font=font_use)
-            sub_box = draw.textbbox((0, 0), '2', font=axis_sub_font)
-            sub_offset = max(
-                2, int(getattr(font_use, 'size', 14) * 0.35))
-            th = max(
-                base_box[3] - base_box[1],
-                sub_offset + sub_box[3] - sub_box[1])
-        else:
-            bbox = draw.textbbox((0, 0), str(text), font=font_use)
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        layer = Image.new('RGBA', (tw + 12, th + 12), (255, 255, 255, 0))
-        layer_draw = ImageDraw.Draw(layer)
-        if subscript_digits:
-            _draw_legend_label(
-                layer_draw, 6, 6, text, font_use, axis_sub_font,
-                fill=(0, 0, 0, 255))
-        else:
-            layer_draw.text(
-                (6, 6), str(text), fill=(0, 0, 0, 255), font=font_use)
+        layer = scientific_text_image(text, font_use)
         rotated = layer.rotate(angle, expand=True)
         img.paste(rotated, (int(x - rotated.width / 2), int(y - rotated.height / 2)), rotated)
 
@@ -1529,6 +1492,45 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
         else:
             right_upper = right_lower + 1.0
 
+    groups = _selectivity_groups(df_sel, species_config, metadata)
+    group_order = _selectivity_group_order(metadata)
+    palette = {
+        label: _hex_to_rgb(color)
+        for label, color in plot_settings['species_colors'].items()
+    }
+    group_values = {}
+    for group in group_order:
+        cols = groups.get(group, [])
+        if not cols:
+            continue
+        vals = df_sel.loc[rxn.index, cols].fillna(0).sum(axis=1).to_numpy() * 100.0
+        if np.isfinite(vals).any() and np.nanmax(vals) > 0.02:
+            group_values[group] = vals
+
+    # Reserve the actual legend height before drawing the axes. Keep the
+    # canvas size and selected font sizes, including when a third row is needed.
+    legend_labels = [f'{reactant_label} Conversion']
+    if cb_vals is not None:
+        legend_labels.append('Carbon Balance')
+    legend_labels.extend(group_values)
+    legend_boxes = [draw.textbbox((0, 0), label, font=legend_font)
+                    for label in legend_labels]
+    item_width = 58 + max(box[2] - box[0] for box in legend_boxes)
+    col_gap = max(255, item_width + 24)
+    legend_x = x0 + 80
+    legend_columns = 4
+    while (legend_columns > 1 and
+           legend_x + (legend_columns - 1) * col_gap + item_width > width - 20):
+        legend_columns -= 1
+    legend_rows = (len(legend_labels) + legend_columns - 1) // legend_columns
+    row_gap = max(44, legend_font_size + 22)
+    legend_offset = max(105, tick_font_size + axis_font_size + 61)
+    legend_bottom = max(24, max(box[3] for box in legend_boxes))
+    margin['b'] = max(margin['b'], legend_offset + (legend_rows - 1) * row_gap
+                      + legend_bottom + 16)
+    y1 = height - margin['b']
+    plot_h = y1 - y0
+
     def xp(v):
         return x0 + (float(v) - x_min) / (x_max - x_min) * plot_w
 
@@ -1586,28 +1588,13 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
     rotated_txt(
         x0 - max(74, axis_font_size * 2.25), y0 + plot_h / 2,
         plot_settings['conversion_axis_label'], 90,
-        font_obj=axis_font, subscript_digits=True)
+        font_obj=axis_font)
     rotated_txt(
         x1 + max(82, axis_font_size * 2.35), y0 + plot_h / 2,
         plot_settings['selectivity_axis_label'], -90,
-        font_obj=axis_font, subscript_digits=True)
-    title = plot_settings['title']
-    txt(x0 + plot_w / 2, 38, title, anchor='mm', font_obj=title_font)
-
-    groups = _selectivity_groups(df_sel, species_config, metadata)
-    group_order = _selectivity_group_order(metadata)
-    palette = {
-        label: _hex_to_rgb(color)
-        for label, color in plot_settings['species_colors'].items()
-    }
-    group_values = {}
-    for group in group_order:
-        cols = groups.get(group, [])
-        if not cols:
-            continue
-        vals = df_sel.loc[rxn.index, cols].fillna(0).sum(axis=1).to_numpy() * 100.0
-        if np.isfinite(vals).any() and np.nanmax(vals) > 0.02:
-            group_values[group] = vals
+        font_obj=axis_font)
+    if plot_settings['show_title'] and plot_settings['title']:
+        txt(x0 + plot_w / 2, 38, plot_settings['title'], anchor='mm', font_obj=title_font)
 
     finite_x = x_vals[np.isfinite(x_vals)]
     if len(finite_x) > 1:
@@ -1627,6 +1614,10 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
         if not np.isfinite(xv):
             continue
         x = xp(xv)
+        bar_left = max(x0 + 2, x - bar_px / 2)
+        bar_right = min(x1 - 2, x + bar_px / 2)
+        if bar_right <= bar_left:
+            continue
         base = 0.0
         for group in group_order:
             vals = group_values.get(group)
@@ -1637,7 +1628,7 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
                 continue
             y_top = y_right(base + val)
             y_bot = y_right(base)
-            draw.rectangle((x - bar_px / 2, y_top, x + bar_px / 2, y_bot),
+            draw.rectangle((bar_left, y_top, bar_right, y_bot),
                            fill=palette[group], outline=(255, 255, 255))
             base += val
 
@@ -1702,13 +1693,10 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
     for group in group_order:
         if group in group_values:
             legend_items.append((group, 'box', palette[group]))
-    legend_y = y1 + max(105, tick_font_size + axis_font_size + 61)
-    legend_x = x0 + 80
-    row_gap = max(44, legend_font_size + 22)
-    col_gap = 255
+    legend_y = y1 + legend_offset
     for i, (label, kind, color) in enumerate(legend_items):
-        col = i % 4
-        row = i // 4
+        col = i % legend_columns
+        row = i // legend_columns
         lx = legend_x + col * col_gap
         ly = legend_y + row * row_gap
         if kind == 'line':
@@ -1736,7 +1724,7 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
 def _draw_stacked_selectivity_plot(df, df_sel, total_C_out, C_in_flow,
                                    reactant_label, metadata, species_config,
                                    output_dir):
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image
 
     rxn = _analysis_reaction_rows(df)
     width, height = 1250, 900
@@ -1746,19 +1734,8 @@ def _draw_stacked_selectivity_plot(df, df_sel, total_C_out, C_in_flow,
     plot_w, plot_h = x1 - x0, y1 - y0
 
     img = Image.new('RGB', (width, height), (255, 255, 255))
-    draw = ImageDraw.Draw(img)
-    def load_font(size, bold=False):
-        names = ['arialbd.ttf', 'arial.ttf'] if bold else ['arial.ttf', 'segoeui.ttf']
-        paths = []
-        windir = os.environ.get('WINDIR', r'C:\Windows')
-        for name in names:
-            paths.append(os.path.join(windir, 'Fonts', name))
-        for path in paths:
-            try:
-                return ImageFont.truetype(path, size=size)
-            except OSError:
-                continue
-        return ImageFont.load_default()
+    draw = ScientificDraw(img)
+    load_font = load_plot_font
 
     font = load_font(16)
     small_font = load_font(14)
@@ -1951,7 +1928,7 @@ def _draw_stacked_selectivity_plot(df, df_sel, total_C_out, C_in_flow,
 def _draw_co_oxidation_plot(df, df_sel, total_C_out, C_in_flow,
                             reactant_label, metadata, species_config,
                             output_dir):
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image
 
     rxn = _analysis_reaction_rows(df)
     if rxn.empty:
@@ -1966,17 +1943,8 @@ def _draw_co_oxidation_plot(df, df_sel, total_C_out, C_in_flow,
     plot_w, plot_h = x1 - x0, y1 - y0
 
     img = Image.new('RGB', (width, height), (255, 255, 255))
-    draw = ImageDraw.Draw(img)
-
-    def load_font(size, bold=False):
-        names = ['arialbd.ttf', 'arial.ttf'] if bold else ['arial.ttf', 'segoeui.ttf']
-        windir = os.environ.get('WINDIR', r'C:\Windows')
-        for name in names:
-            try:
-                return ImageFont.truetype(os.path.join(windir, 'Fonts', name), size=size)
-            except OSError:
-                continue
-        return ImageFont.load_default()
+    draw = ScientificDraw(img)
+    load_font = load_plot_font
 
     font = load_font(16)
     small_font = load_font(13)
@@ -1992,11 +1960,7 @@ def _draw_co_oxidation_plot(df, df_sel, total_C_out, C_in_flow,
 
     def rotated_txt(x, y, text, angle, font_obj=None):
         font_use = font_obj or font
-        bbox = draw.textbbox((0, 0), str(text), font=font_use)
-        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        layer = Image.new('RGBA', (tw + 12, th + 12), (255, 255, 255, 0))
-        layer_draw = ImageDraw.Draw(layer)
-        layer_draw.text((6, 6), str(text), fill=(0, 0, 0, 255), font=font_use)
+        layer = scientific_text_image(text, font_use)
         rotated = layer.rotate(angle, expand=True)
         img.paste(rotated, (int(x - rotated.width / 2), int(y - rotated.height / 2)), rotated)
 

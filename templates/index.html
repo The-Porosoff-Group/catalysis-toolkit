@@ -867,6 +867,10 @@
                     <div class="form-group">
                       <label>Figure title</label>
                       <input type="text" id="gc_plot_title">
+                      <label class="checkbox-setting" for="gc_plot_show_title">
+                        <input type="checkbox" id="gc_plot_show_title" checked onchange="updateGcTitleControls()">
+                        <span>Show figure title</span>
+                      </label>
                     </div>
                     <div class="form-group">
                       <label>X-axis label</label>
@@ -1103,7 +1107,7 @@
         <div class="card-body">
           <div class="form-grid">
             <div class="form-group"><label>Sample ID</label><input id="bet_sample_id" type="text" placeholder="Parsed name or your preferred ID"></div>
-            <div class="form-group"><label>Sample Mass (g)</label><input id="bet_sample_mass_g" type="number" min="0" step="0.0001" placeholder="Parsed from file"></div>
+            <div class="form-group"><label>Sample Mass (g)</label><input id="bet_sample_mass_g" type="number" min="0" step="any" placeholder="Use mass from file"></div>
             <div class="form-group"><label>p/p₀ Minimum</label><input id="bet_p_min" type="number" min="0" max="1" step="any" placeholder="Automatic recommendation"></div>
             <div class="form-group"><label>p/p₀ Maximum</label><input id="bet_p_max" type="number" min="0" max="1" step="any" placeholder="Automatic recommendation"></div>
             <div class="form-group"><label>Molecular Cross-section (nm²)</label><input id="bet_cross_section_nm2" type="number" min="0" step="any" value="0.162"></div>
@@ -1112,6 +1116,7 @@
             <div class="form-group full"><label>Output Folder</label><input id="bet_output_dir" type="text" placeholder="Leave blank for toolkit results/"></div>
           </div>
           <div class="char-hint">Leave the pressure window blank to use the recommended physically consistent range. The toolkit checks C, monolayer-pressure placement, Rouquerol monotonicity, Qm agreement, and R². Liquid molar volume defaults to 34.65 cm³/mol for N₂ and is used for the calculated total pore volume.</div>
+          <div class="char-hint">Leave Sample Mass blank to use the file's mass. Entering a different mass corrects the uptake per gram using the original file mass. After changing the mass or pressure window, click Recalculate BET to update the results.</div>
         </div>
       </div>
       <div class="card">
@@ -1122,12 +1127,14 @@
           <div class="error-box" id="bet-error"></div>
           <div class="results-panel" id="bet-results">
             <div class="results-header"><h3>Results</h3><div id="bet-status-pill"></div></div>
+            <div class="char-warning" id="bet-fit-stale" role="status">Fit settings have changed. These results and downloads use the previous settings. Click Recalculate BET to apply your changes.</div>
             <div class="stats-grid" id="bet-stats"></div>
+            <div class="char-hint" id="bet-mass-note"></div>
             <div class="char-warning" id="bet-warning"></div>
             <details class="char-plot-editor" id="bet-reported-metrics">
-              <summary>Instrument-reported surface and pore parameters</summary>
+              <summary>Original instrument report (fixed values)</summary>
               <div class="char-editor-body">
-                <div class="char-hint">The calculated BET area above uses the currently recommended or user-selected p/p₀ window. Reported values preserve the instrument file's original method and fit window for comparison.</div>
+                <div class="char-hint">These values are copied from the original instrument report and do not change when you recalculate. The calculated BET area above uses the applied pressure window and sample mass.</div>
                 <div class="char-table-wrap"><table class="char-table"><thead><tr><th>Reported parameter</th><th>Value</th></tr></thead><tbody id="bet-source-metrics-body"></tbody></table></div>
               </div>
             </details>
@@ -1135,6 +1142,7 @@
             <details class="char-plot-editor" id="bet-plot-editor">
               <summary>Customize and regenerate BET plots</summary>
               <div class="char-editor-body">
+                <div class="char-hint">These controls change the figure's appearance. Axis limits do not change the BET fit. To change the calculation, edit BET Fit Settings above and click Recalculate BET.</div>
                 <div class="char-editor-grid">
                   <div class="form-group" style="grid-column:span 2"><label>Figure Title</label><input id="bet_plot_title" type="text"></div>
                   <div class="form-group"><label>Isotherm X Label</label><input id="bet_plot_iso_x_label" type="text"></div>
@@ -1913,9 +1921,17 @@ function applyGcPlotSettings(settings) {
   Object.entries(values).forEach(([id, value]) => {
     document.getElementById(id).value = value ?? '';
   });
+  document.getElementById('gc_plot_show_title').checked = settings.show_title ?? true;
+  updateGcTitleControls();
   document.getElementById('gc_plot_show_carbon_balance').checked =
     Boolean(settings.show_carbon_balance);
   renderGcPlotColors(settings);
+}
+
+function updateGcTitleControls() {
+  const hidden = !document.getElementById('gc_plot_show_title').checked;
+  document.getElementById('gc_plot_title').disabled = hidden;
+  document.getElementById('gc_plot_title_font').disabled = hidden;
 }
 
 function optionalGcPlotNumber(id) {
@@ -1937,6 +1953,7 @@ function collectGcPlotSettings() {
   });
   return {
     title: document.getElementById('gc_plot_title').value,
+    show_title: document.getElementById('gc_plot_show_title').checked,
     x_axis_label: document.getElementById('gc_plot_x_label').value,
     conversion_axis_label: document.getElementById('gc_plot_conversion_label').value,
     selectivity_axis_label: document.getElementById('gc_plot_selectivity_label').value,
@@ -2384,34 +2401,68 @@ async function regenerateTPPlot() {
 }
 
 // ── BET UI ──────────────────────────────────────────────────────────────────
+const betFitFields = ['sample_mass_g', 'p_min', 'p_max', 'cross_section_nm2',
+  'molar_volume_cm3_mol', 'liquid_molar_volume_cm3_mol'];
+let betAppliedInputs = null, betAppliedFile = null;
+let betProcessing = false, betPlotRendering = false;
+function betFitInputs() {
+  return JSON.stringify(betFitFields.map(field => document.getElementById(`bet_${field}`).value.trim()));
+}
+function betFitIsStale() {
+  return Boolean(currentBetResult && (betAppliedFile !== betSelectedFile || betAppliedInputs !== betFitInputs()));
+}
+function updateBETFitState() {
+  const stale = betFitIsStale();
+  document.getElementById('bet-fit-stale').classList.toggle('visible', stale);
+  document.getElementById('bet-regenerate').disabled = !currentBetResult || stale || betProcessing || betPlotRendering;
+  const button = document.getElementById('bet-btn-process');
+  button.disabled = betProcessing || betPlotRendering;
+  button.innerHTML = `<span>📐</span> ${currentBetResult ? 'Recalculate BET' : 'Process BET Data'}`;
+}
+betFitFields.forEach(field => document.getElementById(`bet_${field}`).addEventListener('input', updateBETFitState));
+function selectBETFile(file) {
+  if (!file || !charSetFile('bet', file, ['.xls','.xlsx','.csv','.tsv','.txt'])) return;
+  betSelectedFile = file;
+  currentBetResult = null; betAppliedInputs = null; betAppliedFile = null;
+  const mass = document.getElementById('bet_sample_mass_g');
+  mass.value = ''; mass.placeholder = 'Use mass from file';
+  document.getElementById('bet-results').classList.remove('visible');
+  updateBETFitState();
+}
 function betDragOver(event) { event.preventDefault(); document.getElementById('bet-dropzone').classList.add('dragover'); }
 function betDragLeave() { document.getElementById('bet-dropzone').classList.remove('dragover'); }
 function betDrop(event) {
   event.preventDefault(); betDragLeave(); const file = event.dataTransfer.files[0];
-  if (file && charSetFile('bet', file, ['.xls','.xlsx','.csv','.tsv','.txt'])) betSelectedFile = file;
+  selectBETFile(file);
 }
 function betFileSelect(event) {
   const file = event.target.files[0];
-  if (file && charSetFile('bet', file, ['.xls','.xlsx','.csv','.tsv','.txt'])) betSelectedFile = file;
+  selectBETFile(file);
 }
 async function processBET() {
+  if (betProcessing || betPlotRendering) return;
   const error = document.getElementById('bet-error'); error.classList.remove('visible');
   if (!betSelectedFile) { error.textContent = 'Please upload a BET file first.'; error.classList.add('visible'); return; }
-  const data = new FormData(); data.append('file', betSelectedFile);
+  const requestedFile = betSelectedFile, requestedInputs = betFitInputs();
+  const data = new FormData(); data.append('file', requestedFile);
   ['sample_id','sample_mass_g','p_min','p_max','cross_section_nm2','molar_volume_cm3_mol','liquid_molar_volume_cm3_mol','output_dir']
     .forEach(field => data.append(field, document.getElementById(`bet_${field}`).value));
-  const button = document.getElementById('bet-btn-process'); button.disabled = true;
+  betProcessing = true; updateBETFitState();
   document.getElementById('bet-progress').classList.add('visible');
   document.getElementById('bet-results').classList.remove('visible');
   try {
     const response = await fetch('/api/process_bet', {method:'POST', body:data});
     const result = await response.json(); if (!response.ok || result.error) throw new Error(result.error || 'BET processing failed.');
+    if (betSelectedFile !== requestedFile) return;
     currentBetResult = result;
+    betAppliedFile = requestedFile; betAppliedInputs = requestedInputs;
     if (!document.getElementById('bet_sample_id').value) document.getElementById('bet_sample_id').value = result.sample_id || '';
-    if (!document.getElementById('bet_sample_mass_g').value && result.sample_mass_g != null) document.getElementById('bet_sample_mass_g').value = result.sample_mass_g;
+    const fileMass = result.mass_normalization?.source_mass_g;
+    document.getElementById('bet_sample_mass_g').placeholder = fileMass != null ? `File mass: ${fileMass} g` : 'Original mass unavailable';
+    document.getElementById('bet-mass-note').textContent = result.mass_normalization?.note || '';
+    document.getElementById('bet-plot-status').textContent = '';
     charStats('bet-stats', [
-      {label:'BET surface area', value:charSig(result.surface_area_m2_g,5), unit:'m²/g'},
-      {label:'BET surface area (reported)', value:charSig(result.source_surface_area_m2_g,5), unit:'m²/g'},
+      {label:'Calculated BET area', value:charSig(result.surface_area_m2_g,5), unit:'m²/g'},
       {label:'BET constant C', value:charSig(result.c_constant,5), unit:''},
       {label:'Monolayer capacity', value:charSig(result.monolayer_capacity_cm3_g_stp,5), unit:'cm³ STP/g'},
       {label:'Total pore volume', value:charSig(result.total_pore_volume_cm3_g,5), unit:'cm³/g'},
@@ -2434,7 +2485,7 @@ async function processBET() {
     document.getElementById('bet-results').classList.add('visible');
     document.getElementById('bet-results').scrollIntoView({behavior:'smooth', block:'start'});
   } catch (failure) { error.textContent = failure.message; error.classList.add('visible'); }
-  finally { button.disabled = false; document.getElementById('bet-progress').classList.remove('visible'); }
+  finally { betProcessing = false; updateBETFitState(); document.getElementById('bet-progress').classList.remove('visible'); }
 }
 function renderBetDownloads() {
   document.getElementById('bet-downloads').innerHTML = `
@@ -2490,21 +2541,24 @@ function collectBetPlotSettings() {
   };
 }
 async function regenerateBETPlot() {
-  if (!currentBetResult?.plot_token) return;
+  if (!currentBetResult?.plot_token || betFitIsStale() || betProcessing || betPlotRendering) return;
+  const previousResult = currentBetResult;
   const status = document.getElementById('bet-plot-status');
-  const button = document.getElementById('bet-regenerate'); button.disabled = true;
+  betPlotRendering = true; updateBETFitState();
+  status.style.color = '';
   status.textContent = 'Rendering and updating workbook...';
   try {
     const response = await fetch('/api/regenerate_bet_plot', {method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({plot_token:currentBetResult.plot_token, settings:collectBetPlotSettings()})});
     const result = await response.json(); if (!response.ok || result.error) throw new Error(result.error || 'Plot regeneration failed.');
+    if (currentBetResult !== previousResult) return;
     currentBetResult.plot_path = result.plot_path; currentBetResult.summary_path = result.summary_path;
     currentBetResult.plot_settings = result.plot_settings;
     document.getElementById('bet-result-plot').src = `data:image/png;base64,${result.plot_b64}`;
     applyBetPlotSettings(result.plot_settings); renderBetDownloads();
     status.textContent = 'Plot and embedded workbook image updated.';
   } catch (failure) { status.textContent = failure.message; status.style.color = 'var(--danger)'; }
-  finally { button.disabled = false; }
+  finally { betPlotRendering = false; updateBETFitState(); }
 }
 
 function openXrdFittingGuide() {
