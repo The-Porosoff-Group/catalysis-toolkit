@@ -1418,7 +1418,8 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
     title_font_size = plot_settings['title_font_size']
     legend_font_size = plot_settings['legend_font_size']
 
-    width, height = 1250, 900
+    width, height = 1100, 1000
+    show_title = plot_settings['show_title'] and bool(plot_settings['title'])
     margin = {
         'l': max(110, int(axis_font_size * 2.5 + 36)),
         'r': max(108, int(axis_font_size * 2.5 + 34)),
@@ -1555,26 +1556,37 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
         if np.isfinite(vals).any() and np.nanmax(vals) > 0.02:
             group_values[group] = vals
 
-    # Reserve the actual legend height before drawing the axes. Keep the
-    # canvas size and selected font sizes, including when a third row is needed.
+    # Pack measured legend entries with a normal gap, then center each row.
+    # Reserve their height before drawing the axes so wrapping never clips.
     legend_labels = [f'{reactant_label} Conversion']
     if cb_vals is not None:
         legend_labels.append('Carbon Balance')
     legend_labels.extend(group_values)
     legend_boxes = [draw.textbbox((0, 0), label, font=legend_font)
                     for label in legend_labels]
-    item_width = 58 + max(box[2] - box[0] for box in legend_boxes)
-    col_gap = max(255, item_width + 24)
-    legend_x = x0 + 80
-    legend_columns = 4
-    while (legend_columns > 1 and
-           legend_x + (legend_columns - 1) * col_gap + item_width > width - 20):
-        legend_columns -= 1
-    legend_rows = (len(legend_labels) + legend_columns - 1) // legend_columns
+    item_widths = [58 + box[2] - box[0] for box in legend_boxes]
+    item_gap = max(28, legend_font_size * 1.5)
+    legend_rows = [[]]
+    row_width = 0
+    for item_width in item_widths:
+        row = legend_rows[-1]
+        if row and (len(row) == 4 or row_width + item_gap + item_width > plot_w):
+            row = []
+            legend_rows.append(row)
+            row_width = 0
+        row_width += (item_gap if row else 0) + item_width
+        row.append(item_width)
+    legend_positions = []
+    for row_index, row in enumerate(legend_rows):
+        row_width = sum(row) + item_gap * (len(row) - 1)
+        left = x0 + (plot_w - row_width) / 2
+        for item_width in row:
+            legend_positions.append((left, row_index))
+            left += item_width + item_gap
     row_gap = max(44, legend_font_size + 22)
     legend_offset = max(105, tick_font_size + axis_font_size + 61)
     legend_bottom = max(24, max(box[3] for box in legend_boxes))
-    margin['b'] = max(margin['b'], legend_offset + (legend_rows - 1) * row_gap
+    margin['b'] = max(margin['b'], legend_offset + (len(legend_rows) - 1) * row_gap
                       + legend_bottom + 16)
     y1 = height - margin['b']
     plot_h = y1 - y0
@@ -1639,7 +1651,7 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
         x1 + max(82, axis_font_size * 2.35), y0 + plot_h / 2,
         plot_settings['selectivity_axis_label'], -90,
         font_obj=axis_font)
-    if plot_settings['show_title'] and plot_settings['title']:
+    if show_title:
         txt(x0 + plot_w / 2, 38, plot_settings['title'], anchor='mm', font_obj=title_font)
 
     # Render data separately, then composite only the axes interior. Text and
@@ -1744,9 +1756,7 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
             legend_items.append((group, 'box', palette[group]))
     legend_y = y1 + legend_offset
     for i, (label, kind, color) in enumerate(legend_items):
-        col = i % legend_columns
-        row = i // legend_columns
-        lx = legend_x + col * col_gap
+        lx, row = legend_positions[i]
         ly = legend_y + row * row_gap
         if kind == 'line':
             draw.line((lx, ly + 12, lx + 48, ly + 12), fill=color, width=4)
@@ -1766,6 +1776,11 @@ def _draw_gc_plot(df, df_sel, total_C_out, C_in_flow,
 
     path = os.path.join(output_dir, f'{_output_file_prefix(metadata)}_gc_plot.png')
     dpi = plot_settings['png_dpi']
+    if not show_title:
+        # Remove the unused title band without stretching the plot or changing
+        # bar/legend geometry. Retain enough margin for the upper tick labels.
+        title_band = margin['t'] - max(24, tick_font_size)
+        img = img.crop((0, title_band, width, height))
     img.save(path, dpi=(dpi, dpi))
     return path
 

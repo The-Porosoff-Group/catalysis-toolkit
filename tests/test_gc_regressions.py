@@ -157,6 +157,7 @@ class GcRegressionTests(unittest.TestCase):
                         'CO2', {'plot_settings': settings}, species, directory)
                     with Image.open(output) as image:
                         row = np.all(np.asarray(image)[200] == (18, 52, 86), axis=1)
+                        right_axis = image.width - 108
                     edges = np.diff(np.r_[False, row, False].astype(int))
                     starts, ends = np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
                     lower, upper = limits or (0, 12)
@@ -165,7 +166,7 @@ class GcRegressionTests(unittest.TestCase):
                     widths = ends - starts
                     self.assertLessEqual(int(np.ptp(widths)), 1)
                     self.assertGreater(starts[0], 112)
-                    self.assertLess(ends[-1], 1140)
+                    self.assertLess(ends[-1], right_axis - 2)
         pd.testing.assert_frame_equal(frame, original_frame)
         pd.testing.assert_frame_equal(selectivity, original_selectivity)
 
@@ -182,25 +183,37 @@ class GcRegressionTests(unittest.TestCase):
                     'show_carbon_balance': True, 'conversion_color': '#C5128B',
                     'carbon_balance_color': '#ED760A', 'species_colors': {'CO': '#123456'}}
         carbon = pd.Series([1.2, .5, .6, .8, .4, 1.2, 1.3, .6, .7, .2, .3, 1.4, 1.5])
-        with tempfile.TemporaryDirectory() as directory:
+        axes = []
+
+        class CheckedDraw(ScientificDraw):
+            def line(self, xy, fill=None, width=0, **kwargs):
+                if len(axes) < 3 and fill == (0, 0, 0) and width == 3:
+                    axes.append(xy)
+                return self.draw.line(xy, fill=fill, width=width, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+                'modules.gc_processor.ScientificDraw', CheckedDraw):
             output = _draw_gc_plot(frame, pd.DataFrame({'S_CO': np.ones(13)}), carbon, 1,
                 'CO2', {'plot_settings': settings}, {'CO': {'label': 'CO', 'cn': 1}}, directory)
             with Image.open(output) as image:
                 pixels = np.asarray(image)
-            # Axis bounds at these unchanged font/layout settings; exclude legends.
+            x0, bottom, x1, _ = axes[0]
+            top = axes[1][1]
+            # Inspect the entire data region and its surrounding margins,
+            # excluding the legend swatches below the axis caption.
             for color in ((197, 18, 139), (237, 118, 10), (18, 52, 86)):
-                ys, xs = np.where(np.all(pixels[:728] == color, axis=2))
+                ys, xs = np.where(np.all(pixels[:bottom + 12] == color, axis=2))
                 self.assertGreater(len(xs), 0)
-                self.assertGreaterEqual(xs.min(), 112)
-                self.assertLessEqual(xs.max(), 1140)
-                self.assertGreaterEqual(ys.min(), 88)
-                self.assertLessEqual(ys.max(), 714)
+                self.assertGreaterEqual(xs.min(), x0 + 2)
+                self.assertLessEqual(xs.max(), x1 - 2)
+                self.assertGreaterEqual(ys.min(), top)
+                self.assertLessEqual(ys.max(), bottom - 2)
             # The consecutive >50% measurements at 5 and 6 h must not produce
             # a false flat segment along the upper conversion boundary.
             lower, upper, _, _ = _gc_bar_geometry(frame.time_on_stream_h.to_numpy(), 4, 8,
-                1032, normalize_gc_plot_settings(settings, 'CO2'))
-            middle = round(110 + (5.5 - lower) / (upper - lower) * 1032)
-            self.assertFalse(np.any(np.all(pixels[88:96, middle-10:middle+10] == (197, 18, 139), axis=2)))
+                x1 - x0, normalize_gc_plot_settings(settings, 'CO2'))
+            middle = round(x0 + (5.5 - lower) / (upper - lower) * (x1 - x0))
+            self.assertFalse(np.any(np.all(pixels[top:top+8, middle-10:middle+10] == (197, 18, 139), axis=2)))
 
     def test_line_clipping_preserves_intersections_and_rejects_external_segments(self):
         self.assertEqual(_clip_gc_segment((-10, -10), (20, 20), (0, 0, 10, 10)),
@@ -334,27 +347,68 @@ class GcRegressionTests(unittest.TestCase):
         species = {label: {'label': label, 'cn': 1, 'det': 'FID'} for label in labels}
         original_frame, original_selectivity = frame.copy(), selectivity.copy()
         bounds = []
+        legend_rows = {}
+        caption_bottom = []
 
         class CheckedDraw(ScientificDraw):
             def text(self, xy, text, fill=None, font=None, anchor=None, **kwargs):
                 bounds.append(self.textbbox(xy, text, font=font, anchor=anchor))
+                if text == 'Time on stream (h)':
+                    caption_bottom.append(bounds[-1][3])
                 return super().text(xy, text, fill=fill, font=font, anchor=anchor, **kwargs)
 
+        def checked_legend(draw, x, y, label, font, sub_font):
+            box = draw.textbbox((x, y), label, font=font)
+            legend_rows.setdefault(y, []).append((x - 58, y + 1, box[2], max(y + 25, box[3])))
+            return _draw_legend_label(draw, x, y, label, font, sub_font)
+
         with tempfile.TemporaryDirectory() as directory, mock.patch(
-                'modules.gc_processor.ScientificDraw', CheckedDraw):
+                'modules.gc_processor.ScientificDraw', CheckedDraw), mock.patch(
+                'modules.gc_processor._draw_legend_label', side_effect=checked_legend):
             path = _draw_gc_plot(frame, selectivity, pd.Series([10, 10]), 10, 'CO2', {
                 'catalyst_id': 'Sample 12 at 400 °C', 'plot_settings': {
                     'show_carbon_balance': True, 'legend_font_size': 30,
                     'axis_font_size': 36, 'tick_font_size': 24,
                 }}, species, directory)
             with Image.open(path) as image:
-                self.assertEqual(image.size, (1250, 900))
+                self.assertEqual(image.size, (1100, 1000))
             for left, top, right, bottom in bounds:
                 self.assertGreaterEqual(min(left, top), 0)
-                self.assertLessEqual(right, 1250)
-                self.assertLessEqual(bottom, 900)
+                self.assertLessEqual(right, 1100)
+                self.assertLessEqual(bottom, 1000)
+            previous_bottom = caption_bottom[0]
+            for row in legend_rows.values():
+                self.assertGreater(row[0][1], previous_bottom)
+                self.assertAlmostEqual((row[0][0] + row[-1][2]) / 2, 551, delta=1)
+                for previous, current in zip(row, row[1:]):
+                    self.assertAlmostEqual(current[0] - previous[2], 45, delta=1)
+                previous_bottom = max(box[3] for box in row)
         pd.testing.assert_frame_equal(frame, original_frame)
         pd.testing.assert_frame_equal(selectivity, original_selectivity)
+
+    def test_hidden_or_empty_title_crops_space_without_resizing_plot(self):
+        frame = pd.DataFrame({
+            'label': ['Sample Rxn 1', 'Sample Rxn 2'], 'inj_num': [1, 2],
+            'is_bypass': False, 'analysis_include': True,
+            'conversion': [0.2, 0.21], 'time_on_stream_h': [0, 1],
+        })
+        selectivity = pd.DataFrame({'S_CO': [1, 1]})
+        species = {'CO': {'label': 'CO', 'cn': 1}}
+        images = []
+        for settings in ({'title': 'Visible title'},
+                         {'title': 'Hidden title', 'show_title': False},
+                         {'title': ''}):
+            with self.subTest(settings=settings), tempfile.TemporaryDirectory() as directory:
+                path = _draw_gc_plot(frame, selectivity, pd.Series([1, 1]), 1, 'CO2',
+                    {'plot_settings': settings}, species, directory)
+                with Image.open(path) as image:
+                    images.append(np.asarray(image).copy())
+        self.assertEqual(images[0].shape[:2], (1000, 1100))
+        self.assertEqual(images[1].shape[:2], (936, 1100))
+        # Every retained pixel is identical: axes, data, fonts and legend
+        # retain their dimensions; only the 64-pixel title band is removed.
+        np.testing.assert_array_equal(images[0][64:], images[1])
+        np.testing.assert_array_equal(images[1], images[2])
 
     def test_co2_reaction_hydrogen_defaults_are_30_sccm(self):
         config_dir = os.path.join(ROOT, 'modules', 'reaction_configs')
