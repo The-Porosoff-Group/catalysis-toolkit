@@ -863,6 +863,7 @@
               <div class="gc-plot-editor-body">
                 <div class="gc-plot-section">
                   <h4>Labels</h4>
+                  <div class="char-hint">Use <code>_{...}</code> for subscripts and <code>^{...}</code> for superscripts in titles and axis labels: <code>CeZrO_{x}</code>, <code>Ce_{0.8}Zr_{0.2}O_{x}</code>, or <code>m^{2} g^{-1}</code>. Include the braces; no dollar signs are needed.</div>
                   <div class="gc-plot-grid">
                     <div class="form-group">
                       <label>Figure title</label>
@@ -1047,6 +1048,7 @@
             <details class="char-plot-editor" id="tp-plot-editor">
               <summary>Customize and regenerate this experiment plot</summary>
               <div class="char-editor-body">
+                <div class="char-hint">Titles and axis labels support <code>_{...}</code> for subscripts and <code>^{...}</code> for superscripts, for example <code>CeZrO_{x}</code> or <code>g^{-1}</code>. Include the braces; no dollar signs are needed.</div>
                 <div class="char-editor-grid">
                   <div class="form-group" style="grid-column:span 2"><label>Figure Title</label><input id="tp_plot_title" type="text"></div>
                   <div class="form-group"><label>Horizontal Axis</label><select id="tp_plot_x_basis" onchange="updateTpAxisLabel()"><option value="temperature">Temperature</option><option value="time">Time</option></select></div>
@@ -1143,6 +1145,7 @@
               <summary>Customize and regenerate BET plots</summary>
               <div class="char-editor-body">
                 <div class="char-hint">These controls change the figure's appearance. Axis limits do not change the BET fit. To change the calculation, edit BET Fit Settings above and click Recalculate BET.</div>
+                <div class="char-hint">Titles and axis labels support <code>_{...}</code> for subscripts and <code>^{...}</code> for superscripts, for example <code>CeZrO_{x}</code> or <code>m^{2} g^{-1}</code>. Include the braces; no dollar signs are needed.</div>
                 <div class="char-editor-grid">
                   <div class="form-group" style="grid-column:span 2"><label>Figure Title</label><input id="bet_plot_title" type="text"></div>
                   <div class="form-group"><label>Isotherm X Label</label><input id="bet_plot_iso_x_label" type="text"></div>
@@ -1277,7 +1280,7 @@
                          onchange="document.getElementById('xrd-figure-title').disabled = !this.checked;">
                   Show figure title
                 </label>
-                <span style="font-size:11px;color:var(--muted);">Uncheck for no title on figures exported with the next fit.</span>
+                <span style="font-size:11px;color:var(--muted);">Uncheck for no title on figures exported with the next fit. Use <code>_{...}</code> for subscripts and <code>^{...}</code> for superscripts, e.g. <code>CeZrO_{x}</code> or <code>Fe^{3+}</code>. Include the braces; no dollar signs are needed.</span>
               </div>
               <div class="form-group">
                 <label for="xrd-size-reporting">Size reporting</label>
@@ -2175,6 +2178,12 @@ function escHtml(v) {
   return String(v ?? '').replace(/[&<>"']/g, ch => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[ch]));
+}
+function scientificLabelHtml(value) {
+  return escHtml(value).replace(/([_^])\{([^{}\r\n]+)\}/g, (_, marker, content) => {
+    const tag = marker === '_' ? 'sub' : 'sup';
+    return `<${tag}>${content}</${tag}>`;
+  });
 }
 
 // ── Shared characterization helpers ───────────────────────────────────────────────────
@@ -4763,7 +4772,7 @@ function renderXrdPublicationPlot(data) {
       paper_bgcolor:palette.paper, plot_bgcolor:palette.plot,
       font:{color:palette.text,size:12,family:'Arial, sans-serif'},
       margin:{l:110,r:22,t:showFigureTitle ? 70 : 20,b:58},
-      title:showFigureTitle ? {text:`<b>${escHtml(figureTitle)}</b><br><span style="font-size:11px">${statsTitle}</span>`,
+      title:showFigureTitle ? {text:`<b>${scientificLabelHtml(figureTitle)}</b><br><span style="font-size:11px">${statsTitle}</span>`,
              x:0.5,xanchor:'center',font:{size:17}} : undefined,
       xaxis:{gridcolor:palette.grid,zeroline:false,tickfont:{size:12}},
       yaxis:{title:{text:'Intensity (arbitrary units)',font:{size:14}},
