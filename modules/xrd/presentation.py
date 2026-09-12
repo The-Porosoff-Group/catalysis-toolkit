@@ -77,12 +77,12 @@ def phase_display_label(phase, index=None):
     return base
 
 
-def phase_legend_label(phase, index=None):
+def phase_legend_label(phase, index=None, *, show_weight=True):
     """Return the publication legend text for one fitted phase."""
     label = phase_tick_label(phase, index=index)
     weight = phase.get("weight_fraction_%")
     uncertainty = phase.get("weight_fraction_err_%")
-    if weight not in (None, ""):
+    if show_weight and weight not in (None, ""):
         value = f"{weight}"
         if uncertainty not in (None, ""):
             value += f" ± {uncertainty}"
@@ -216,9 +216,11 @@ def enrich_phase_results(result):
     tt_min = min(tt) if tt else 5.0
     tt_max = max(tt) if tt else 90.0
     wavelength = result.get("wavelength", 1.54056)
-    for index, phase in enumerate(result.get("phase_results", []) or []):
+    phases = result.get("phase_results", []) or []
+    for index, phase in enumerate(phases):
         phase["display_label"] = phase_display_label(phase, index=index)
-        phase["legend_label"] = phase_legend_label(phase, index=index)
+        phase["legend_label"] = phase_legend_label(
+            phase, index=index, show_weight=len(phases) > 1)
         phase["tick_label"] = phase_tick_label(phase, index=index)
         phase["tick_reflections"] = reflection_labels_for_phase(
             phase, wavelength, tt_min, tt_max)
