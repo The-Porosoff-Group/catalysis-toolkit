@@ -101,6 +101,7 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
         Completed refinement result.  Its numerical arrays are read-only here.
     metadata : dict
         Sample, wavelength, method, and optional ``plot_theme`` information.
+        Set ``show_figure_title`` to False to omit the figure heading.
     output_path : str
         Destination PNG path.
     theme : {"light", "dark"}, optional
@@ -214,9 +215,11 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
         str(metadata.get('sample_id', 'Sample')).strip().replace('_', ' ')
         or 'Sample')
     title_fontsize = max(9.2, 12.4 - max(len(sample_label) - 42, 0) * 0.08)
-    ax_main.set_title(
-        sample_label, loc='center', pad=7, fontsize=title_fontsize,
-        color=text_color, fontweight='bold')
+    show_figure_title = metadata.get('show_figure_title', True)
+    if show_figure_title:
+        ax_main.set_title(
+            sample_label, loc='center', pad=7, fontsize=title_fontsize,
+            color=text_color, fontweight='bold')
     ax_main.text(
         0.995, 0.985, stats_text, transform=ax_main.transAxes,
         ha='right', va='top', fontsize=8.3, color=text_color,
@@ -317,7 +320,8 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
     ax_main.set_xticks(two_theta_ticks)
     ax_main.xaxis.set_major_formatter(
         FuncFormatter(lambda value, _position: f'{value:.0f}'))
-    fig.subplots_adjust(left=0.14, right=0.985, bottom=0.045, top=0.925)
+    fig.subplots_adjust(left=0.14, right=0.985, bottom=0.045,
+                        top=0.925 if show_figure_title else 0.975)
 
     fig.savefig(
         output_path, dpi=300, facecolor=palette['figure'], edgecolor='none',

@@ -510,6 +510,7 @@ def _write_summary_xlsx(result, metadata, method_label, output_dir):
     param_keys = [
         ('sample',             'Sample'),
         ('figure_title',       'Figure title'),
+        ('show_figure_title',  'Show figure title'),
         ('analysis_date',      'Analysis date'),
         ('source_file',        'Source data file'),
         ('method',             'Method'),
@@ -599,6 +600,8 @@ def _write_summary_xlsx(result, metadata, method_label, output_dir):
                 row[col_names[i]] = metadata.get('sample_id', '')
             elif key == 'figure_title':
                 row[col_names[i]] = metadata.get('figure_title', '')
+            elif key == 'show_figure_title':
+                row[col_names[i]] = metadata.get('show_figure_title', True)
             elif key == 'analysis_date':
                 row[col_names[i]] = metadata.get(
                     'analysis_date', metadata.get('output_date', ''))
@@ -955,6 +958,7 @@ def run(filepath, output_dir, metadata, params):
     plot_metadata = {
         'sample_id':       metadata.get('sample_id', 'Sample'),
         'figure_title':    metadata.get('figure_title', ''),
+        'show_figure_title': metadata.get('show_figure_title', True),
         'wavelength_label': params.get('wavelength_label',
                                         f"λ={wavelength:.5f} Å"),
         'method':           method_label,

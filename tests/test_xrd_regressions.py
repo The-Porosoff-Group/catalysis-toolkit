@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from modules.xrd.cif_cache import mp_normal_cache_key, normalize_mp_id
 from modules.xrd.cod_api import get_stick_pattern
@@ -11,6 +12,7 @@ from modules.xrd.crystallography import (
 )
 from modules.xrd.gsasii_backend import (
     _covariance_diagnostics,
+    _extract_profile_params,
     _prepared_cif_reference,
     _run_refinement_steps,
 )
@@ -37,6 +39,24 @@ class FakeProject:
 
 
 class XrdRegressionTests(unittest.TestCase):
+    def test_unrefined_default_size_is_not_a_crystallite_measurement(self):
+        phase = SimpleNamespace(data={'Histograms': {'PWDR sample': {
+            'Size': ['isotropic', [1.0, 1.0, 1.0], [False, False, False]],
+        }}})
+        self.assertIsNone(
+            _extract_profile_params(phase)['crystallite_size_A'])
+
+    def test_refined_size_uses_microns_and_keeps_valid_one_micron_results(self):
+        for size_um in (0.01, 1.0):
+            with self.subTest(size_um=size_um):
+                phase = SimpleNamespace(data={'Histograms': {'PWDR sample': {
+                    'Size': ['isotropic', [size_um, 1.0, 1.0],
+                             [True, False, False]],
+                }}})
+                self.assertEqual(
+                    _extract_profile_params(phase)['crystallite_size_A'],
+                    size_um * 10000.0)
+
     @staticmethod
     def _ceo2_cif():
         from pymatgen.core import Lattice, Structure
