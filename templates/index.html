@@ -1272,6 +1272,22 @@
                 <span style="font-size:11px;color:var(--muted);">Uncheck for no title on figures exported with the next fit.</span>
               </div>
               <div class="form-group">
+                <label for="xrd-size-reporting">Size reporting</label>
+                <select id="xrd-size-reporting">
+                  <option value="both" selected>Both (recommended)</option>
+                  <option value="hap">GSAS HAP size (K = 1)</option>
+                  <option value="scherrer">Scherrer-equivalent size</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="xrd-scherrer-k">Scherrer shape factor K</label>
+                <input type="number" id="xrd-scherrer-k" value="0.90" min="0.01" step="0.01">
+              </div>
+              <div class="form-group full" style="font-size:11px;color:var(--muted);">
+                Applies to the next fit's results and workbook. Keep Size checked in the phase card.
+                Scherrer-equivalent rescales the fitted GSAS size by K; it is not a separate single-peak measurement.
+              </div>
+              <div class="form-group">
                 <label>2θ Min (°)</label>
                 <input type="number" id="xrd-tt-min" value="10" step="0.5">
               </div>
@@ -1477,11 +1493,11 @@
               <input type="checkbox" id="xrd-phase-isolation" style="margin-right:4px;" checked>
               Phase isolation
             </label>
-            <label id="zero-not-disp-label" style="display:none;margin-left:6px;font-size:12px;color:var(--muted);cursor:pointer;" title="Swap position handle: refine Zero (overriding the measured instprm's Zero lock) and pin DisplaceX/Y at 0. Use when DisplaceY refuses to move from 0 because the position offset is really a Zero miscalibration that doesn't transfer from the Si standard to this sample. Diagnostic.">
+            <label id="zero-not-disp-label" style="display:none;margin-left:6px;font-size:12px;color:var(--muted);cursor:pointer;" title="Unchecked: refine sample displacement (sample height for SmartLab flat-plate data) with the calibrated Zero fixed. Checked: refine Zero instead and hold sample displacement at zero. Use only one position correction.">
               <input type="checkbox" id="xrd-zero-not-disp" style="margin-right:4px;">
               Refine Zero (fix Disp)
             </label>
-            <label id="refine-x-label" style="display:none;margin-left:6px;font-size:12px;color:var(--muted);cursor:pointer;" title="Free X (Lorentzian strain). Tests strain-like broadening on top of size (Y).">
+            <label id="refine-x-label" style="display:none;margin-left:6px;font-size:12px;color:var(--muted);cursor:pointer;" title="Refine the shared Lorentzian size-like width term. Ignored when a phase's Size is checked.">
               <input type="checkbox" id="xrd-refine-x" style="margin-right:4px;">
               Free X
             </label>
@@ -1518,8 +1534,8 @@
               <b>Quick constrained fit</b> refines only background, phase scales, sample position, and shared peak width.
               <b>Refine cell too</b> adds unit-cell refinement while keeping atoms/Uiso/size fixed.
               <b>Phase isolation</b> uses GSAS-II calculated phase curves for the plotted phase envelopes.
-              <b>Refine Zero</b> swaps the sample-displacement correction for a zero-shift correction.
-              <b>Free X</b> allows Lorentzian strain broadening.
+              Leave <b>Refine Zero</b> unchecked to refine sample displacement (sample height for SmartLab). Checking it refines Zero instead.
+              <b>Free X</b> allows shared size-like broadening; phase <b>Size</b> takes precedence.
               <b>Fix Y</b> holds the Lorentzian size-width parameter at the entered centidegree value.
               <b>Y ≥ 0</b> prevents unphysical negative size broadening.
               <b>Refine Uiso</b> lets atomic displacement factors refine.
@@ -3789,6 +3805,8 @@ function getXrdControlState() {
     tt_min: document.getElementById('xrd-tt-min')?.value || '',
     tt_max: document.getElementById('xrd-tt-max')?.value || '',
     n_bg_coeffs: document.getElementById('xrd-bg-coeffs')?.value || 'auto',
+    size_reporting_mode: document.getElementById('xrd-size-reporting')?.value || 'both',
+    scherrer_k: document.getElementById('xrd-scherrer-k')?.value || '0.9',
     instrument: document.getElementById('xrd-instrument')?.value || 'auto',
     fix_y_value: document.getElementById('xrd-fix-y-value')?.value || '',
     checkboxes: {},
@@ -3810,6 +3828,8 @@ function applyXrdControlState(controls = {}) {
   setVal('xrd-tt-min', controls.tt_min);
   setVal('xrd-tt-max', controls.tt_max);
   setVal('xrd-bg-coeffs', controls.n_bg_coeffs);
+  setVal('xrd-size-reporting', controls.size_reporting_mode || 'both');
+  setVal('xrd-scherrer-k', controls.scherrer_k ?? '0.90');
   setVal('xrd-instrument', controls.instrument);
   setVal('xrd-fix-y-value', controls.fix_y_value);
   Object.entries(controls.checkboxes || {}).forEach(([id, checked]) => {
@@ -4052,6 +4072,12 @@ async function runXRD(method) {
     fd.append('tt_min',      document.getElementById('xrd-tt-min').value);
     fd.append('tt_max',      document.getElementById('xrd-tt-max').value);
     fd.append('n_bg_coeffs', document.getElementById('xrd-bg-coeffs').value || 'auto');
+    const scherrerK = Number(document.getElementById('xrd-scherrer-k').value);
+    if (!Number.isFinite(scherrerK) || scherrerK <= 0) {
+      throw new Error('Scherrer K must be a finite positive number.');
+    }
+    fd.append('size_reporting_mode', document.getElementById('xrd-size-reporting').value);
+    fd.append('scherrer_k', String(scherrerK));
     fd.append('output_dir',  document.getElementById('xrd-output-dir').value);
     fd.append('method',      method);
     // Instrument selection
@@ -4084,7 +4110,7 @@ async function runXRD(method) {
     if (zeroNotDispCheckbox && zeroNotDispCheckbox.checked) {
       fd.append('verify_use_zero_not_displace', 'true');
     }
-    // Free X — Lorentzian strain diagnostic
+    // Free X — shared Lorentzian size-like width diagnostic
     const refineXCheckbox = document.getElementById('xrd-refine-x');
     if (refineXCheckbox && refineXCheckbox.checked) {
       fd.append('verify_refine_x', 'true');
@@ -4177,6 +4203,17 @@ async function runXRD(method) {
   if (document.getElementById('btn-xrd-gsas2')) document.getElementById('btn-xrd-gsas2').disabled = false;
 }
 
+function xrdSizeReportHtml(ph) {
+  const lines = ph.size_reporting_lines || [{
+    label: ph.crystallite_size_source === 'gsas_hap_size' ? 'GSAS HAP size (K = 1)' : 'Size estimate',
+    value_nm: ph.crystallite_size_nm,
+  }];
+  const values = lines.map(line => `<div><span style="color:var(--muted);">${escHtml(line.label)} = </span>${line.value_nm == null ? 'not available' : fmtResultValue(line.value_nm, 2) + ' nm'}</div>`).join('');
+  const note = ph.size_reporting_note
+    ? `<div style="font-size:11px;color:var(--muted);margin-top:4px;">${escHtml(ph.size_reporting_note)}</div>` : '';
+  return values + note;
+}
+
 function fmtResultValue(v, digits = 3) {
   if (v === null || v === undefined || v === '') return '—';
   const n = Number(v);
@@ -4233,12 +4270,6 @@ function renderReusableFitParameters(data) {
     const fwhmSource = ph.fwhm_reference_source
       ? `, ${escHtml(String(ph.fwhm_reference_source).replace(/_/g, ' '))}`
       : '';
-    const sizeLine = ph.crystallite_size_nm != null
-      ? `${fmtResultValue(ph.crystallite_size_nm, 2)} nm`
-      : '—';
-    const sizeSource = ph.crystallite_size_source
-      ? ` (${escHtml(String(ph.crystallite_size_source).replace(/_/g, ' '))})`
-      : '';
     const microstrainLine = ph.microstrain_microstrain != null
       ? `${fmtResultValue(ph.microstrain_microstrain, 1)} microstrain`
       : 'not refined';
@@ -4275,7 +4306,7 @@ function renderReusableFitParameters(data) {
         </div>
         <div class="reuse-metric">
           <div class="reuse-label">Size output</div>
-          <div class="reuse-value">${sizeLine}${sizeSource}</div>
+          <div class="reuse-value">${xrdSizeReportHtml(ph)}</div>
         </div>
         <div class="reuse-metric">
           <div class="reuse-label">Microstrain</div>
@@ -4579,16 +4610,17 @@ function renderXrdPublicationPlot(data) {
         (value, j) => Number(value) + Math.max(Number(component[j] || 0), 0));
       const weight = phase['weight_fraction_%'];
       const uncertainty = phase['weight_fraction_err_%'];
-      const weightText = weight == null ? '' :
+      const weightText = phases.length <= 1 || weight == null ? '' :
         `, ${weight}${uncertainty == null ? '' : ` ± ${uncertainty}`} wt. %`;
-      const phaseLabel = phase.display_label || String(
+      const phaseLabel = phase.tick_label || phase.display_label || String(
         phase.formula || phase.name || 'Fitted phase').replace(/[_-]+/g, ' ');
       traces.push({
         x:pd.tt, y:pd.y_background, type:'scatter', mode:'lines',
         line:{color:'rgba(0,0,0,0)',width:0}, hoverinfo:'skip', showlegend:false,
       });
       traces.push({
-        x:pd.tt, y:phaseTop, name:phase.legend_label || `${phaseLabel}${weightText}`,
+        x:pd.tt, y:phaseTop,
+        name:phases.length === 1 ? phaseLabel : (phase.legend_label || `${phaseLabel}${weightText}`),
         type:'scatter', mode:'lines', line:{color:color,width:1.5},
         fill:'tonexty', fillcolor:colorWithAlpha(color, 0.42),
         hovertemplate:`2θ: %{x:.3f}°<br>${phaseLabel} contribution: %{y:.4g}<extra></extra>`,
@@ -4723,11 +4755,11 @@ function showXRDResults(data) {
     {l:'Rwp',v:st.Rwp+'%'}, {l:'Rp',v:st.Rp+'%'}, {l:'χ²',v:st.chi2},
     {l:'GoF',v:st.GoF}, {l:'Zero shift',v:data.zero_shift+'°'}
   ];
-  // Sample displacement (DisplaceX for BB, DisplaceY for capillary).
+  // Sample displacement (Shift for BB, DisplaceY for capillary).
   // Surfaces the cell-vs-displacement trade-off in verify+cell runs.
   if (data.displacement_um != null && data.displacement_param) {
     statBoxes.push({
-      l: data.displacement_param,
+      l: data.displacement_param === 'Shift' ? 'Sample height' : 'Sample displacement',
       v: Number(data.displacement_um).toFixed(1) + ' µm'
     });
   }
@@ -4758,9 +4790,6 @@ function showXRDResults(data) {
     const fwhmRefText = hasFwhmRef ? `${fwhmRef.toFixed(2)}&deg;` : 'phase peak';
     const fwhmHkl = Array.isArray(ph.fwhm_reference_hkl)
       ? ` (${ph.fwhm_reference_hkl.join('')})`
-      : '';
-    const sizeSource = ph.crystallite_size_source
-      ? ` <span style="color:var(--muted);font-size:10px;">(${String(ph.crystallite_size_source).replace(/_/g, ' ')})</span>`
       : '';
     const microstrainHtml = ph.microstrain_microstrain != null
       ? `<div><span style="color:var(--muted);">Microstrain = </span>${fmtResultValue(ph.microstrain_microstrain, 1)} microstrain${ph.microstrain_source ? ` <span style="color:var(--muted);font-size:10px;">(${escHtml(String(ph.microstrain_source).replace(/_/g, ' '))})</span>` : ''}</div>`
@@ -4812,7 +4841,7 @@ function showXRDResults(data) {
           <div><span style="color:var(--muted);">α = </span>${ph.alpha}°</div>
           <div><span style="color:var(--muted);">β = </span>${ph.beta}°</div>
           <div><span style="color:var(--muted);">γ = </span>${ph.gamma}°</div>
-          <div><span style="color:var(--muted);">Size = </span>${ph.crystallite_size_nm ?? '—'} nm${sizeSource}</div>
+          <div class="xrd-size-report">${xrdSizeReportHtml(ph)}</div>
           <div><span style="color:var(--muted);">FWHM @ ${fwhmRefText}${fwhmHkl} = </span>${ph.fwhm_deg ?? 'n/a'}${ph.fwhm_deg != null ? '&deg;' : ''}</div>
           <div><span style="color:var(--muted);">Eta @ ${fwhmRefText} = </span>${ph.eta_at_fwhm_reference ?? ph.eta_at_strongest ?? ph.eta ?? 'n/a'}</div>
           ${microstrainHtml}
@@ -4877,6 +4906,8 @@ function resetXRD() {
     if (el) el.value = '';
   });
   document.getElementById('xrd-show-figure-title').checked = true;
+  document.getElementById('xrd-size-reporting').value = 'both';
+  document.getElementById('xrd-scherrer-k').value = '0.90';
   document.getElementById('xrd-figure-title').disabled = false;
   document.getElementById('xrd-candidates-wrap').style.display = 'none';
   document.getElementById('xrd-selected-wrap').style.display = 'none';

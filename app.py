@@ -1229,6 +1229,12 @@ def process_xrd():
         sample_id  = form.get('sample_id', 'Sample')
         figure_title = form.get('figure_title', '').strip()
         show_figure_title = form.get('show_figure_title', 'true').lower() == 'true'
+        from modules.xrd.size_reporting import size_reporting_settings
+        try:
+            size_reporting = size_reporting_settings(
+                form.get('size_reporting_mode', 'both'), form.get('scherrer_k', '0.9'))
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
         notes      = form.get('notes', '')
         wl_label   = form.get('wavelength_label', f'λ={wavelength:.5f} Å')
 
@@ -1474,6 +1480,8 @@ def process_xrd():
                 'max_outer':        MAX_OUTER,
                 'method':           form.get('method', 'lebail'),
                 'plot_theme':       plot_theme,
+                'size_reporting_mode': size_reporting['mode'],
+                'scherrer_k': size_reporting['scherrer_k'],
                 'instprm_file':     instprm_file_path,
                 'instrument':       form.get('instrument', 'auto'),
                 # Verification mode (GSAS-II only): skip cell/Uiso/size
@@ -1502,12 +1510,8 @@ def process_xrd():
                 # Stage 6 refine the MD ratio alongside cell.
                 'verify_refine_po':
                     form.get('verify_refine_po', '').lower() == 'true',
-                # Swap position handle: refine Zero, fix DisplaceX/Y at 0.
-                # Use when DisplaceY refuses to move from 0 because the
-                # offset is actually a Zero miscalibration (the measured
-                # instprm's Zero may not transfer cleanly to a different
-                # sample mounting).  Overrides the measured-instprm rule
-                # that locks Zero.
+                # Diagnostic alternative: refine Zero and fix all sample
+                # displacement terms, including Bragg-Brentano Shift.
                 'verify_use_zero_not_displace':
                     form.get('verify_use_zero_not_displace', '').lower() == 'true',
                 # Branch B: post-Stage-6 enforce uniform cell scaling on
@@ -1589,6 +1593,7 @@ def process_xrd():
             'plot_theme':    result.get('plot_theme', plot_theme),
             'statistics':    result['statistics'],
             'phase_results': result['phase_results'],
+            'size_reporting': result.get('size_reporting'),
             'zero_shift':    result['zero_shift'],
             'displacement_um':    result.get('displacement_um'),
             'displacement_param': result.get('displacement_param'),

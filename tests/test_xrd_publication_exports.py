@@ -153,8 +153,10 @@ class XrdPublicationExportTests(unittest.TestCase):
 
     def test_web_preview_is_fixed_dark_and_both_exports_are_available(self):
         root = Path(__file__).resolve().parents[1]
-        for relative_path in ('templates/index.html',
-                              'templates/xrd_toolkit/index.html'):
+        templates = ['templates/xrd_toolkit/index.html']
+        if (root / 'templates/index.html').exists():
+            templates.append('templates/index.html')
+        for relative_path in templates:
             html = (root / relative_path).read_text(encoding='utf-8')
             self.assertNotIn('id="xrd-export-theme"', html)
             self.assertNotIn("fd.append('plot_theme'", html)

@@ -6,6 +6,8 @@ XRD module — entry point, file parsers, run() called by app.py.
 import os, re, math
 import numpy as np
 
+from .size_reporting import apply_size_reporting, size_reporting_settings
+
 from .presentation import (
     enrich_phase_results,
     export_file_prefix,
@@ -504,6 +506,26 @@ def _write_summary_xlsx(result, metadata, method_label, output_dir):
     enrich_phase_results(result)
     phases = result['phase_results']
     stats  = result['statistics']
+    reporting = result.get('size_reporting', size_reporting_settings())
+    apply_size_reporting(result, reporting['mode'], reporting['scherrer_k'])
+    size_rows = [('size_reporting_mode', 'Size reporting')]
+    if reporting['mode'] in ('hap', 'both'):
+        size_rows.append(('gsas_hap_size_nm', 'GSAS HAP size (nm; K=1)'))
+    if reporting['mode'] in ('scherrer', 'both'):
+        size_rows.extend([
+            ('scherrer_equivalent_size_nm', 'Scherrer-equivalent size (nm)'),
+            ('scherrer_k', 'Scherrer shape factor K'),
+        ])
+    if any(ph.get('crystallite_size_source') != 'gsas_hap_size'
+           and ph.get('crystallite_size_nm') is not None for ph in phases):
+        size_rows.append(('other_size_estimate_nm', 'Other size estimate (nm; unconverted)'))
+        for ph in phases:
+            ph['other_size_estimate_nm'] = (ph.get('crystallite_size_nm')
+                if ph.get('crystallite_size_source') != 'gsas_hap_size' else None)
+    size_rows.extend([
+        ('crystallite_size_source', 'Native size source'),
+        ('size_reporting_note', 'Size reporting method'),
+    ])
 
     # ── Sheet 1: Transposed summary ──────────────────────────────────────
     # Define the parameters we want to show (order matters)
@@ -546,8 +568,7 @@ def _write_summary_xlsx(result, metadata, method_label, output_dir):
         ('integrated_phase_fraction_%', 'Integrated phase fraction (%)'),
         ('integrated_minus_weight_fraction_pp', 'Integrated - wt fraction (percentage points)'),
         ('integrated_phase_fraction_method', 'Integrated phase fraction method'),
-        ('crystallite_size_nm',    'Crystallite size (nm)'),
-        ('crystallite_size_source', 'Crystallite size source'),
+        *size_rows,
         ('microstrain_microstrain', 'Microstrain (microstrain)'),
         ('microstrain_source', 'Microstrain source'),
         ('scale',              'Scale factor'),
@@ -742,6 +763,9 @@ def run(filepath, output_dir, metadata, params):
     from .xrd_plots import make_xrd_plot
 
     os.makedirs(output_dir, exist_ok=True)
+
+    reporting = size_reporting_settings(
+        params.get('size_reporting_mode', 'both'), params.get('scherrer_k', 0.9))
 
     # Validate phases
     phases = validate_phases(params.get('phases', []))
@@ -946,6 +970,7 @@ def run(filepath, output_dir, metadata, params):
         )
 
     # Display/export metadata is added only after the fit is complete.
+    apply_size_reporting(result, reporting['mode'], reporting['scherrer_k'])
     enrich_phase_results(result)
 
     # Produce both publication themes from the identical completed result.
@@ -983,6 +1008,7 @@ def run(filepath, output_dir, metadata, params):
         'summary_path': summary_path,
         'statistics':   result['statistics'],
         'phase_results': result['phase_results'],
+        'size_reporting': result.get('size_reporting'),
         'zero_shift':   result['zero_shift'],
         'displacement_um':    result.get('displacement_um'),
         'displacement_param': result.get('displacement_param'),

@@ -13,7 +13,6 @@ from .presentation import (
     clean_descriptive_text,
     enrich_phase_results,
     format_chemical_formula,
-    phase_legend_label,
 )
 
 
@@ -242,7 +241,7 @@ def make_xrd_plot(result, metadata, output_path, theme=None):
         color = phase_colors[index % len(phase_colors)]
         legend_handles.append(Patch(
             facecolor=color, edgecolor=color, alpha=0.70,
-            label=phase_legend_label(phase, index=index)))
+            label=phase['legend_label']))
     figure_legend = ax_main.legend(
         handles=legend_handles, fontsize=8.2,
         ncol=1,

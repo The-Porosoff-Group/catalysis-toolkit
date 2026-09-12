@@ -39,6 +39,9 @@ The first launch creates a local Python environment and installs dependencies. G
 - `.instprm` instrument parameter support
 - Built-in WC/W2C Synergy-S production preset
 - Saved user presets
+- GSAS HAP, Scherrer-equivalent, or combined size reporting with an explicit K
+- Light/dark figure exports with an optional title; single-phase legends omit
+  the normalized weight percentage
 - Per-phase controls for:
   - crystallite size
   - microstrain
@@ -79,5 +82,11 @@ config.yaml.example            API-key template
 ```
 
 ## Notes on GitHub Pages
+
+Raw scans, generated results, and `xrd_refinement_presets.json` are local user
+files and are excluded from Git. Keep measurements in `data/` or `uploads/`
+and fit outputs in `results/`. Canonical `fixtures/` and the two bundled
+instrument reference profiles remain versioned. Ignore rules do not remove
+files from older Git commits.
 
 This toolkit cannot run directly as a static GitHub Pages site because it depends on Python, Flask, GSAS-II, local file uploads, and local refinement outputs. GitHub can host the source code and documentation, but users run the app locally with the launcher.

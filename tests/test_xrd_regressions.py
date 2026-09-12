@@ -221,10 +221,10 @@ class XrdRegressionTests(unittest.TestCase):
         self.assertEqual(preview_signature, fitted_signature)
 
     def test_manual_cif_upload_uses_backend_preview_on_xrd_page(self):
-        for path in (
-            ROOT / "templates" / "index.html",
-            ROOT / "templates" / "xrd_toolkit" / "index.html",
-        ):
+        templates = [ROOT / "templates" / "xrd_toolkit" / "index.html"]
+        if (ROOT / "templates" / "index.html").exists():
+            templates.append(ROOT / "templates" / "index.html")
+        for path in templates:
             template = path.read_text(encoding="utf-8")
             upload_start = template.index("async function uploadCIF")
             upload_end = template.index("function removePhase", upload_start)
