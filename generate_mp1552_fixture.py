@@ -6,7 +6,7 @@ applies the conventional-standard-cell conversion, validates the result,
 and writes fixtures/mo2c_pbcn_mp_1552.cif if everything checks out.
 
 Run from the toolkit root:
-    python generate_mp1552_fixture.py --icBTDJ2BXm8nU6Seb9eLTrheDmb9jq2O
+    python generate_mp1552_fixture.py --api-key YOUR_API_KEY
 
 Or with the key already in config.yaml:
     python generate_mp1552_fixture.py
