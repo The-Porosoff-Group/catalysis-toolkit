@@ -51,9 +51,9 @@ copy config.yaml.example config.yaml
 notepad config.yaml
 ```
 
-Get a free key at <https://next-gen.materialsproject.org/api> and paste it into the `api_key` field. Save and close.
+Get a free key at <https://next-gen.materialsproject.org/api>. You can paste it into the `api_key` field above, or launch the toolkit and open **Phase Identification → Materials Project API key** to add, replace, test, or remove it. Changes made in the interface apply immediately; manual file edits require restarting the toolkit.
 
-> `config.yaml` is git-ignored. Your key never leaves your machine.
+> `config.yaml` is git-ignored. The key is stored locally and sent to Materials Project when making API requests. The interface does not display the saved key.
 
 ### 4. Launch
 
@@ -129,9 +129,9 @@ cp config.yaml.example config.yaml
 nano config.yaml
 ```
 
-Get a free key at <https://next-gen.materialsproject.org/api> and paste it into the `api_key` field. Save and close.
+Get a free key at <https://next-gen.materialsproject.org/api>. You can paste it into the `api_key` field above, or launch the toolkit and open **Phase Identification → Materials Project API key** to add, replace, test, or remove it. Changes made in the interface apply immediately; manual file edits require restarting the toolkit.
 
-> `config.yaml` is git-ignored. Your key never leaves your machine.
+> `config.yaml` is git-ignored. The key is stored locally and sent to Materials Project when making API requests. The interface does not display the saved key.
 
 ### 7. Run the app
 
@@ -152,7 +152,7 @@ The GUI exposes the staged **GSAS-II** Rietveld workflow. Legacy Le Bail and in-
 1. **Upload** your `.dat` / `.xy` / `.xye` / `.csv` / `.txt` / `.xlsx` powder pattern.
 2. **Pick wavelength** (Cu Kα default).
 3. **Pick the 2θ window** (auto-detected from the file).
-4. **Search Materials Project or COD** by elements, formula, or name. Add phases to the refinement list.
+4. **Search Materials Project** by elements, formula, or chemical name (for example, `tungsten` or `tungsten carbide`). **Search** matches the listed elements; **+ Loose** includes compounds with additional elements. Formula takes priority over name, then elements, if multiple fields are filled. **Filter results** matches full element names and available card text, including descriptions; the database search does not search arbitrary descriptions or mineral names. Add phases to the refinement list.
 5. A **per-phase refinement card** appears for each selected phase. Each card has Cell, Size, Mustrain, and PO controls. PO accepts h k l or hexagonal/trigonal h k i l notation. Defaults are conservative.
 6. **Optional:** load the built-in **WC/W2C Synergy-S production** preset. It configures the validated constrained recipe and the fixed WC [001] March-Dollase ratio.
 7. **Optional:** click **▶ Advanced** to see all individual refinement toggles. Every option the preset turns on is also exposed here for manual override.
@@ -283,7 +283,7 @@ catalysis-toolkit/
 | File will not upload | Verify `.xlsx` for GC or `.dat` / `.xy` / `.xye` / `.csv` / `.txt` / `.xlsx` for XRD. |
 | FID flows all zero | CH4 TCD bridge unavailable — see `GC_SKILL.md`. |
 | New `.yaml` reaction does not show | Restart the app. |
-| MP search returns nothing | Confirm `config.yaml` has a valid API key. |
+| MP search returns nothing | Open **Phase Identification → Materials Project API key** and test the saved key. Use element names, chemical names, or formulas for database searches. |
 | GSAS-II button does not appear or refinement will not run | GSAS-II is optional; install it from <https://github.com/AdvancedPhotonSource/GSAS-II>. Le Bail and in-house Rietveld work without it. |
 | GSAS-II has trouble with paths containing spaces | Move the toolkit folder to a path like `C:\catalysis-toolkit` on Windows. |
 | Stale CIF in cache | Delete `~/.catalysis_toolkit_cache/` and re-fetch. |
