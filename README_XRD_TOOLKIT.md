@@ -28,6 +28,10 @@ This version opens directly into the XRD workflow and hides unfinished modules. 
 
 The first launch creates a local Python environment and installs dependencies. GSAS-II installation can take several minutes.
 
+You can also add, replace, test, or remove the key under **Phase Identification → Materials Project API key** after launching. Changes apply immediately and are saved in the local, git-ignored `config.yaml`. Editing that file manually requires restarting the toolkit.
+
+Name searches accept element names (`tungsten`), chemical names (`tungsten carbide`), and formulas (`W2C`). **+ Loose** allows additional elements. **Filter results** searches full element names and text available in returned cards; database search does not search arbitrary descriptions or mineral names.
+
 ## Main Features
 
 - XRD file upload with live preview (`.dat`, `.xy`, `.xye`, `.csv`, `.txt`, `.xlsx`)
