@@ -11,6 +11,13 @@ Supported workflows:
 
 Coming later: TGA and broader XRD presets.
 
+XRD **Wt%** reports GSAS-II mass fractions normalized over the modeled crystalline
+phases. It does not include amorphous material or unmodeled phases. **Diffraction
+area (%)** is a separate intensity diagnostic, not a weight percentage. Le Bail
+and legacy in-house Rietveld fits report diffraction area only; their Wt% is
+unavailable. Refit and regenerate older results to replace percentages that were
+previously mislabeled as Wt%.
+
 Figure exports use Arial for text and scientific notation, including chemical
 subscripts, unit superscripts, and XRD overbars. Arial must be installed on the
 computer generating the figures; its font files are not bundled. If unavailable,
