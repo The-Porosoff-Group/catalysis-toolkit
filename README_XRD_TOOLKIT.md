@@ -54,6 +54,13 @@ Name searches accept element names (`tungsten`), chemical names (`tungsten carbi
 - Fit warnings and baseline comparison
 - Outputs for phase fraction, uncertainty notes, FWHM reference peak, crystallite size, preferred-orientation value, and cell-change percentages
 
+**Wt%** reports GSAS-II mass fractions normalized over the modeled crystalline
+phases. It does not include amorphous material or unmodeled phases. **Diffraction
+area (%)** is a separate intensity diagnostic, not a weight percentage. Le Bail
+and legacy in-house Rietveld fits report diffraction area only; their Wt% is
+unavailable. Refit and regenerate older results to replace percentages that were
+previously mislabeled as Wt%.
+
 Figure exports use Arial for text, subscripts, and crystallographic overbars.
 Install Arial on the computer generating the figures; the font is not bundled.
 If unavailable, exports warn and use Liberation Sans, then DejaVu Sans. Existing
