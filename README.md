@@ -165,6 +165,18 @@ The GUI exposes the staged **GSAS-II** Rietveld workflow. Legacy Le Bail and in-
 7. **Optional:** click **▶ Advanced** to see all individual refinement toggles. Every option the preset turns on is also exposed here for manual override.
 8. **Click GSAS-II Refinement.** Stats and per-phase results render below the plot.
 
+The exported workbook includes a **Fit Parameters** tab with the submitted fit
+settings, parsed scan and uncertainties, starting and final native GSAS-II
+parameters and refinement flags, stage history, CIF/instrument inputs, and
+software versions. Values are stored as JSON text to preserve precision; long
+values use numbered parts. A companion **GSAS-II project (.gpx)** download opens
+the saved fitted model directly. Use matching software versions when reproducing
+a fit. Older workbooks need a new fit to capture this information.
+
+Use **Legend position** to choose automatic placement, a specific position inside
+the plot, or outside right. The result control updates both light and dark figures
+without rerunning the fit. Batch runs accept `--legend-location "outside right"`.
+
 ### Instrument calibration
 
 If you have a NIST line standard (Si 640g, LaB6, etc.) measured on your diffractometer, you can produce a `.instprm` file that pins U/V/W/X/SH/L/Zero to physical instrument values:
