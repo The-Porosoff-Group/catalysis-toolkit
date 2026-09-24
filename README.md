@@ -1,6 +1,6 @@
 # Catalysis Data Toolkit
 
-**Release 1.2.1** — simpler instrument selection and calibration controls.
+**Release 1.2.2** — readable XRD fit recipes in the exported workbook.
 
 A local web app for processing heterogeneous-catalysis data. Drag-and-drop interface, no coding required after the one-time install.
 
@@ -167,13 +167,14 @@ The GUI exposes the staged **GSAS-II** Rietveld workflow. Legacy Le Bail and in-
 7. **Optional:** click **▶ Advanced** to see all individual refinement toggles. Every option the preset turns on is also exposed here for manual override.
 8. **Click GSAS-II Refinement.** Stats and per-phase results render below the plot.
 
-The exported workbook includes a **Fit Parameters** tab with the submitted fit
-settings, parsed scan and uncertainties, starting and final native GSAS-II
-parameters and refinement flags, stage history, CIF/instrument inputs, and
-software versions. Values are stored as JSON text to preserve precision; long
-values use numbered parts. A companion **GSAS-II project (.gpx)** download opens
-the saved fitted model directly. Use matching software versions when reproducing
-a fit. Older workbooks need a new fit to capture this information.
+The exported workbook's **Fit Parameters** tab is a readable recipe for setting
+up the fit again in the GUI. It records the original phase-card identities and
+CIF sources or filenames, instrument and instrument-file identities, scan range,
+background settings, every checkbox and entered value, and software versions.
+Use those settings with matching data, CIF and instrument files, and software
+versions when repeating a fit. The companion **GSAS-II project (.gpx)** contains
+the detailed native parameters and saved fitted model. Older workbooks need a
+new fit to generate the readable recipe.
 
 After fitting, use **Results → Plot settings → Legend location** to choose
 automatic placement, a specific position inside the plot, or outside right.
