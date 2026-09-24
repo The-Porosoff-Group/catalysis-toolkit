@@ -238,7 +238,7 @@ def _hm_symbol_to_number(symbol):
 #   3. Fall back to DEFAULT_INSTRUMENT if inference fails.
 from .instrument_profiles import (
     INSTRUMENT_PROFILES, DEFAULT_INSTRUMENT, get_instrument_profile,
-    instrument_file, parse_instprm,
+    instrument_file, parse_instprm, configure_histogram_geometry,
 )
 
 
@@ -2619,14 +2619,7 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # GSAS-II selects position equations from the histogram geometry.
         # DisplaceX/Y are ignored in Bragg-Brentano mode; sample height is
         # named Shift there. Clear inactive flags before opening one handle.
-        _sample_params = histogram.data['Sample Parameters']
-        _sample_params['Type'] = ('Bragg-Brentano'
-                                  if geometry == 'bragg_brentano'
-                                  else 'Debye-Scherrer')
-        for _position_key in ('Shift', 'DisplaceX', 'DisplaceY'):
-            _position_entry = _sample_params.get(_position_key)
-            if isinstance(_position_entry, list) and len(_position_entry) >= 2:
-                _position_entry[1] = False
+        configure_histogram_geometry(histogram, geometry)
 
         # Set data range
         histogram.data['Limits'] = [[tt_min, tt_max], [tt_min, tt_max]]

@@ -34,6 +34,15 @@ INSTRUMENT_PROFILES = {
         label='Default / generic flat plate (Bragg-Brentano)'),
     'generic_capillary': dict(geometry_profile('capillary'),
         label='Generic capillary / transmission'),
+    'benchtop_cu': dict(geometry_profile('bragg_brentano'),
+        label='Benchtop Cu — flat plate (Si 640g)',
+        zero_seed=-0.04099, sh_l=0.06399,
+        instprm_filename='benchtop_Cu_Si640g.instprm',
+        wavelength=1.540593, spectrum='cu_doublet',
+        calibration_range=[20.0, 90.0],
+        notes='Measured Si 640g calibration for the supplied benchtop instrument, '
+              '2026-09-24; Rwp 8.50%. Make/model not recorded. Use only with '
+              'the same instrument and optics; see docs/benchtop_calibration.md.'),
     'smartlab': dict(geometry_profile('bragg_brentano'),
         label='Rigaku SmartLab (BB)', zero_seed=-0.027, polariz=0.7,
         calibration_allow_x=False, calibration_allow_y=False,
@@ -152,6 +161,10 @@ def configure_histogram_geometry(histogram, geometry):
     sample['Type'] = 'Bragg-Brentano' if geometry == 'bragg_brentano' else 'Debye-Scherrer'
     for key in ('Shift', 'DisplaceX', 'DisplaceY'):
         sample[key] = [0.0, False]
+    # Single-wavelength imports default to transmission and can omit these
+    # required Bragg-Brentano fields entirely.
+    for key, value in (('Transparency', 0.0), ('SurfRoughA', 0.0), ('SurfRoughB', 0.0), ('Absorption', 0.0)):
+        sample.setdefault(key, [value, False])
 
 
 def save_local_instrument(label, geometry, content, calibration_range=None,

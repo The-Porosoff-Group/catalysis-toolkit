@@ -1,5 +1,7 @@
 # XRD Fitting Toolkit
 
+**Release 1.2.0** — shared benchtop calibration and local instrument profiles.
+
 Standalone XRD fitting interface from the Catalysis Data Toolkit.
 
 This version opens directly into the XRD workflow and hides unfinished modules. It is intended as a local desktop web app for importing CIFs, previewing XRD tick patterns, and running GSAS-II refinements from a browser-based GUI.
@@ -39,6 +41,13 @@ flat-plate (Bragg–Brentano) and capillary/transmission starting profiles, name
 bundled profiles, and **Upload .instprm…**. Generic profiles do not load another
 instrument's measured calibration. Unidentified scans default to the generic
 flat-plate geometry; verify the geometry before fitting.
+
+The **Benchtop Cu — flat plate (Si 640g)** entry loads the bundled
+`benchtop_Cu_Si640g.instprm` automatically. It is included in Git for other users
+of that same instrument. The selected 20–90° Cu-doublet calibration achieved
+Rwp 8.502%; see [settings, comparisons, and limits](docs/benchtop_calibration.md).
+The instrument make/model is not recorded, so this is not a generic calibration
+for other benchtop machines.
 
 To calibrate from **NIST Si 640g**:
 
@@ -162,7 +171,7 @@ config.yaml.example            API-key template
 
 Raw scans, generated results, and `xrd_refinement_presets.json` are local user
 files and are excluded from Git. Keep measurements in `data/` or `uploads/`
-and fit outputs in `results/`. Canonical `fixtures/` and the two bundled
+and fit outputs in `results/`. Canonical `fixtures/` and the bundled
 instrument reference profiles remain versioned. Ignore rules do not remove
 files from older Git commits.
 

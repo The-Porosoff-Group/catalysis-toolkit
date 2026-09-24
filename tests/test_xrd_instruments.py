@@ -75,6 +75,17 @@ class InstrumentTests(unittest.TestCase):
                 profiles.save_local_instrument('Bench', 'bragg_brentano', content)
         self.assertEqual(list(self.root.iterdir()), [])
 
+    def test_bundled_benchtop_profile_is_ready_without_local_upload(self):
+        profile = profiles.get_instrument_profile('benchtop_cu')
+        self.assertEqual(profile['geometry'], 'bragg_brentano')
+        self.assertEqual(profile['calibration_range'], [20.0, 90.0])
+        values = profiles.parse_instprm(Path(profiles.instrument_file(profile)).read_bytes())
+        profiles.validate_profile_range(values, 20, 90)
+        self.assertAlmostEqual(values['Lam1'], 1.540593)
+        self.assertEqual(values['I(L2)/I(L1)'], 0.5)
+        self.assertGreater(values['X'], 0)
+        self.assertGreater(values['Y'], 0)
+
     def test_failed_metadata_write_leaves_no_half_saved_profile(self):
         with patch.object(profiles.os, 'replace', side_effect=OSError('disk full')):
             with self.assertRaises(OSError):
@@ -88,6 +99,8 @@ class InstrumentTests(unittest.TestCase):
             profiles.configure_histogram_geometry(histogram, geometry)
             self.assertEqual(histogram.data['Sample Parameters']['Type'], expected)
             for key in ('Shift', 'DisplaceX', 'DisplaceY'):
+                self.assertEqual(histogram.data['Sample Parameters'][key], [0, False])
+            for key in ('Transparency', 'SurfRoughA', 'SurfRoughB', 'Absorption'):
                 self.assertEqual(histogram.data['Sample Parameters'][key], [0, False])
 
     def test_fwhm_is_not_gaussian_sigma_and_full_range_is_checked(self):
@@ -139,6 +152,8 @@ class InstrumentRouteTests(InstrumentTests):
             self.assertEqual(html.count('id="xrd-calibration-mode"'), 1)
             self.assertIn('Upload .instprm', html)
             self.assertIn('Save as local instrument', html)
+            from toolkit_version import APP_VERSION
+            self.assertIn(f'v{APP_VERSION}', html)
 
     def test_candidate_token_controls_geometry_and_range(self):
         token = self.server._store_characterization_context(
@@ -183,6 +198,18 @@ class InstrumentRouteTests(InstrumentTests):
 @unittest.skipUnless(backend.is_available(), 'GSAS-II is not installed')
 class CalibrationIntegrationTests(unittest.TestCase):
     def test_single_wavelength_capillary_calibration_has_no_default_sample_strain(self):
+        self._assert_synthetic_calibration('capillary', False)
+
+    def test_single_wavelength_flat_plate_has_complete_sample_parameters(self):
+        self._assert_synthetic_calibration('bragg_brentano', False)
+
+    def test_doublet_capillary_has_complete_sample_parameters(self):
+        self._assert_synthetic_calibration('capillary', True)
+
+    def test_doublet_flat_plate_recovers_joint_lorentzian_broadening(self):
+        self._assert_synthetic_calibration('bragg_brentano', True, mixed=True)
+
+    def _assert_synthetic_calibration(self, geometry, doublet, mixed=False):
         # A known narrow profile would be absorbed by GSAS-II's default 1000
         # microstrain if the standard broadening were merely left unrefined.
         with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
@@ -190,12 +217,16 @@ class CalibrationIntegrationTests(unittest.TestCase):
             phase = profiles.silicon_640g_phase()
             cif = root / 'standard.cif'
             cif.write_text(phase['cif_text'])
-            inst = backend._write_instprm(str(root), 1.540593, kalpha2=False,
-                                         u=0, v=0, w=10, x=0, y=0, sh_l=0.002)
+            inst = backend._write_instprm(str(root), 1.540593, kalpha2=doublet,
+                                         u=0, v=0, w=4.6 if mixed else 10,
+                                         x=2.1 if mixed else 0, y=6.9 if mixed else 0,
+                                         sh_l=0.064 if mixed else 0.002)
             project = backend.G2sc.G2Project(newgpx=str(root / 'synthetic.gpx'))
             hist = project.add_simulated_powder_histogram('synthetic', inst, 20, 90, Tstep=0.02)
-            profiles.configure_histogram_geometry(hist, 'capillary')
+            profiles.configure_histogram_geometry(hist, geometry)
             standard = project.add_phase(str(cif), histograms=[hist])
+            for hap in standard.data['Histograms'].values():
+                hap['Scale'][0] = 1000.0
             standard.setSampleProfile(hist, 'size', 'isotropic', 10)
             standard.setSampleProfile(hist, 'microstrain', 'isotropic', 0)
             hist.data['Background'][0] = ['chebyschev-1', False, 1, 100]
@@ -203,10 +234,13 @@ class CalibrationIntegrationTests(unittest.TestCase):
             tt, y = hist.getdata('x'), hist.getdata('Ycalc')
             result = calibration.run_calibration(
                 tt, y, np.sqrt(np.maximum(y, 1)), phase, 1.540593,
-                tt_min=20, tt_max=90, instrument='generic_capillary', spectrum='single',
+                tt_min=20, tt_max=90,
+                instrument='generic_capillary' if geometry == 'capillary' else 'generic_flat_plate',
+                spectrum='cu_doublet' if doublet else 'single',
                 output_instprm=str(root / 'calibrated.instprm'), keep_workdir=True)
             fitted = backend.G2sc.G2Project(result['project_path'])
-            self.assertEqual(fitted.histograms()[0].data['Sample Parameters']['Type'], 'Debye-Scherrer')
+            self.assertEqual(fitted.histograms()[0].data['Sample Parameters']['Type'],
+                             'Debye-Scherrer' if geometry == 'capillary' else 'Bragg-Brentano')
             hap = next(iter(fitted.phases()[0].data['Histograms'].values()))
             self.assertEqual(hap['Mustrain'][1][0], 0)
             self.assertFalse(any(hap['Mustrain'][2]))
@@ -214,10 +248,17 @@ class CalibrationIntegrationTests(unittest.TestCase):
             self.assertFalse(any(hap['Size'][2]))
             self.assertFalse(fitted.phases()[0].data['General']['Cell'][0])
             values = profiles.parse_instprm(Path(result['candidate_instprm_path']).read_bytes())
-            self.assertIn('Lam', values)
-            self.assertNotIn('Lam2', values)
-            self.assertLess(result['Rwp'], 5)
+            self.assertIn('Lam1' if doublet else 'Lam', values)
+            self.assertEqual('Lam2' in values, doublet)
+            self.assertLess(result['Rwp'], 5, json.dumps({
+                'params': result['params'], 'stages': result['stage_log']}, indent=2))
             self.assertTrue(result['validation']['passed'])
+            if mixed:
+                self.assertEqual(result['lorentzian_term'], 'X+Y',
+                                 json.dumps({'params': result['params'], 'Rwp': result['Rwp'],
+                                             'stages': result['stage_log']}, indent=2))
+                self.assertGreater(values['X'], 0)
+                self.assertGreater(values['Y'], 0)
 
 
 if __name__ == '__main__':

@@ -1104,15 +1104,19 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
             histogram = gpx.histograms()[0]
             phase_obj = gpx.phases()[0]
 
-        def _refine(label, inst_params, cycles=8):
+        def _refine(label, inst_params, cycles=8, passes=1):
             """Run refinement, return Rwp."""
+            gpx.set_Controls('cycles', cycles)
+            histogram.clear_refinements({'Instrument Parameters':
+                ['U', 'V', 'W', 'X', 'Y', 'Zero', 'SH/L']})
             rd = {'set': {
                 'Background': {'type': 'chebyschev-1', 'refine': True,
                                 'no. coeffs': n_bg_coeffs},
-            }, 'cycles': cycles}
+            }}
             if inst_params:
                 rd['set']['Instrument Parameters'] = inst_params
-            gpx.do_refinements([rd])
+            for _ in range(passes):
+                gpx.do_refinements([rd])
             rwp = _get_rwp()
             vals = [f"{k}={_get_inst_value(k):.4f}"
                     for k in (inst_params or [])]
@@ -1186,7 +1190,7 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
         _trial_decisions = {}
 
         def _trial(label, inst_params, ckpt_from, cycles=10,
-                   min_rwp_gain=0.1):
+                   min_rwp_gain=0.1, passes=1, fixed_values=None):
             """Try adding params from a checkpoint. Accept only if
             plausible + meaningful improvement.
 
@@ -1195,8 +1199,10 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
             """
             _restore(ckpt_from)
             rwp_before = _get_rwp()
+            for key, value in (fixed_values or {}).items():
+                histogram.data['Instrument Parameters'][0][key][1] = value
 
-            rwp = _refine(label, inst_params, cycles)
+            rwp = _refine(label, inst_params, cycles, passes)
             p = _current_params()
             ok, reason = _profile_plausible(p, check_angles)
 
@@ -1450,6 +1456,7 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
                       flush=True)
 
         # Also keep the Gaussian-only option as a candidate
+        _restore(gauss_ckpt)
         _candidates.append(('Gaussian only', _get_rwp(), gauss_ckpt,
                             False, _gauss))
 
@@ -1547,13 +1554,57 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
                     'reason': 'skipped; no low-angle data',
                 })
 
+        # Revisit angular width terms after asymmetry is established. A term
+        # rejected against a symmetric starting profile can become identifiable
+        # once the low-angle asymmetry is fitted. Compare from one checkpoint.
+        final_terms = _gauss + (['X'] if _use_X else (['Y'] if y_ok else []))
+        if refine_sh_l and tt_min < 30.0:
+            final_terms += ['SH/L']
+        joint_base = _checkpoint('post_asymmetry')
+        joint_candidates = [(_get_rwp(), joint_base, final_terms)]
+        alternatives = []
+        if 'U' not in final_terms:
+            alternatives.append(('Joint U after asymmetry', final_terms + ['U'], {}))
+        if allow_x and allow_y:
+            alternatives.append(('Joint X and Y after asymmetry',
+                                 list(dict.fromkeys(final_terms + ['X', 'Y'])), {}))
+            if 'U' in final_terms or 'V' in final_terms:
+                alternatives.append(('Joint W X Y after asymmetry',
+                    [key for key in dict.fromkeys(final_terms + ['X', 'Y']) if key not in ('U', 'V')],
+                    {'U': 0.0, 'V': 0.0}))
+            if 'SH/L' in final_terms:
+                # FCJ asymmetry and Zero can settle in a local minimum when
+                # both start close to zero. Test one independent moderate-
+                # asymmetry start, with the same physical/correlation guards.
+                alternatives.append(('Joint X Y alternate asymmetry start',
+                    [key for key in dict.fromkeys(final_terms + ['X', 'Y']) if key not in ('U', 'V')],
+                    {'U': 0.0, 'V': 0.0, 'SH/L': 0.05, 'Zero': 0.0}))
+        for label, terms, fixed_values in alternatives:
+            accepted, rwp, checkpoint = _trial(
+                label, terms, joint_base, cycles=25, passes=3, min_rwp_gain=0.1,
+                fixed_values=fixed_values)
+            _stage_log.append({
+                'stage': 'Joint profile comparison', 'label': label,
+                'accepted': accepted, 'Rwp': rwp, 'params': _current_params(),
+                'reason': _trial_decisions[label],
+            })
+            if accepted:
+                joint_candidates.append((rwp, checkpoint, terms))
+        _, best_joint, final_terms = min(joint_candidates, key=lambda item: item[0])
+        _restore(best_joint)
+        _use_X, y_ok = 'X' in final_terms, 'Y' in final_terms
+        u_ok, v_ok = 'U' in final_terms, 'V' in final_terms
+        lorentzian_term = 'X+Y' if _use_X and y_ok else ('X' if _use_X else ('Y' if y_ok else 'none'))
+
         # ── Extract final parameters ───────────────────────────────────
         params = _current_params()
         if not refine_sh_l:
             params['SH/L'] = fixed_sh_l
 
         # Zero out unused Lorentzian
-        if _use_X:
+        if _use_X and y_ok:
+            pass
+        elif _use_X:
             params['Y'] = 0.0
         elif y_ok:
             params['X'] = 0.0
@@ -1572,6 +1623,7 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
             params['Y'] = 0.0
             _use_X = False
             y_ok = False
+            lorentzian_term = 'none'
 
         stats = _get_stats()
         _rwp_final = _get_rwp()
@@ -1617,7 +1669,7 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
             validation_reasons.append("Final Gaussian FWHM is unrealistically narrow.")
         if np.nanmax(fwhm_deg) > 0.3:
             validation_warnings.append('Gaussian FWHM exceeds 0.3°; inspect the standard peak widths.')
-        if _best_label == 'Gaussian only':
+        if not _use_X and not y_ok:
             validation_warnings.append(
                 "Lorentzian X/Y terms were not accepted; candidate uses "
                 "Gaussian U/V/W broadening only.")
@@ -1704,7 +1756,7 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
             'geometry': profile['geometry'],
             'spectrum': 'cu_doublet' if _use_doublet else 'single',
             'fit_range': [tt_min, tt_max],
-            'lorentzian_term': 'X' if _use_X else ('Y' if y_ok else 'none'),
+            'lorentzian_term': lorentzian_term,
         }
         with open(report_json, 'w', encoding='utf-8', newline='\n') as f:
             json.dump(report, f, indent=2)
@@ -1763,7 +1815,7 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
                 'GoF': round(math.sqrt(max(0, stats.get('reduced chi2', 0))), 3),
             },
             'method': 'GSAS-II calibration',
-            'lorentzian_term': 'X' if _use_X else ('Y' if y_ok else 'none'),
+            'lorentzian_term': lorentzian_term,
             'validation': validation,
             'stage_log': _stage_log,
             'profile_action': 'staged_gsas_candidate',

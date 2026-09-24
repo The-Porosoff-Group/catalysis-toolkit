@@ -1,5 +1,7 @@
 # Catalysis Data Toolkit
 
+**Release 1.2.0** — shared benchtop calibration and local instrument profiles.
+
 A local web app for processing heterogeneous-catalysis data. Drag-and-drop interface, no coding required after the one-time install.
 
 Supported workflows:
@@ -184,6 +186,13 @@ flat-plate (Bragg–Brentano) and capillary/transmission starting profiles, name
 bundled profiles, and **Upload .instprm…**. Generic profiles do not load another
 instrument's measured calibration. Unidentified scans default to the generic
 flat-plate geometry; verify the geometry before fitting.
+
+The **Benchtop Cu — flat plate (Si 640g)** entry loads the bundled
+`benchtop_Cu_Si640g.instprm` automatically. It is included in Git for other users
+of that same instrument. The selected 20–90° Cu-doublet calibration achieved
+Rwp 8.502%; see [settings, comparisons, and limits](docs/benchtop_calibration.md).
+The instrument make/model is not recorded, so this is not a generic calibration
+for other benchtop machines.
 
 To calibrate from **NIST Si 640g**:
 

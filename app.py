@@ -60,6 +60,7 @@ if _missing:
 import numpy as np
 import yaml
 from flask import Flask, render_template, request, jsonify, send_file
+from toolkit_version import APP_VERSION
 from flask.json.provider import DefaultJSONProvider
 from modules.json_safety import json_safe_value
 
@@ -256,6 +257,7 @@ if CONFIG['performance'].get('preload_pymatgen', True):
 
 # ── Flask app ─────────────────────────────────────────────────────────────────
 app = Flask(__name__)
+app.jinja_env.globals['app_version'] = APP_VERSION
 app.json_provider_class = NumpyJSONProvider
 app.json = NumpyJSONProvider(app)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
@@ -1903,7 +1905,7 @@ if __name__ == '__main__':
         _gsas_status = 'not installed'
 
     print("\n" + "━"*50)
-    print("  Catalysis Data Toolkit")
+    print(f"  Catalysis Data Toolkit v{APP_VERSION}")
     print(f"  pymatgen:          {'ready' if _pymatgen_ready else 'not installed'}")
     print(f"  GSAS-II:           {_gsas_status}")
     print(f"  Materials Project: {'configured' if MP_API_KEY else 'no API key'}")
