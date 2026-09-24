@@ -29,13 +29,15 @@ from .gsasii_backend import (
     _add_gsas2pkg_paths, _GSASII_AVAILABLE, _GSASII_IMPORT_ERROR,
     _is_cu_kalpha, CU_KALPHA1_A, CU_KALPHA2_A, CU_KALPHA2_RATIO,
     _build_conventional_cif, INSTRUMENT_PROFILES, DEFAULT_INSTRUMENT,
+    get_instrument_profile,
 )
 
-# Conservative starting guesses — W=0.01 to avoid starting too broad.
-# If GSAS-II uses centideg² internally, W=5.0 → FWHM≈2° which is
-# far too wide.  Starting near zero lets GSAS-II find the right scale.
+# GSAS-II W is variance in centidegrees squared. W=10 gives a Gaussian
+# FWHM of about 0.074 degrees, resolvable on a typical 0.01-degree scan.
+# Near-zero starts become narrower than the data spacing once the standard's
+# spurious default sample broadening has been removed.
 _CAL_DEFAULTS = {
-    'U': 0.0, 'V': 0.0, 'W': 0.01,
+    'U': 0.0, 'V': 0.0, 'W': 10.0,
     'X': 0.0, 'Y': 0.0, 'SH/L': 0.002,
 }
 
@@ -472,7 +474,8 @@ def _fit_caglioti_from_peaks(peaks, baseline=None):
 def _profile_fwhm_deg(params, two_theta):
     tan_t = np.tan(np.radians(np.asarray(two_theta, dtype=float) / 2.0))
     hg2 = params['U'] * tan_t**2 + params['V'] * tan_t + params['W']
-    return np.sqrt(np.maximum(hg2, 0.0)) / 100.0
+    # GSAS-II U/V/W describe Gaussian variance in centidegrees squared.
+    return np.sqrt(8.0 * np.log(2.0) * np.maximum(hg2, 0.0)) / 100.0
 
 
 def _validate_candidate(params, peaks, baseline, instrument):
@@ -714,8 +717,12 @@ def _profile_plausible(params, tt_check=None):
     U, V, W = params.get('U', 0), params.get('V', 0), params.get('W', 0)
     X, Y = params.get('X', 0), params.get('Y', 0)
 
+    if not all(np.isfinite(value) for value in (U, V, W, X, Y, params.get('Zero', 0), params.get('SH/L', 0))):
+        return False, 'Instrument parameters must be finite.'
+
     if tt_check is None:
         tt_check = _SI_PEAK_ANGLES
+    tt_check = np.asarray(tt_check, dtype=float)
 
     # Caglioti FWHM² must be positive at all Si peak positions
     tan_t = np.tan(np.radians(tt_check / 2.0))
@@ -742,7 +749,7 @@ def run_calibration(tt, y_obs, sigma, phase, wavelength,
                     tt_min=None, tt_max=None, n_bg_coeffs=6,
                     polariz=None, instrument=None,
                     output_instprm=None, progress_callback=None,
-                    keep_workdir=False):
+                    keep_workdir=False, spectrum="auto"):
     """
     Run instrument profile calibration on a line-broadening standard.
 
@@ -779,8 +786,7 @@ def run_calibration(tt, y_obs, sigma, phase, wavelength,
     _toolkit_root = os.path.dirname(os.path.dirname(
         os.path.dirname(os.path.abspath(__file__))))
     if output_instprm is None:
-        _profiles = INSTRUMENT_PROFILES.get(instrument,
-                      INSTRUMENT_PROFILES[DEFAULT_INSTRUMENT])
+        _profiles = get_instrument_profile(instrument)
         _fname = _profiles.get('instprm_filename',
                                 f'{instrument}_Si640g.instprm')
         output_instprm = os.path.join(_toolkit_root, _fname)
@@ -797,10 +803,11 @@ def run_calibration(tt, y_obs, sigma, phase, wavelength,
           flush=True)
 
     # ── Resolve instrument profile ─────────────────────────────────────
-    profile = INSTRUMENT_PROFILES.get(instrument,
-                INSTRUMENT_PROFILES[DEFAULT_INSTRUMENT])
+    profile = get_instrument_profile(instrument)
     if polariz is None:
         polariz = profile.get('polariz', 0.5)
+    if not np.isfinite(polariz) or not 0 <= polariz <= 1:
+        raise ValueError('Beam polarization must be between 0 and 1.')
     allow_x = bool(profile.get('calibration_allow_x', True))
     allow_y = bool(profile.get('calibration_allow_y', True))
     refine_sh_l = bool(profile.get('calibration_refine_sh_l', True))
@@ -832,9 +839,21 @@ def run_calibration(tt, y_obs, sigma, phase, wavelength,
     if tt_min is None: tt_min = float(tt.min())
     if tt_max is None: tt_max = float(tt.max())
 
+    if spectrum not in ('auto', 'cu_doublet', 'single'):
+        raise ValueError('Choose Cu Kα1/Kα2 or a single wavelength.')
+    if spectrum == 'cu_doublet' and not _is_cu_kalpha(wavelength):
+        raise ValueError('Cu Kα1/Kα2 requires a Cu wavelength (about 1.5406 Å).')
+    if not np.isfinite(wavelength) or wavelength <= 0:
+        raise ValueError('Wavelength must be finite and positive.')
+    if not (0 < tt_min < tt_max < 180):
+        raise ValueError('Calibration requires 0 < 2θ minimum < maximum < 180°.')
+    # Check the full fitted angular range, not six hard-coded Cu peak angles.
+    check_angles = np.linspace(tt_min, tt_max, 401)
     mask = (tt >= tt_min) & (tt <= tt_max)
     tt_r = tt[mask]
     y_r = y_obs[mask]
+    if len(tt_r) < 20 or not np.all(np.isfinite(y_r)) or not np.all(np.diff(tt_r) > 0):
+        raise ValueError('Calibration needs at least 20 finite, increasing-angle data points.')
     sig_r = (sigma[mask] if sigma is not None
              else np.sqrt(np.maximum(y_r, 1.0)))
 
@@ -916,7 +935,7 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
         # Write initial .instprm with FRESH starting guesses.
         # CRITICAL: calibration must NEVER use an existing measured
         # .instprm as input.  It always starts from _CAL_DEFAULTS.
-        _use_doublet = _is_cu_kalpha(wavelength)
+        _use_doublet = _is_cu_kalpha(wavelength) and spectrum != 'single'
         instprm_path = os.path.join(work_dir, 'initial.instprm')
         print(f"  Input instprm: {instprm_path} (fresh defaults, "
               f"NOT the existing measured file)", flush=True)
@@ -946,6 +965,9 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
                                               fmthint='xye')
         if isinstance(histogram, list):
             histogram = histogram[0]
+        from .instrument_profiles import configure_histogram_geometry
+        configure_histogram_geometry(histogram, profile['geometry'])
+        print(f"  Geometry: {histogram.data['Sample Parameters']['Type']}", flush=True)
         print(f"  Histogram: {len(tt_r)} points", flush=True)
 
         try:
@@ -963,6 +985,17 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
         print(f"  Phase: {phase_obj.name}", flush=True)
 
         phase_obj.set_refinements({'Cell': False})
+        # GSAS-II defaults to 1 um size and 1000 microstrain even when their
+        # refinement flags are off. Those defaults must not be subtracted from
+        # a line standard's instrument profile. Use negligible size broadening
+        # and zero strain, with both models fixed.
+        # 10 um is GSAS-II's supported upper size bound.
+        phase_obj.setSampleProfile(histogram, 'size', 'isotropic', 10.0)
+        phase_obj.setSampleProfile(histogram, 'microstrain', 'isotropic', 0.0)
+        phase_obj.set_HAP_refinements({
+            'Size': {'type': 'isotropic', 'refine': False},
+            'Mustrain': {'type': 'isotropic', 'refine': False},
+        })
         try:
             _cell = phase_obj.data['General']['Cell']
             print(f"  Cell in GSAS-II: a={_cell[1]:.6f} (fixed)",
@@ -1165,7 +1198,7 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
 
             rwp = _refine(label, inst_params, cycles)
             p = _current_params()
-            ok, reason = _profile_plausible(p, _SI_PEAK_ANGLES)
+            ok, reason = _profile_plausible(p, check_angles)
 
             if not ok:
                 print(f"    REJECTED: {reason}; rolling back", flush=True)
@@ -1215,11 +1248,11 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
             U = params.get('U', 0)
             V = params.get('V', 0)
             W = params.get('W', 0)
-            tan_t = np.tan(np.radians(_SI_PEAK_ANGLES / 2.0))
+            tan_t = np.tan(np.radians(check_angles / 2.0))
             hg2 = U * tan_t**2 + V * tan_t + W
-            fwhm = np.sqrt(np.maximum(hg2, 0)) / 100.0
-            print(f"    {label} FWHM(deg) at Si peaks: "
-                  f"{[f'{x:.4f}' for x in fwhm]}", flush=True)
+            fwhm = _profile_fwhm_deg(params, check_angles)
+            print(f"    {label} Gaussian FWHM(deg), fitted range: "
+                  f"{np.min(fwhm):.4f} to {np.max(fwhm):.4f}", flush=True)
 
         _dump_raw("INITIAL (before any refinement)")
         _print_fwhm(_current_params(), "Initial")
@@ -1241,6 +1274,18 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
             'reason': 'baseline setup',
         })
         _dump_raw("after Stage 1")
+
+        # First initialize GSAS-II's reflection list with a structural fit.
+        # Then extract intensities independently so texture/absorption/slit
+        # intensity ratios cannot be absorbed into calibrated peak widths.
+        phase_obj.set_refinements({'LeBail': True})
+        for hap in phase_obj.data['Histograms'].values():
+            hap['Scale'][1] = False
+        _stage_log.append({
+            'stage': 'Intensity extraction', 'label': 'Independent Si peak intensities',
+            'accepted': True, 'Rwp': _refine('Le Bail intensities', [], cycles=5),
+            'params': _current_params(), 'reason': 'certified cell remains fixed',
+        })
 
         # Stage 2: Zero
         if progress_callback:
@@ -1517,7 +1562,7 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
             params['Y'] = 0.0
 
         # Final plausibility check
-        ok, reason = _profile_plausible(params, _SI_PEAK_ANGLES)
+        ok, reason = _profile_plausible(params, check_angles)
         if not ok:
             print(f"\n  WARNING: final profile still implausible "
                   f"({reason}). Falling back to baseline.", flush=True)
@@ -1530,6 +1575,9 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
 
         stats = _get_stats()
         _rwp_final = _get_rwp()
+        _, _observed, _calculated, _background = _get_arrays()
+        stats['Rp'] = float(100 * np.sum(np.abs(_observed - _calculated)) /
+                            max(np.sum(np.abs(_observed)), 1e-12))
 
         print(f"\n  {'=' * 50}", flush=True)
         print(f"  CALIBRATED INSTRUMENT PARAMETERS", flush=True)
@@ -1545,7 +1593,7 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
         print(f"  Rwp = {_rwp_final:.3f}%", flush=True)
 
         # Caglioti check
-        _tan_t = np.tan(np.radians(_SI_PEAK_ANGLES / 2.0))
+        _tan_t = np.tan(np.radians(check_angles / 2.0))
         _hg2 = params['U'] * _tan_t**2 + params['V'] * _tan_t + params['W']
         print(f"  FWHM_G^2 range: [{np.min(_hg2):.4f}, "
               f"{np.max(_hg2):.4f}] (all positive)"
@@ -1554,7 +1602,7 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
 
         validation_reasons = []
         validation_warnings = []
-        _v_ok, _v_reason = _profile_plausible(params, _SI_PEAK_ANGLES)
+        _v_ok, _v_reason = _profile_plausible(params, check_angles)
         if not _v_ok:
             validation_reasons.append(_v_reason)
         if not allow_x and abs(params.get('X', 0.0)) > 1e-8:
@@ -1564,11 +1612,11 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
         if (not refine_sh_l and
                 abs(params.get('SH/L', fixed_sh_l) - fixed_sh_l) > 1e-8):
             validation_reasons.append("SH/L changed despite instrument policy.")
-        fwhm_deg = _profile_fwhm_deg(params, _SI_PEAK_ANGLES)
+        fwhm_deg = _profile_fwhm_deg(params, check_angles)
         if np.nanmin(fwhm_deg) < 0.003:
             validation_reasons.append("Final Gaussian FWHM is unrealistically narrow.")
-        if np.nanmax(fwhm_deg) > 0.12:
-            validation_reasons.append("Final Gaussian FWHM is unusually broad.")
+        if np.nanmax(fwhm_deg) > 0.3:
+            validation_warnings.append('Gaussian FWHM exceeds 0.3°; inspect the standard peak widths.')
         if _best_label == 'Gaussian only':
             validation_warnings.append(
                 "Lorentzian X/Y terms were not accepted; candidate uses "
@@ -1577,11 +1625,17 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
             validation_warnings.append(
                 "V was not accepted; candidate uses the simpler accepted "
                 "Caglioti model.")
+        validation_warnings.append('Parameter checks do not establish fit quality. Inspect peak positions, widths and residuals before use.')
+        if _rwp_final > 10:
+            validation_warnings.append(f'Rwp is {_rwp_final:.2f}%; inspect the remaining profile mismatch.')
+        validation_warnings.append('Chi-square assumes the supplied uncertainties are valid; counts-per-second data require counting times for Poisson uncertainties.')
         validation = {
             'passed': not validation_reasons,
             'reasons': validation_reasons,
             'warnings': validation_warnings,
             'instrument': instrument,
+            'geometry': profile['geometry'],
+            'checked_range': [tt_min, tt_max],
             'accepted_params': _accepted + ['Zero'],
             'profile_action': 'staged_gsas_candidate',
             'production_overwritten': False,
@@ -1630,6 +1684,8 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
 
         report = {
             'method': 'Si SRM 640g staged GSAS-II calibration',
+            'intensity_model': 'Le Bail reflection intensities; certified cell fixed',
+            'standard_broadening': {'size_um': 10.0, 'microstrain': 0.0, 'refined': False},
             'standard': {
                 'name': 'NIST SRM 640g Si',
                 'certified_a_angstrom': _SI640G_A_ANGSTROM,
@@ -1643,7 +1699,11 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
             'stage_log': _stage_log,
             'Rwp': _rwp_final,
             'statistics': stats,
-            'fwhm_deg_at_si_peaks': fwhm_deg.tolist(),
+            'checked_two_theta': check_angles.tolist(),
+            'gaussian_fwhm_deg': fwhm_deg.tolist(),
+            'geometry': profile['geometry'],
+            'spectrum': 'cu_doublet' if _use_doublet else 'single',
+            'fit_range': [tt_min, tt_max],
             'lorentzian_term': 'X' if _use_X else ('Y' if y_ok else 'none'),
         }
         with open(report_json, 'w', encoding='utf-8', newline='\n') as f:
@@ -1652,7 +1712,7 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
             f.write("Si SRM 640g staged GSAS-II calibration report\n")
             f.write(f"Candidate: {candidate_instprm}\n")
             f.write(f"Production profile was not overwritten: {production_instprm}\n")
-            f.write(f"Validation: {'PASS' if validation['passed'] else 'FAIL'}\n")
+            f.write(f"Parameter checks: {'PASS' if validation['passed'] else 'FAIL'} (not a fit-quality certification)\n")
             if validation['reasons']:
                 f.write("Reasons:\n")
                 for reason in validation['reasons']:
@@ -1697,10 +1757,10 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
             'y_background': y_bg_out.tolist(),
             'residuals': diff_out.tolist(),
             'statistics': {
-                'Rwp': stats.get('Rwp', 0),
-                'Rp': stats.get('Rp', 0),
-                'chi2': stats.get('reduced chi2', 0),
-                'GoF': math.sqrt(max(0, stats.get('reduced chi2', 0))),
+                'Rwp': round(_rwp_final, 3),
+                'Rp': round(stats['Rp'], 3),
+                'chi2': round(stats.get('reduced chi2', 0), 3),
+                'GoF': round(math.sqrt(max(0, stats.get('reduced chi2', 0))), 3),
             },
             'method': 'GSAS-II calibration',
             'lorentzian_term': 'X' if _use_X else ('Y' if y_ok else 'none'),
@@ -1710,6 +1770,10 @@ Si1  Si  0.12500  0.12500  0.12500  1.0
             'candidate_written': True,
             'production_overwritten': False,
             'instprm_text': content,
+            'geometry': profile['geometry'],
+            'fit_range': [tt_min, tt_max],
+            'spectrum': 'cu_doublet' if _use_doublet else 'single',
+            'project_path': gpx_path if keep_workdir else None,
         }
 
     finally:
