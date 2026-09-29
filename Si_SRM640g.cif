@@ -1,0 +1,31 @@
+data_Si_SRM640g
+# Silicon line-position standard, NIST SRM 640g.
+# Certified lattice parameter a = 5.431109 A (22 degC), not a DFT-relaxed cell.
+# Use this rather than a Materials Project entry when Si is the reference:
+# MP cells are PBE-relaxed and run ~0.2% large, which drives a tan(theta)
+# position drift that masquerades as a zero or displacement error.
+#
+# Si sits on 8a at (1/8,1/8,1/8), the origin-choice-2 setting used by CIF
+# convention. Do not move it to (0,0,0): that is 8a only in origin choice 1,
+# and under origin choice 2 it lands on 16c, which cancels every reflection
+# except (111).
+_cell_length_a                  5.431109
+_cell_length_b                  5.431109
+_cell_length_c                  5.431109
+_cell_angle_alpha               90.0
+_cell_angle_beta                90.0
+_cell_angle_gamma               90.0
+_cell_volume                    160.1718
+_symmetry_space_group_name_H-M  'F d -3 m'
+_symmetry_Int_Tables_number     227
+_chemical_formula_sum           'Si'
+_chemical_formula_structural    'Si'
+loop_
+ _atom_site_label
+ _atom_site_type_symbol
+ _atom_site_fract_x
+ _atom_site_fract_y
+ _atom_site_fract_z
+ _atom_site_occupancy
+ _atom_site_U_iso_or_equiv
+ Si1   Si   0.125000 0.125000 0.125000 1.000000 0.0055
