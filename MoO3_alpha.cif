@@ -1,0 +1,44 @@
+# alpha-MoO3, orthorhombic layered phase.
+# Fractional coordinates from Materials Project mp-20589; unit cell replaced
+# with the experimental values of Kihlborg (1963): 3.9628 / 13.8550 / 3.6964 A.
+#
+# Do not use the MP cell as-is. MoO3 is a van der Waals layered structure and
+# plain PBE overestimates the interlayer axis by ~2.7% (14.229 vs 13.855 A),
+# which moves the low-angle (0k0) lines by ~0.7 deg -- enough to break the
+# phase assignment. The fractional coordinates are unaffected.
+#
+# Kept in P1 with all 16 atoms, so structure factors are correct but no
+# symmetry constraints apply: refine this phase with Cell UNCHECKED.
+data_mp-20589
+_cell_length_a                  3.696400
+_cell_length_b                  3.962800
+_cell_length_c                  13.855000
+_cell_angle_alpha               90.0000
+_cell_angle_beta                90.0000
+_cell_angle_gamma               90.0000
+_symmetry_space_group_name_H-M  'P 1'
+_symmetry_Int_Tables_number     1
+_chemical_formula_sum           'MoO3'
+loop_
+ _atom_site_label
+ _atom_site_type_symbol
+ _atom_site_fract_x
+ _atom_site_fract_y
+ _atom_site_fract_z
+ _atom_site_occupancy
+ Mo1_1    Mo   0.250001 0.423010 0.602057 1.000000
+ Mo2_1    Mo   0.750000 0.576990 0.397943 1.000000
+ Mo3_1    Mo   0.750000 0.923010 0.897943 1.000000
+ Mo4_1    Mo   0.250001 0.076990 0.102057 1.000000
+ O5_1    O    0.250001 0.466327 0.718344 1.000000
+ O6_1    O    0.750000 0.533672 0.281657 1.000000
+ O7_1    O    0.750000 0.966327 0.781657 1.000000
+ O8_1    O    0.250001 0.033673 0.218344 1.000000
+ O9_1    O    0.250001 0.498536 0.435585 1.000000
+ O10_1    O    0.750000 0.501464 0.564416 1.000000
+ O11_1    O    0.750000 0.998536 0.064416 1.000000
+ O12_1    O    0.250001 0.001464 0.935584 1.000000
+ O13_1    O    0.250001 0.982682 0.587091 1.000000
+ O14_1    O    0.750000 0.482682 0.912908 1.000000
+ O15_1    O    0.750000 0.017318 0.412908 1.000000
+ O16_1    O    0.250001 0.517318 0.087091 1.000000

@@ -52,6 +52,8 @@ cifs/
 !/synergy_s_Si640g.instprm
 # Certified standard structure, bundled so every calibration uses the same one.
 !/Si_SRM640g.cif
+# Experimental-cell alpha-MoO3 reference (MP cell is 2.7% long on the vdW axis).
+!/MoO3_alpha.cif
 *_xrd_refinement*.png
 xrd_refinement*.png
 *_refinement_results.*
