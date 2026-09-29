@@ -131,6 +131,17 @@ The purple **GSAS-II Refinement** button appears in the XRD panel once GSAS-II i
 
 > GSAS-II is optional. Le Bail and in-house Rietveld work without it.
 
+**If you installed GSAS-II from source** (the usual route on Apple Silicon), the package is not on `sys.path`, so you must point Python at both the source directory and the matching binary directory before launching:
+
+```bash
+export PYTHONPATH="/path/to/GSAS-II/GSASII:/path/to/GSAS-II/GSASII-bin/mac_arm_p3.11_n1.26:$PYTHONPATH"
+python app.py
+```
+
+The binary directory must match your Python and NumPy versions — `mac_arm_p3.11_n1.26` means Python 3.11 with NumPy 1.26. Check yours with `python -c "import sys, numpy; print(sys.version, numpy.__version__)"`; a mismatch makes GSAS-II fail to import.
+
+`run_local.sh` does this for you, but it contains machine-specific absolute paths — edit them to match your install before using it.
+
 ### 6. Add your Materials Project API key
 
 ```bash
@@ -145,10 +156,15 @@ Get a free key at <https://next-gen.materialsproject.org/api>. You can paste it 
 ### 7. Run the app
 
 ```bash
+conda activate catalysis
 python app.py
 ```
 
-Then open your browser at `http://localhost:5000`.
+Then open your browser at **`http://127.0.0.1:5000`**.
+
+> **Use `127.0.0.1`, not `localhost`, on macOS.** macOS AirPlay Receiver listens on port 5000 over IPv6, and `localhost` resolves to IPv6 first — so `http://localhost:5000` returns a 403 from AirPlay instead of reaching the toolkit. `127.0.0.1` is IPv4-only and always reaches the app. To free the port permanently, turn off **System Settings → General → AirDrop & Handoff → AirPlay Receiver**.
+
+If you installed GSAS-II from source (see step 5), launch with `bash run_local.sh` instead — it sets `PYTHONPATH` before starting the app.
 
 ---
 
@@ -346,13 +362,15 @@ catalysis-toolkit/
 | `python not found` | Re-install Python and tick **Add to PATH**. |
 | `conda: command not found` | Run `conda init zsh`, close and reopen Terminal. |
 | `CondaError: Run 'conda init'` | Open Command Prompt, run `C:\miniforge\condabin\conda init cmd.exe`, then restart. |
-| Browser does not open | Manually go to `http://localhost:5000`. |
+| Browser does not open | Manually go to `http://127.0.0.1:5000` (Windows users may also use `localhost`). |
+| macOS: `localhost:5000` returns 403 or a blank page | macOS AirPlay Receiver holds port 5000 over IPv6 and answers before the toolkit does. Use `http://127.0.0.1:5000`, or disable **System Settings → General → AirDrop & Handoff → AirPlay Receiver**. Confirm with `lsof -nP -iTCP:5000 -sTCP:LISTEN`. |
 | Port 5000 in use | Edit `app.py`, change `port=5000` to `port=5001`. |
 | File will not upload | Verify `.xlsx` for GC or `.dat` / `.xy` / `.xye` / `.csv` / `.txt` / `.xlsx` for XRD. |
 | FID flows all zero | CH4 TCD bridge unavailable — see `GC_SKILL.md`. |
 | New `.yaml` reaction does not show | Restart the app. |
 | MP search returns nothing | Open **Phase Identification → Materials Project API key** and test the saved key. Use element names, chemical names, or formulas for database searches. |
-| GSAS-II button does not appear or refinement will not run | GSAS-II is optional; install it from <https://github.com/AdvancedPhotonSource/GSAS-II>. Le Bail and in-house Rietveld work without it. |
+| GSAS-II button does not appear or refinement will not run | GSAS-II is optional; install it from <https://github.com/AdvancedPhotonSource/GSAS-II>. Le Bail and in-house Rietveld work without it. The GSAS-II refine button, `▶ GSAS controls`, the calibration checkbox, and `.instprm` upload are all hidden unless `/api/xrd/gsas2_status` reports `available: true` — check it in a browser to see the underlying import error. |
+| GSAS-II source install reports `name 'wx' is not defined` | The GSAS-II source directory contains `GSASII.py`, the wxPython GUI module, which shadows the package name and fails to import in a headless environment. Ensure the *source* directory (`.../GSAS-II/GSASII`) is on `PYTHONPATH` so the flat `import GSASIIscriptable` path is used. |
 | GSAS-II has trouble with paths containing spaces | Move the toolkit folder to a path like `C:\catalysis-toolkit` on Windows. |
 | Stale CIF in cache | Delete `~/.catalysis_toolkit_cache/` and re-fetch. |
 
