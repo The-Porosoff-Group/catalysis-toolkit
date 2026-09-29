@@ -86,9 +86,12 @@ def check_statistics(summary: Dict[str, Any],
                     f"Intensities are cps, not counts. Counting noise implies "
                     f"{estimate['seconds_per_step']:.2f} s/step, so the "
                     f"reported GoF {gof:.2f} corresponds to about "
-                    f"{gof * scale:.2f}.",
+                    f"{gof * scale:.2f}, and chi-squared {gof**2:.1f} to "
+                    f"about {(gof * scale) ** 2:.1f}.",
                     {"GoF_reported": gof,
                      "GoF_corrected": round(gof * scale, 2),
+                     "chi2_reported": round(gof ** 2, 2),
+                     "chi2_corrected": round((gof * scale) ** 2, 2),
                      "seconds_per_step": round(estimate["seconds_per_step"], 3),
                      "n_windows": estimate["n_windows"],
                      "spread_pct": round(estimate["spread_pct"], 1)},

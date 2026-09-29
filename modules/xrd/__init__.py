@@ -272,26 +272,60 @@ def _parse_xlsx(filepath):
 def _parse_generic(lines, ext):
     tt_list, int_list, sig_list = [], [], []
     sep = ',' if ext == '.csv' else None
-    for line in lines:
+
+    # Resolve columns by name when the file carries a header. Positional
+    # guessing is only safe for the 3-column .xye convention: vendor exports
+    # put other quantities in column 2 (PowderGraph puts d-spacing there),
+    # and reading those as sigma silently destroys the refinement weights.
+    tt_idx, int_idx, sig_idx = 0, 1, None
+    header_row = -1
+    for i, line in enumerate(lines[:20]):
+        parts = [p for p in line.strip().split(sep)] if line.strip() else []
+        if len(parts) < 2:
+            continue
+        try:
+            float(parts[0])
+            continue          # numeric: data, not a header
+        except ValueError:
+            pass
+        headers = [_norm_header(p) for p in parts]
+        t = _pick_column(headers, [
+            ('2thetadeg', '2theta', 'twotheta', 'twothetadeg',
+             'twothetaangle', 'angle', 'x')])
+        n = _pick_column(headers, [
+            ('intx',),
+            ('intensity', 'intensitycounts', 'counts', 'count', 'y')])
+        if t is not None and n is not None and t != n:
+            tt_idx, int_idx, header_row = t, n, i
+            sig_idx = _pick_column(headers, [
+                ('sigx',),
+                ('sigma', 'error', 'err', 'esd', 'stddev', 'stdev')])
+            break
+
+    for line in lines[header_row + 1:]:
         line = line.strip()
         if not line or line.startswith('#') or line.startswith('!'): continue
-        try:
-            float(line.split(sep)[0])
-        except (ValueError, IndexError):
-            continue
         parts = line.split(sep)
         try:
-            tt = float(parts[0]); ix = float(parts[1])
-            sx = float(parts[2]) if len(parts) > 2 else math.sqrt(max(ix, 1))
-            if tt > 0 and ix >= 0:
-                tt_list.append(tt); int_list.append(ix); sig_list.append(sx)
+            tt = float(parts[tt_idx]); ix = float(parts[int_idx])
         except (ValueError, IndexError):
             continue
+        sx = None
+        if sig_idx is not None and sig_idx < len(parts):
+            sx = _safe_float(parts[sig_idx])
+        elif header_row < 0 and len(parts) == 3:
+            sx = _safe_float(parts[2])
+        if sx is None or sx <= 0:
+            sx = math.sqrt(max(ix, 1))
+        if tt > 0 and ix >= 0:
+            tt_list.append(tt); int_list.append(ix); sig_list.append(sx)
+
     return {
         'tt':        np.array(tt_list),
         'intensity': np.array(int_list),
         'sigma':     np.array(sig_list),
-        'metadata':  {},
+        'metadata':  {'sigma_source':
+                      'file' if sig_idx is not None else 'poisson_estimate'},
     }
 
 

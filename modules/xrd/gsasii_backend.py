@@ -5475,7 +5475,8 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         except ImportError:
             from counting_statistics import estimate_counting_time, describe
         _counting = estimate_counting_time(tt_out, y_obs_out)
-        _counting_note = describe(_counting, stats.get('GoF'))
+        _counting_note = describe(_counting, stats.get('GoF'),
+                                  stats.get('chi2'))
         if _counting_note:
             _sanity_warnings.append(
                 _counting_note + " Rwp and Rp remain valid as reported.")

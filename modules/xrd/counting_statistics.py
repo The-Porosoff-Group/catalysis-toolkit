@@ -82,7 +82,8 @@ def estimate_counting_time(tt: np.ndarray, y: np.ndarray) -> Dict[str, object]:
     return result
 
 
-def describe(estimate: Dict[str, object], gof: Optional[float]) -> Optional[str]:
+def describe(estimate: Dict[str, object], gof: Optional[float],
+             chi2: Optional[float] = None) -> Optional[str]:
     """One-line human summary, or None when no correction applies."""
     if estimate.get("is_counts") or estimate.get("gof_scale") is None:
         return None
@@ -91,8 +92,14 @@ def describe(estimate: Dict[str, object], gof: Optional[float]) -> Optional[str]
     text = (f"Intensities are not whole counts, so sigma = sqrt(I) does not "
             f"apply. Counting noise implies about {seconds:.2f} s/step "
             f"({estimate['n_windows']} background windows, "
-            f"{estimate['spread_pct']:.0f}% spread), which scales GoF by "
-            f"{scale:.2f}.")
+            f"{estimate['spread_pct']:.0f}% spread).")
+    parts = []
     if gof is not None:
-        text += f" Reported GoF {gof:.2f} corresponds to roughly {gof*scale:.2f}."
+        parts.append(f"GoF {gof:.2f} corresponds to roughly {gof*scale:.2f}")
+    if chi2 is not None:
+        # chi-squared carries the full factor; GoF is its square root.
+        parts.append(f"chi-squared {chi2:.2f} to roughly "
+                     f"{chi2*seconds:.2f}")
+    if parts:
+        text += " Reported " + ", and ".join(parts) + "."
     return text
