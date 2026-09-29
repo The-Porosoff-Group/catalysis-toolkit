@@ -26,6 +26,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from modules.xrd.counting_statistics import estimate_counting_time  # noqa: E402
+
 # Thresholds. Deliberately conservative: these flag "look at this", not "wrong".
 VOLUME_DEVIATION_PCT = 1.0        # |dV/V0| above this is worth explaining
 VOLUME_DEVIATION_SERIOUS_PCT = 2.5
@@ -73,17 +76,31 @@ def check_statistics(summary: Dict[str, Any],
 
     poisson_valid = True
     if pattern is not None:
-        y = pattern["y_obs"]
-        if float(np.nanmax(np.abs(y - np.round(y)))) > 1e-6:
+        estimate = estimate_counting_time(pattern["tt"], pattern["y_obs"])
+        if not estimate.get("is_counts"):
             poisson_valid = False
-            out.append(Finding(
-                "stats", "warning",
-                "Intensities are not whole counts, so sigma = sqrt(I) does not "
-                "apply. GoF and chi-squared are scaled by an unknown factor.",
-                {"GoF_reported": gof},
-                "Judge this fit on Rwp and residual shape. To recover a "
-                "meaningful GoF, re-export as raw counts or supply the "
-                "per-step counting time."))
+            scale = estimate.get("gof_scale")
+            if scale is not None and gof is not None:
+                out.append(Finding(
+                    "stats", "warning",
+                    f"Intensities are cps, not counts. Counting noise implies "
+                    f"{estimate['seconds_per_step']:.2f} s/step, so the "
+                    f"reported GoF {gof:.2f} corresponds to about "
+                    f"{gof * scale:.2f}.",
+                    {"GoF_reported": gof,
+                     "GoF_corrected": round(gof * scale, 2),
+                     "seconds_per_step": round(estimate["seconds_per_step"], 3),
+                     "n_windows": estimate["n_windows"],
+                     "spread_pct": round(estimate["spread_pct"], 1)},
+                    "Use the corrected value. Rwp and Rp are unaffected."))
+            else:
+                out.append(Finding(
+                    "stats", "warning",
+                    "Intensities are not whole counts, so sigma = sqrt(I) "
+                    "does not apply, and the counting time could not be "
+                    "recovered from the background.",
+                    {"GoF_reported": gof},
+                    "Judge this fit on Rwp and residual shape."))
 
     if rwp is not None and gof is not None and poisson_valid and gof > 3 and rwp < 8:
         out.append(Finding(
