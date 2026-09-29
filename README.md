@@ -164,7 +164,14 @@ Then open your browser at **`http://127.0.0.1:5000`**.
 
 > **Use `127.0.0.1`, not `localhost`, on macOS.** macOS AirPlay Receiver listens on port 5000 over IPv6, and `localhost` resolves to IPv6 first — so `http://localhost:5000` returns a 403 from AirPlay instead of reaching the toolkit. `127.0.0.1` is IPv4-only and always reaches the app. To free the port permanently, turn off **System Settings → General → AirDrop & Handoff → AirPlay Receiver**.
 
-If you installed GSAS-II from source (see step 5), launch with `bash run_local.sh` instead — it sets `PYTHONPATH` before starting the app.
+If you installed GSAS-II from source (see step 5), use `run_local.sh` instead of `python app.py` — it sets `PYTHONPATH` before starting the app. Activate the environment first either way:
+
+```bash
+conda activate catalysis
+bash run_local.sh
+```
+
+The script does not activate conda for you, so without that first line `python` will not be found.
 
 ---
 
