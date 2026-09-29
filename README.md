@@ -134,13 +134,13 @@ The purple **GSAS-II Refinement** button appears in the XRD panel once GSAS-II i
 **If you installed GSAS-II from source** (the usual route on Apple Silicon), the package is not on `sys.path`, so you must point Python at both the source directory and the matching binary directory before launching:
 
 ```bash
-export PYTHONPATH="/path/to/GSAS-II/GSASII:/path/to/GSAS-II/GSASII-bin/mac_arm_p3.11_n1.26:$PYTHONPATH"
+export PYTHONPATH="/path/to/GSAS-II/GSASII:$PYTHONPATH"
 python app.py
 ```
 
-The binary directory must match your Python and NumPy versions — `mac_arm_p3.11_n1.26` means Python 3.11 with NumPy 1.26. Check yours with `python -c "import sys, numpy; print(sys.version, numpy.__version__)"`; a mismatch makes GSAS-II fail to import.
+Only the source directory is needed — GSAS-II locates its own `GSASII-bin/` subdirectory. That subdirectory must match your Python and NumPy versions, though: `mac_arm_p3.11_n1.26` means Python 3.11 with NumPy 1.26. Check yours with `python -c "import sys, numpy; print(sys.version, numpy.__version__)"`; a mismatch makes GSAS-II fail to import.
 
-`run_local.sh` does this for you, but it contains machine-specific absolute paths — edit them to match your install before using it.
+`run_local.sh` does this for you. It looks for GSAS-II at `~/g2full/GSAS-II` by default; point it elsewhere with `GSAS2_ROOT=/path/to/GSAS-II bash run_local.sh`. If GSAS-II is not found it says so and starts without it.
 
 ### 6. Add your Materials Project API key
 
