@@ -5467,6 +5467,18 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         # automated screening where a low Rwp is not always trustworthy.
         _sanity_warnings = list(_validation_warnings) + _mass_warnings
 
+        # sigma = sqrt(I) is only valid for whole counts. Data exported as
+        # cps or normalised intensity scales chi-squared by an unknown
+        # factor, making GoF uninterpretable while Rwp stays meaningful.
+        _y_arr = np.asarray(y_obs, dtype=float)
+        if np.nanmax(np.abs(_y_arr - np.round(_y_arr))) > 1e-6:
+            _sanity_warnings.append(
+                "Observed intensities are not whole counts (data is likely "
+                "in cps or otherwise normalised), so the Poisson weights "
+                "sigma = sqrt(I) do not apply. Rwp and Rp remain valid, but "
+                "chi-squared and GoF are scaled by an unknown factor: do not "
+                "compare them against 1 or against raw-count runs.")
+
         if _any_hap_broadening_requested and not _measured_instprm:
             _sanity_warnings.append(
                 "Per-phase Size/Mustrain was refined without a measured "
