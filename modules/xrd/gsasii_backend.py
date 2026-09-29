@@ -5474,7 +5474,17 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             from .counting_statistics import estimate_counting_time, describe
         except ImportError:
             from counting_statistics import estimate_counting_time, describe
-        _counting = estimate_counting_time(tt_out, y_obs_out)
+        # Only applies when sigma was the sqrt(I) fallback. A file that
+        # supplies its own uncertainties is already weighted correctly, and
+        # rescaling its GoF would be wrong.
+        _sig_in = np.asarray(sigma, dtype=float) if sigma is not None else None
+        _sigma_from_file = (
+            _sig_in is not None and len(_sig_in) == len(np.asarray(y_obs))
+            and not np.allclose(_sig_in,
+                                np.sqrt(np.maximum(np.asarray(y_obs, float), 1.0)),
+                                rtol=1e-3))
+        _counting = ({'is_counts': True} if _sigma_from_file
+                     else estimate_counting_time(tt_out, y_obs_out))
         _counting_note = describe(_counting, stats.get('GoF'),
                                   stats.get('chi2'))
         if _counting_note:
