@@ -1748,6 +1748,9 @@ def process_xrd():
                 # Refine atom positions (XYZ).  Existing flag re-exposed.
                 'refine_xyz':
                     form.get('refine_xyz', '').lower() == 'true',
+                # Debye diffuse-scattering background terms (0 = off).
+                'n_debye': max(0, min(5, int(
+                    form.get('n_debye') or 0))),
                 # Tick source: True = GSAS-II RefList, False = Python refs.
                 'use_gsas_ref_ticks':
                     form.get('use_gsas_ref_ticks', '').lower() == 'true',

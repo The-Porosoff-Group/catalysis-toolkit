@@ -1527,6 +1527,11 @@
               <input type="checkbox" id="xrd-refine-xyz" style="margin-right:4px;">
               Refine XYZ
             </label>
+            <label id="debye-label" style="display:none;margin-left:6px;font-size:12px;color:var(--muted);cursor:pointer;" title="Debye diffuse-scattering background terms. Use when the pattern has broad amorphous humps a polynomial background cannot follow — otherwise a crystalline phase gets recruited to model them and reports a meaningless mass fraction. 3 terms is a sensible start.">
+              Debye terms
+              <input type="number" id="xrd-n-debye" min="0" max="5" step="1" value="0"
+                     style="width:46px;margin-left:4px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:1px 4px;">
+            </label>
             <div style="flex-basis:100%;font-size:11px;line-height:1.45;color:var(--muted);border-top:1px solid rgba(255,255,255,0.08);padding-top:7px;margin-top:2px;">
               <b style="color:var(--text);">Control guide:</b>
               <b>Quick constrained fit</b> refines only background, phase scales, sample position, and shared peak width.
@@ -3248,6 +3253,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (w2cMustLabel) w2cMustLabel.style.display = '';
         const refineXyzLabel = document.getElementById('refine-xyz-label');
         if (refineXyzLabel) refineXyzLabel.style.display = '';
+        const debyeLabel = document.getElementById('debye-label');
+        if (debyeLabel) debyeLabel.style.display = '';
         // perf-recipe-label retired; do NOT un-hide.
         const instSel = document.getElementById('xrd-instrument');
         if (instSel) instSel.style.display = '';
@@ -4195,6 +4202,11 @@ async function runXRD(method) {
     const refineXyzCheckbox = document.getElementById('xrd-refine-xyz');
     if (refineXyzCheckbox && refineXyzCheckbox.checked) {
       fd.append('refine_xyz', 'true');
+    }
+    // Debye diffuse-scattering background terms (Stage 1c)
+    const nDebyeInput = document.getElementById('xrd-n-debye');
+    if (nDebyeInput && parseInt(nDebyeInput.value, 10) > 0) {
+      fd.append('n_debye', nDebyeInput.value);
     }
     // Send cached phases without CIF text; keep manual uploads inline
     // because they do not exist in the server-side CIF cache.
