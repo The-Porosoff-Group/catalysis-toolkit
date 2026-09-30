@@ -67,6 +67,12 @@ def _configure_console_output():
 
 # ── GSAS-II availability check ──────────────────────────────────────────────
 
+# Physical bounds for isotropic displacement parameters (A^2). Uiso is a
+# mean-square displacement, so it cannot be negative; the upper bound is
+# generous for a disordered light atom but still rules out runaway values.
+UISO_MIN = 0.001
+UISO_MAX = 0.100
+
 _GSASII_AVAILABLE = False
 _GSASII_IMPORT_ERROR = None
 
@@ -3641,6 +3647,33 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                 'set': {},
                 'cycles': min(max_cycles, 8 * _cyc_mult),
             }], 4)
+
+            # Uiso is a mean-square displacement and cannot be negative, but
+            # GSAS-II will drive it there if it lowers Rwp. A negative value
+            # inflates calculated intensity at high angle, so it silently
+            # distorts everything downstream -- including any CIF written
+            # from the project. Clamp to a physical range and say so.
+            for _idx, _phase_obj in enumerate(gsas_phases):
+                try:
+                    _cia = _phase_obj.data['General']['AtomPtrs'][3]
+                except (KeyError, IndexError, TypeError):
+                    _cia = 9
+                for _atom in _phase_obj.data.get('Atoms', []):
+                    if len(_atom) <= _cia + 1:
+                        continue
+                    _u = _atom[_cia + 1]
+                    if not isinstance(_u, (int, float)):
+                        continue
+                    if _u < UISO_MIN or _u > UISO_MAX:
+                        _clamped = min(max(float(_u), UISO_MIN), UISO_MAX)
+                        _atom[_cia + 1] = _clamped
+                        _msg = (f"{_atom[0]} in phase {_idx + 1} refined to a "
+                                f"non-physical Uiso of {_u:.4f} A^2; reset to "
+                                f"{_clamped:.4f}. Treat this phase's "
+                                f"intensities, and any fraction derived from "
+                                f"them, as unreliable.")
+                        _validation_warnings.append(_msg)
+                        print(f"  WARNING: {_msg}", flush=True)
 
         # ── Stage 4b: Crystallite Size + Microstrain (per-phase) ────────
         # Drive per-phase HAP refinement from phase_options (or the
