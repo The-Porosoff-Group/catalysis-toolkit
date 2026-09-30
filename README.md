@@ -1,6 +1,9 @@
 # Catalysis Data Toolkit
 
-**Release 1.2.2** — readable XRD fit recipes in the exported workbook.
+**Release 1.2.3** — correct CSV uncertainties and native GSAS-II fit statistics.
+
+See [XRD column definitions and uncertainty handling](docs/xrd_uncertainties.md)
+for the corrected CSV import and GOF calculation.
 
 A local web app for processing heterogeneous-catalysis data. Drag-and-drop interface, no coding required after the one-time install.
 
