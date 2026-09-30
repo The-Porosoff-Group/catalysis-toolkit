@@ -526,6 +526,7 @@ def _reduce_to_asymmetric_unit(cif_text, declared_sg=None):
     # asymmetric unit plus symmetry operations.  Trying to "reduce" these
     # is a no-op at best and destructive at worst (SpacegroupAnalyzer may
     # misidentify equivalent sites in compact structures).
+    
     already_asym, asym_sites = _cif_already_has_asymmetric_unit(
         cif_text, declared_sg)
     if already_asym and asym_sites:
@@ -2113,6 +2114,11 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
                                         profile['preferred_orientation_default'])
     refine_xyz           = options.get('refine_xyz', False)
     background_mode      = options.get('background_mode', 'auto')
+    # Debye background terms model diffuse scattering from amorphous or
+    # very small domains. Without them a Chebyshev polynomial cannot follow
+    # a broad hump, and the refinement recruits a crystalline phase to do
+    # it instead -- which then reports a meaningless mass fraction.
+    n_debye              = int(options.get('n_debye', 0) or 0)
     exclude_regions      = options.get('exclude_regions', [])
     phase_sensitivity    = options.get('phase_sensitivity', False)
     # Verification mode keeps structural terms off by default. Per-phase
@@ -2680,6 +2686,26 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
         bkg_data[0] = ['chebyschev-1', True, n_bg_coeffs,
                         bg_init] + [0.0] * (n_bg_coeffs - 1)
 
+        # Debye diffuse-scattering terms. Each entry is
+        # [A, refineA, R, refineR, U, refineU]; R is a real-space
+        # correlation distance, so seed successive shells at typical
+        # metal-carbide near-neighbour separations. Flags stay off here and
+        # are switched on in the dedicated stage below.
+        if n_debye > 0:
+            if len(bkg_data) < 2 or not isinstance(bkg_data[1], dict):
+                bkg_data.append({'nDebye': 0, 'debyeTerms': [],
+                                 'nPeaks': 0, 'peaksList': []})
+            seed_radii = [2.0, 3.0, 4.2, 5.5, 6.8]
+            amp = max(1.0, 0.05 * float(np.max(y_r) - bg_init))
+            bkg_data[1]['nDebye'] = n_debye
+            bkg_data[1]['debyeTerms'] = [
+                [amp, False, seed_radii[i % len(seed_radii)], False, 0.05, False]
+                for i in range(n_debye)]
+            print(f"  Background: {n_debye} Debye diffuse-scattering term(s) "
+                  f"seeded at R = "
+                  f"{[seed_radii[i % len(seed_radii)] for i in range(n_debye)]} A",
+                  flush=True)
+
         # Add phases from CIF files — always embed the space group number in
         # the GSAS-II phasename so that two phases with the same formula
         # (e.g. W Pm-3n vs W Im-3m) are never treated as the same phase.
@@ -3127,6 +3153,25 @@ def run_gsas2(tt, y_obs, sigma, phases, wavelength,
             },
             'cycles': min(max_cycles, 5),
         }], 1)
+
+        # Stage 1c: Debye diffuse-scattering terms. GSAS-II reads these
+        # refine flags straight from the Background structure, independently
+        # of the Chebyshev flag, so they are toggled here rather than through
+        # a refinement dict. Amplitude and radius open first; U (the damping)
+        # only afterwards, since it correlates with both.
+        if n_debye > 0:
+            _bkg = histogram.data['Background']
+            for term in _bkg[1]['debyeTerms']:
+                term[1], term[3] = True, True          # A and R
+            _safe_refine('Debye diffuse terms (A, R)', [{
+                'set': {}, 'cycles': min(max_cycles, 5)}], 1)
+            for term in _bkg[1]['debyeTerms']:
+                term[5] = True                          # U
+            _safe_refine('Debye diffuse terms (A, R, U)', [{
+                'set': {}, 'cycles': min(max_cycles, 5)}], 1)
+            print("  Debye terms after refinement: " + ", ".join(
+                f"A={t[0]:.1f} R={t[2]:.2f}A U={t[4]:.3f}"
+                for t in _bkg[1]['debyeTerms']), flush=True)
 
         # ── Scale floor protection ──────────────────────────────────────
         # If any phase's scale collapsed to near-zero, it means the model
