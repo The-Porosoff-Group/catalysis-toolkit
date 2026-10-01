@@ -1,0 +1,52 @@
+{
+  "name": "Synergy-S Mo carbide production",
+  "notes": [
+    "Settings taken from the validated seed_2 fit of 2026-09-30 (Rwp 2.03%,",
+    "GoF 3.32, weight and diffraction-area fractions agreeing to 0.1 points).",
+    "",
+    "Quick constrained fit restricts the active parameters, which is what makes",
+    "refining Zero safe here: with cell, Uiso and XYZ held back, Zero cannot",
+    "trade against them the way it did in the unconstrained runs.",
+    "",
+    "Y is fixed from the instrument file and constrained non-negative. A free Y",
+    "went negative on these samples, which is unphysical: it asks for peaks",
+    "narrower than the instrument can produce."
+  ],
+  "controls": {
+    "wavelength": "1.54056",
+    "tt_min": "10",
+    "tt_max": "90",
+    "n_bg_coeffs": "10",
+    "instrument": "synergy_s",
+    "checkboxes": {
+      "xrd-calibration-mode": false,
+      "xrd-verification-mode": true,
+      "xrd-verify-cell": true,
+      "xrd-phase-isolation": true,
+      "xrd-zero-not-disp": true,
+      "xrd-refine-x": false,
+      "xrd-fix-y": true,
+      "xrd-y-nonneg": true,
+      "xrd-refine-uiso": false,
+      "xrd-refine-xyz": false
+    }
+  },
+  "phase_options": [
+    {
+      "refine_size": true,
+      "refine_mustrain": false,
+      "po_mode": "off",
+      "po_axis": [1, 1, 1],
+      "po_value": 1.0,
+      "uniform_cell": false
+    },
+    {
+      "refine_size": true,
+      "refine_mustrain": false,
+      "po_mode": "off",
+      "po_axis": [0, 0, 1],
+      "po_value": 1.0,
+      "uniform_cell": false
+    }
+  ]
+}

@@ -40,6 +40,8 @@ OUTLIER_FRACTION = 0.05           # >5% of points beyond 3 sigma is structural
 DECILE_BIAS_SIGMA = 1.0           # coherent regional bias
 PEAK_WINDOW_DEG = 0.35            # "on peak" half-width for residual split
 INTENSITY_IMBALANCE_FRAC = 0.02   # residual extremum as fraction of max peak
+FRACTION_GAP_PCT = 10.0           # wt% vs diffracted-area% disagreement
+TICK_MATCH_DEG = 0.30             # residual counts as "on" a reflection within this
 
 SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
 
@@ -195,6 +197,125 @@ def check_size(phase: Dict[str, Any]) -> List[Finding]:
     return out
 
 
+def check_fit_sanity(summary: Dict[str, Any]) -> List[Finding]:
+    """Catch fits that failed rather than merely fitting badly."""
+    out: List[Finding] = []
+    stats = summary.get("statistics", {})
+    rwp, gof = _f(stats.get("Rwp")), _f(stats.get("GoF"))
+    for label, value in (("Rwp", rwp), ("GoF", gof)):
+        if value is not None and (not math.isfinite(value) or value > 1e3):
+            out.append(Finding(
+                "sanity", "critical",
+                f"{label} is {value:.3g}: the refinement diverged rather than "
+                "converging to a poor fit.",
+                {label: value},
+                "Discard this result. Reduce the active parameters and check "
+                "that the instrument geometry matches the instrument file."))
+
+    for phase in summary.get("phase_results", []) or []:
+        name = phase.get("phase") or phase.get("formula") or "phase"
+        wt = _f(phase.get("weight_fraction_pct"))
+        sig = _f(phase.get("scale_sigma_rel_pct"))
+        if sig is not None and sig > 100:
+            out.append(Finding(
+                "sanity", "critical",
+                f"{name}: scale uncertainty is {sig:.3g}%, so its amount is "
+                "not determined by the data at all.",
+                {"weight_fraction_pct": wt, "scale_sigma_rel_pct": sig},
+                "The phase has collapsed. Remove it, or fix its scale, and "
+                "do not report a fraction for it."))
+        elif wt is not None and wt <= 0.5 and sig is not None and sig > 20:
+            out.append(Finding(
+                "sanity", "warning",
+                f"{name}: refined to {wt:.1f} wt% with a {sig:.0f}% scale "
+                "uncertainty, so the data does not support including it.",
+                {"weight_fraction_pct": wt, "scale_sigma_rel_pct": sig},
+                "Drop this phase unless independent evidence requires it."))
+    return out
+
+
+def check_fraction_consistency(summary: Dict[str, Any]) -> List[Finding]:
+    """Mass fraction and diffracted-intensity share are computed by different
+    routes, so disagreement between them is evidence, not rounding."""
+    out: List[Finding] = []
+    for phase in summary.get("phase_results", []) or []:
+        wt = _f(phase.get("weight_fraction_pct"))
+        area = _f(phase.get("diffraction_area_fraction_pct"))
+        if wt is None or area is None:
+            continue
+        gap = wt - area
+        if abs(gap) >= FRACTION_GAP_PCT:
+            name = phase.get("phase") or phase.get("formula") or "phase"
+            out.append(Finding(
+                "fraction", "warning",
+                f"{name}: {wt:.1f} wt% but only {area:.1f}% of the diffracted "
+                f"intensity ({gap:+.1f} points apart).",
+                {"weight_fraction_pct": wt,
+                 "diffraction_area_fraction_pct": area,
+                 "gap_points": round(gap, 1)},
+                "A phase booking far more mass than diffraction is usually "
+                "modelling diffuse scattering. Treat the mass fraction as "
+                "unreliable, and consider Debye background terms instead."))
+    return out
+
+
+def classify_unmodelled_peaks(pattern: Dict[str, np.ndarray]) -> List[Finding]:
+    """Distinguish a missing phase from wrong intensity on a modelled one.
+
+    Residual peaks sitting on existing reflections mean the intensities of
+    phases already in the model are wrong (occupancy, texture, Uiso).
+    Residual peaks with no reflection nearby mean something is absent.
+    """
+    out: List[Finding] = []
+    tt, res = pattern["tt"], pattern["y_obs"] - pattern["y_calc"]
+    ticks = pattern.get("ticks")
+    scale = float(np.abs(res).max())
+    if scale <= 0 or ticks is None or not len(ticks):
+        return out
+
+    window = max(1, int(round(0.15 / max(np.median(np.diff(tt)), 1e-6))))
+    smooth = np.convolve(res, np.ones(window) / window, mode="same")
+    threshold = 0.3 * float(smooth.max())
+    if threshold <= 0:
+        return out
+
+    on_peak, off_peak, i = [], [], 0
+    while i < len(tt):
+        if smooth[i] > threshold:
+            j = i
+            while j + 1 < len(tt) and smooth[j + 1] > threshold:
+                j += 1
+            k = i + int(np.argmax(smooth[i:j + 1]))
+            pos = float(tt[k])
+            nearest = float(min(ticks, key=lambda t: abs(t - pos)))
+            (on_peak if abs(nearest - pos) <= TICK_MATCH_DEG
+             else off_peak).append((pos, round(nearest - pos, 2)))
+            i = j + 1
+        else:
+            i += 1
+
+    if off_peak:
+        out.append(Finding(
+            "residual", "warning",
+            f"{len(off_peak)} residual peak(s) have no reflection within "
+            f"{TICK_MATCH_DEG}deg: "
+            + ", ".join(f"{p:.2f}deg" for p, _ in off_peak[:5]) + ".",
+            {"unindexed_two_theta": [p for p, _ in off_peak]},
+            "Intensity where no modelled phase has a reflection points to a "
+            "missing phase. Identify it before adding free parameters."))
+    if on_peak and not off_peak:
+        out.append(Finding(
+            "residual", "warning",
+            f"{len(on_peak)} residual peak(s) sit on reflections that are "
+            "already modelled: "
+            + ", ".join(f"{p:.2f}deg" for p, _ in on_peak[:5]) + ".",
+            {"misfit_two_theta": [p for p, _ in on_peak]},
+            "The phases present have the wrong relative intensities rather "
+            "than something being absent. Preferred orientation, site "
+            "occupancy or Uiso are the candidates, in that order."))
+    return out
+
+
 def check_residuals(pattern: Dict[str, np.ndarray]) -> List[Finding]:
     out: List[Finding] = []
     tt, yo, yc = pattern["tt"], pattern["y_obs"], pattern["y_calc"]
@@ -320,7 +441,9 @@ def load_pattern(xlsx_path: Path) -> Optional[Dict[str, np.ndarray]]:
     i_yo = column(lambda h: "y_obs" in h)
     i_yc = column(lambda h: "y_calc" in h)
     i_bg = column(lambda h: "background" in h)
-    i_tk = column(lambda h: "peak 2" in h)
+    # One tick column per phase; all of them count as modelled
+    i_tks = [i for i, name in enumerate(header)
+             if "peak 2" in name.lower()]
     if None in (i_tt, i_yo, i_yc):
         return None
 
@@ -337,8 +460,13 @@ def load_pattern(xlsx_path: Path) -> Optional[Dict[str, np.ndarray]]:
     data = {k: v[:n] for k, v in data.items()}
     bg = grab(i_bg)
     data["background"] = bg[:n] if bg is not None and len(bg) >= n else None
-    ticks = grab(i_tk)
-    data["ticks"] = np.unique(ticks) if ticks is not None and len(ticks) else None
+    all_ticks = []
+    for idx in i_tks:
+        col = grab(idx)
+        if col is not None and len(col):
+            all_ticks.append(col)
+    data["ticks"] = (np.unique(np.concatenate(all_ticks))
+                     if all_ticks else None)
     return data
 
 
@@ -354,11 +482,14 @@ def review_sample(summary_path: Path) -> Dict[str, Any]:
     pattern = load_pattern(xlsx_path) if xlsx_path else None
 
     findings = check_statistics(summary, pattern)
+    findings.extend(check_fit_sanity(summary))
+    findings.extend(check_fraction_consistency(summary))
     for phase in summary.get("phase_results", []) or []:
         findings.extend(check_cell(phase))
         findings.extend(check_size(phase))
     if pattern is not None:
         findings.extend(check_residuals(pattern))
+        findings.extend(classify_unmodelled_peaks(pattern))
     else:
         findings.append(Finding(
             "residual", "info",
