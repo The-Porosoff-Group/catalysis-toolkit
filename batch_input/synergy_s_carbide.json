@@ -36,17 +36,27 @@
       "refine_size": true,
       "refine_mustrain": false,
       "po_mode": "off",
-      "po_axis": [1, 1, 1],
+      "po_axis": [
+        1,
+        1,
+        1
+      ],
       "po_value": 1.0,
-      "uniform_cell": false
+      "uniform_cell": false,
+      "refine_cell": true
     },
     {
       "refine_size": true,
       "refine_mustrain": false,
       "po_mode": "off",
-      "po_axis": [0, 0, 1],
+      "po_axis": [
+        0,
+        0,
+        1
+      ],
       "po_value": 1.0,
-      "uniform_cell": false
+      "uniform_cell": false,
+      "refine_cell": true
     }
   ]
 }

@@ -274,6 +274,7 @@ def _axis(value: Any) -> List[int]:
 
 def _default_phase_option() -> Dict[str, Any]:
     return {
+        "refine_cell": False,
         "refine_size": False,
         "refine_mustrain": False,
         "po_mode": "off",
