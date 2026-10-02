@@ -31,7 +31,6 @@ from modules.xrd.counting_statistics import estimate_counting_time  # noqa: E402
 
 # Thresholds. Deliberately conservative: these flag "look at this", not "wrong".
 VOLUME_DEVIATION_PCT = 1.0        # |dV/V0| above this is worth explaining
-VOLUME_DEVIATION_SERIOUS_PCT = 2.5
 AXIS_ANISOTROPY_PCT = 0.5         # spread between per-axis deviations
 SIZE_MIN_NM = 2.0
 SIZE_MAX_NM = 200.0               # beyond lab-XRD resolving power
@@ -146,16 +145,19 @@ def check_cell(phase: Dict[str, Any]) -> List[Finding]:
     present = {k: v for k, v in axes.items() if v is not None}
 
     if dv is not None and abs(dv) >= VOLUME_DEVIATION_PCT:
-        severity = ("critical" if abs(dv) >= VOLUME_DEVIATION_SERIOUS_PCT
-                    else "warning")
+        # Never critical: dV/V0 is measured against whichever reference CIF
+        # was supplied, so a large value can simply mean the starting
+        # composition differs from the sample. The refined lattice parameter
+        # is the quantity that compares across references, not this.
         out.append(Finding(
-            "cell", severity,
-            f"{name}: unit-cell volume differs from the reference CIF by "
+            "cell", "warning",
+            f"{name}: unit-cell volume differs from its reference CIF by "
             f"{dv:+.2f}%.",
             {"delta_volume_pct": dv, "reference": phase.get("cell_reference")},
-            "Large cell changes are real in non-stoichiometric carbides, but "
-            "Zero and sample displacement also push the cell. Rerun with Zero "
-            "fixed at the instrument value to see how much survives."))
+            "Check the refined lattice parameter against literature rather "
+            "than this percentage, which depends on the reference chosen. A "
+            "large value often just means a different starting composition; "
+            "Zero and sample displacement also push the cell."))
 
     if len(present) >= 2:
         spread = max(present.values()) - min(present.values())
