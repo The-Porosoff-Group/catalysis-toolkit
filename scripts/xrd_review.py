@@ -204,6 +204,19 @@ def check_fit_sanity(summary: Dict[str, Any]) -> List[Finding]:
     out: List[Finding] = []
     stats = summary.get("statistics", {})
     rwp, gof = _f(stats.get("Rwp")), _f(stats.get("GoF"))
+    # Rwp can stay plausible while a refinement diverges: the scale runs away
+    # and the calculated pattern ends up orders of magnitude above the data.
+    # Rp saturating at 100% is the reliable tell.
+    rp = _f(stats.get("Rp"))
+    if rp is not None and rp >= 99.0:
+        out.append(Finding(
+            "sanity", "critical",
+            f"Rp is {rp:.1f}%, so the calculated pattern bears no relation to "
+            f"the data even though Rwp reads {rwp if rwp is None else f'{rwp:.2f}'}%.",
+            {"Rp": rp, "Rwp": rwp},
+            "The refinement diverged. Discard it; do not report any fraction "
+            "from this fit."))
+
     for label, value in (("Rwp", rwp), ("GoF", gof)):
         if value is not None and (not math.isfinite(value) or value > 1e3):
             out.append(Finding(
