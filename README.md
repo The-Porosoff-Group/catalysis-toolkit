@@ -1,6 +1,15 @@
 # Catalysis Data Toolkit
 
-**Release 1.2.2** — readable XRD fit recipes in the exported workbook.
+**Release 1.2.4** — correct native XRD phase curves, reflection labels, and legend precision.
+
+Phase isolation may be checked or unchecked: both preserve the fitted total.
+With it unchecked, phase curves now retain native fitted broadening and peak
+tails. Result ticks use fitted positions and signed non-cubic Miller indices.
+Plot legends show weight percentages and uncertainties to one decimal place.
+Regenerate existing figures to apply these display corrections.
+
+See [XRD column definitions and uncertainty handling](docs/xrd_uncertainties.md)
+for the corrected CSV import and GOF calculation.
 
 A local web app for processing heterogeneous-catalysis data. Drag-and-drop interface, no coding required after the one-time install.
 
