@@ -329,6 +329,7 @@ catalysis-toolkit/
 ├── README.md
 ├── LICENSE
 ├── smartlab_Si640g.instprm          Measured SmartLab instrument profile
+├── synergy_s_Si640g.instprm         Measured Synergy-S instrument profile (same as standalone XRD toolkit)
 ├── cal_si.py                        Helper for Si-standard prep
 ├── calibrate_instprm.py             Instrument calibration runner
 ├── fixtures/                        Canonical CIFs overriding MP round-trips
